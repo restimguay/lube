@@ -161,6 +161,7 @@ int main(int argc, char **argv) {
             status = 64;
         } else {
             int from_stdin = !strcmp(argv[2], "-");
+            lube_slashes(argv[2]);
             size_t len;
             char *text = from_stdin ? read_stdin(&len) : read_file(argv[2], &len);
             if (!text) {
@@ -177,6 +178,7 @@ int main(int argc, char **argv) {
         } else {
             lube_debug_terminal(I);
             set_args(I, argc, argv, 3);
+            lube_slashes(argv[2]);
             status = lube_run_file(I, argv[2]);
         }
     } else if (!strcmp(argv[1], "--hot")) {
@@ -186,6 +188,7 @@ int main(int argc, char **argv) {
         } else {
             I->hot = 1;
             set_args(I, argc, argv, 3);
+            lube_slashes(argv[2]);
             status = lube_run_file(I, argv[2]);
         }
     } else if (!strcmp(argv[1], "--build")) {
@@ -196,6 +199,8 @@ int main(int argc, char **argv) {
         } else {
             StrBuf out;
             sb_init(&out);
+            lube_slashes(argv[2]);
+            if (argc == 5) lube_slashes(argv[4]);
             if (argc == 5) {
                 sb_puts(&out, argv[4]);
             } else {
@@ -225,6 +230,7 @@ int main(int argc, char **argv) {
         status = 64;
     } else {
         set_args(I, argc, argv, 2);
+        lube_slashes(argv[1]);
         status = lube_run_file(I, argv[1]);
     }
 

@@ -143,6 +143,17 @@ void sb_free(StrBuf *sb) {
 
 /* ---------- files ---------- */
 
+/* On Windows both \ and / separate folders; Lube's paths use / throughout,
+ * so a path from outside (an argument, LUBE_PATH) is tidied once. */
+void lube_slashes(char *path) {
+#ifdef _WIN32
+    for (; *path; path++)
+        if (*path == '\\') *path = '/';
+#else
+    (void)path;
+#endif
+}
+
 char *read_file(const char *path, size_t *length) {
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;

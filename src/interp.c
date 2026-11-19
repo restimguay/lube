@@ -1605,7 +1605,7 @@ static int start_call(Interp *I, int ci, int argc, Loan *loans, int nloans, int 
         }
         r = ERR_VAL;
     } else if (IS_CLASS(callee)) {
-        ObjFunction *ctor;
+        ObjFunction *ctor = NULL;
         r = new_instance(I, AS_CLASS(callee), argc, &ctor);
         if (!IS_ERR(r) && ctor) {  /* `this` goes in front of the arguments */
             memmove(&I->stack[base + 1], &I->stack[base], sizeof(Value) * (size_t)argc);
@@ -2801,10 +2801,11 @@ int lube_find_package(Interp *I, ObjString *pkg, StrBuf *folder) {
             break;
         }
         if (I->bundle || !path || !*path) break;  /* next: the folders of LUBE_PATH */
-        const char *end = strchr(path, ':');
+        const char *end = strchr(path, LUBE_PATH_SEP);
         size_t len = end ? (size_t)(end - path) : strlen(path);
         static LUBE_THREAD_LOCAL char dir[4096];
         snprintf(dir, sizeof dir, "%.*s", (int)len, path);
+        lube_slashes(dir);
         root = dir;
         path = end ? end + 1 : NULL;
     }
@@ -3128,7 +3129,7 @@ int lube_run_file(Interp *I, const char *path) {
     size_t len;
     char *text = read_file(path, &len);
     if (!text) {
-        fprintf(stderr, "lube: cannot open file '%s'\n", path);
+        lube_print(1, "lube: cannot open file '%s'\n", path);
         return 66;
     }
     map_set(I->watch, OBJ_VAL(new_string(path, strlen(path))), OBJ_VAL(new_string(text, len)));  /* for hot reload */

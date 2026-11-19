@@ -7,6 +7,9 @@
 cd "$(dirname "$0")/.." || exit 1
 LUBE=${1:-./lube}
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/lube-test.XXXXXX" | sed 's|//*|/|g')  # one slash: lube tidies paths
+case "$(uname -s)" in  # Windows (MSYS2): the path as lube sees and prints it, C:/...
+    MINGW* | MSYS* | CYGWIN*) TMP=$(cygpath -m "$TMP") ;;
+esac
 trap 'rm -rf "$TMP"' EXIT
 
 # run LABEL COMMAND...: the label, the command's output, and its exit status.

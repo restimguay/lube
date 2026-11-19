@@ -635,7 +635,7 @@ let p = Point(3, 4)
 print(size(p), geometry.area(p), p is geo.Point)
 ```
 
-- Packages are found from the main program's folder, then from the folders listed in `LUBE_PATH` (separated by `:`). Importing anything from a package loads its whole folder, once.
+- Packages are found from the main program's folder, then from the folders listed in `LUBE_PATH` (separated by `:`, or `;` on Windows). Importing anything from a package loads its whole folder, once.
 - Inside a package, a name means: an imported name, else one of the package's own, else a built-in. So a package can define its own `len` without affecting anyone else.
 - `import "file"` still works as before: a file without a package line shares the importer's names. A file that has one keeps its names to itself, however it is imported.
 - Package imports go at the top level of a file. A missing package or name, a private name, or a file in a package's folder whose package line disagrees, is an error before the program runs.

@@ -804,6 +804,12 @@ void *xmalloc(size_t n);
 void *xrealloc(void *p, size_t n);
 char *xstrndup(const char *s, size_t n);
 char *read_file(const char *path, size_t *length);
+void lube_slashes(char *path);  /* Windows: \ becomes / (Lube's paths use /) */
+#ifdef _WIN32
+#define LUBE_PATH_SEP ';'  /* between the folders of LUBE_PATH (C:/ has a colon) */
+#else
+#define LUBE_PATH_SEP ':'
+#endif
 void report_error(Source *src, int line, int col, const char *kind, const char *msg);
 extern void (*lube_output)(const char *text, size_t len, int is_err);
 void lube_print(int err, const char *fmt, ...);
