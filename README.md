@@ -28,6 +28,8 @@ make tsan       # runs the suite with ThreadSanitizer (data races between isolat
 make install    # copies lube to /usr/local/bin (PREFIX=... to change)
 ```
 
+It builds and passes the tests on Linux (gcc or clang), macOS and Windows. On Windows, build in an [MSYS2](https://www.msys2.org) UCRT64 shell: `pacman -S make diffutils mingw-w64-ucrt-x86_64-gcc`, then `make`. GitHub Actions runs everything above on each pull request, and each release (a `v*` tag) comes with ready-built binaries: a static Linux x86-64 binary, a universal macOS binary (Apple silicon and Intel) and a Windows `lube.exe`. A binary downloaded with a browser on macOS isn't signed: clear the quarantine flag with `xattr -d com.apple.quarantine lube` before running it.
+
 ```sh
 ./lube                       # interactive REPL
 ./lube examples/hello.lube   # run a file

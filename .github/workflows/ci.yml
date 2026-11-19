@@ -53,7 +53,7 @@ jobs:
         if: matrix.cc == 'gcc'
         run: |
           make clean
-          LDFLAGS=-static make
+          LDFLAGS="-static -s" make
           ./lube -e 'print("lube runs:", 1 + 2)'
           tar czf lube-linux-x86_64.tar.gz lube README.md
       - uses: actions/upload-artifact@v4
@@ -89,6 +89,7 @@ jobs:
         run: |
           make clean
           CFLAGS="-O2 -arch arm64 -arch x86_64" LDFLAGS="-arch arm64 -arch x86_64" make
+          strip lube
           lipo -info lube
           ./lube -e 'print("lube runs:", 1 + 2)'
           tar czf lube-macos-universal.tar.gz lube README.md
@@ -127,7 +128,7 @@ jobs:
       - name: Package (no DLLs needed)
         run: |
           make clean
-          LDFLAGS=-static make
+          LDFLAGS="-static -s" make
           ./lube.exe -e 'print("lube runs:", 1 + 2)'
           zip lube-windows-x86_64.zip lube.exe README.md
       - uses: actions/upload-artifact@v4
