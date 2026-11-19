@@ -31,7 +31,7 @@
  * tree is freed in one step (at exit, or right away after a syntax error).
  * Temporary buffers that are live while a syntax error unwinds are listed
  * in `pending` and freed by parse_program. */
-static Arena *tree;
+static LUBE_THREAD_LOCAL Arena *tree;  /* per thread: isolates parse at the same time */
 
 typedef struct {      /* used as stacks: strings nest inside interpolations */
     StrBuf bufs[64];
@@ -40,7 +40,7 @@ typedef struct {      /* used as stacks: strings nest inside interpolations */
     int ntoks;
 } Pending;
 
-static Pending pending;
+static LUBE_THREAD_LOCAL Pending pending;
 
 typedef struct {
     Interp *I;
@@ -354,8 +354,7 @@ static TypeAnn type_annotation(Parser *P) {
             error_at(P, peek(P), "typed lists hold built-in types, so '%.*s[]' is not a type (use List)", name->length,
                      name->start);
         t.d.kind = TD_CLASS;
-        t.cls = new_node(N_VAR, name->line);
-        t.cls->as.var.name = name_of(P, name);
+        t.cls = name_of(P, name);
         return t;
     }
     if (match(P, T_LBRACKET)) {
@@ -382,6 +381,8 @@ static TypeAnn type_annotation(Parser *P) {
     case TT_LIST: t.d.kind = TD_LIST; t.d.any = 1; break;
     case TT_FUNCTION: t.d.kind = TD_FUNCTION; break;
     case TT_RANGE: t.d.kind = TD_RANGE; break;
+    case TT_CHANNEL: t.d.kind = TD_CHANNEL; break;
+    case TT_ISOLATE: t.d.kind = TD_ISOLATE; break;
     default: t.d.kind = TD_INT; t.d.a = (unsigned char)(tag - TT_INT8); break;
     }
     return t;
@@ -392,13 +393,17 @@ static TypeAnn type_annotation(Parser *P) {
  *   fn scale(by: Number, &shape: Shape, var times: int32 = 1): Bool { ... }
  * In a #strict file every parameter must have one, and a function without a
  * return type returns nothing. */
-static FuncDecl *function_rest(Parser *P, ObjString *name, int line) {
+static FuncDecl *new_decl(Parser *P, ObjString *name, int line) {
     FuncDecl *d = arena_alloc(tree, sizeof(FuncDecl));
     d->name = name;
     d->line = line;
     d->src = P->src;
     d->strict = P->src->strict;
+    return d;
+}
 
+/* "(params)" and an optional ": ReturnType". */
+static void function_params(Parser *P, FuncDecl *d) {
     expect(P, T_LPAREN, "'(' to start the parameter list");
     int cap = 0, typed = 0;
     while (!check(P, T_RPAREN)) {
@@ -435,7 +440,11 @@ static FuncDecl *function_rest(Parser *P, ObjString *name, int line) {
     expect(P, T_RPAREN, "')' to close the parameter list");
     if (!typed) d->types = NULL;
     if (match(P, T_COLON)) d->ret = type_annotation(P);
+}
 
+static FuncDecl *function_rest(Parser *P, ObjString *name, int line) {
+    FuncDecl *d = new_decl(P, name, line);
+    function_params(P, d);
     if (check(P, T_ARROW)) {
         Token *arrow = advance(P);
         d->is_arrow = 1;
@@ -602,6 +611,11 @@ static Node *type_expression(Parser *P, Token *t, int tag) {
     case TT_LIST: return new_node(N_LIST, t->line);
     case TT_FUNCTION:
         error_at(P, t, "Function has no default value: write a function with fn, or use Function[] for a list of them");
+        return NULL;
+    case TT_CHANNEL:  /* Channel: a new channel, as Channel() */
+        return call_of(P, t);
+    case TT_ISOLATE:
+        error_at(P, t, "Isolate has no default value: start one with spawn(f, ...)");
         return NULL;
     case TT_RANGE:  /* the empty range 0..0 */
         return empty_range(t->line);
@@ -798,9 +812,16 @@ static Node *comparison(Parser *P) {
             Node *n = new_node(N_IS, op->line);
             n->as.is.value = left;
             n->as.is.tag = type_tag_from_name(t->start, (size_t)t->length);
-            if (n->as.is.tag < 0) {
+            if (n->as.is.tag < 0 || check(P, T_DOT)) {  /* a class, perhaps in a package: x is geometry.Point */
+                n->as.is.tag = -1;
                 n->as.is.cls = new_node(N_VAR, t->line);
                 n->as.is.cls->as.var.name = name_of(P, t);
+                while (match(P, T_DOT)) {
+                    Node *f = new_node(N_FIELD, t->line);
+                    f->as.field.object = n->as.is.cls;
+                    f->as.field.name = name_of(P, expect(P, T_IDENT, "a class name after '.'"));
+                    n->as.is.cls = f;
+                }
             }
             left = n;
         } else if (check(P, T_LT) || check(P, T_LE) || check(P, T_GT) || check(P, T_GE) || check(P, T_IN)) {
@@ -956,6 +977,58 @@ static Node *fn_statement(Parser *P) {
     return n;
 }
 
+/*  on score { ... }              runs when the global var `score` changes
+ *  on score (old, new) { ... }   ...and gets its value before and after
+ *  on score, lives { ... }       runs when any of them changes
+ *  on score (old, new) when new > old { ... }   only when the condition holds */
+static Node *on_statement(Parser *P) {
+    Token *kw = advance(P);
+    Node *n = new_node(N_ON, kw->line);
+    StrBuf label;  /* the block's name in tracebacks: "on score, lives" */
+    sb_init(&label);
+    sb_puts(&label, "on ");
+    int cap = 0;
+    do {
+        Token *t = expect(P, T_IDENT, "a variable name after 'on'");
+        if (n->as.on.count == cap) {
+            int old = cap;
+            cap = cap ? cap * 2 : 4;
+            n->as.on.names = arena_grow(tree, n->as.on.names, sizeof(ObjString *) * (size_t)old,
+                                        sizeof(ObjString *) * (size_t)cap);
+        }
+        n->as.on.names[n->as.on.count++] = name_of(P, t);
+        if (n->as.on.count > 1) sb_puts(&label, ", ");
+        sb_putn(&label, t->start, (size_t)t->length);
+    } while (match(P, T_COMMA));
+    FuncDecl *d = new_decl(P, lube_intern(P->I, label.data, label.len), kw->line);
+    sb_free(&label);
+    if (check(P, T_LPAREN)) {
+        if (n->as.on.count > 1)
+            error_at(P, peek(P), "an 'on' block for several variables has no (old, new): read the variables in the block");
+        Token *open = peek(P);
+        function_params(P, d);
+        if (d->nparams != 2 || d->modes[0] == PARAM_REF || d->modes[1] == PARAM_REF || d->ret.set)
+            error_at(P, open, "an 'on' block takes (old, new): the value before the change and after it");
+    }
+    Node *cond = NULL;
+    Token *t = peek(P);
+    if (t->type == T_IDENT && t->length == 4 && !memcmp(t->start, "when", 4)) {  /* when: only a word here */
+        advance(P);
+        cond = expression(P);
+    }
+    if (!check(P, T_LBRACE)) expect(P, T_LBRACE, "'{', (old, new) or 'when' after the variable names");
+    d->body = block(P);
+    if (cond) {  /* when c { body } is { if c { body } } */
+        Node *test = new_node(N_IF, cond->line);
+        test->as.if_s.cond = cond;
+        test->as.if_s.then_branch = d->body;
+        d->body = new_node(N_BLOCK, kw->line);
+        list_add(&d->body->as.block.stmts, test);
+    }
+    n->as.on.func = d;
+    return n;
+}
+
 /* Adds the hidden first parameter `this` to a method. */
 static void add_this(Parser *P, FuncDecl *d) {
     int n = d->nparams + 1;
@@ -990,6 +1063,7 @@ static Node *class_statement(Parser *P) {
     Token *name = expect(P, T_IDENT, "a class name after 'class'");
     Node *n = new_node(N_CLASS, kw->line);
     n->as.klass.var.name = name_of(P, name);
+    n->as.klass.title = n->as.klass.var.name;
     if (match(P, T_EXTENDS)) {
         Token *parent = expect(P, T_IDENT, "a class name after 'extends'");
         n->as.klass.parent = new_node(N_VAR, parent->line);
@@ -1016,6 +1090,7 @@ static Node *class_statement(Parser *P) {
             if (n->as.klass.ctor) error_at(P, t, "a class has only one constructor");
             Node *f = new_node(N_FUNC, t->line);
             f->as.func = function_rest(P, name_of(P, t), t->line);
+            f->as.func->is_ctor = 1;
             if (f->as.func->ret.set) error_at(P, t, "a constructor cannot have a return type: it always makes the instance");
             add_this(P, f->as.func);
             n->as.klass.ctor = f;
@@ -1092,13 +1167,50 @@ static Node *try_statement(Parser *P) {
     return n;
 }
 
+/* a.b.c: a package name (the words joined by dots, interned). */
+static ObjString *dotted_name(Parser *P, const char *what, int allow_star, int *star) {
+    StrBuf sb;
+    sb_init(&sb);
+    Token *t = expect(P, T_IDENT, what);
+    sb_putn(&sb, t->start, (size_t)t->length);
+    while (check(P, T_DOT)) {
+        advance(P);
+        if (allow_star && check(P, T_STAR)) {
+            advance(P);
+            *star = 1;
+            break;
+        }
+        t = expect(P, T_IDENT, "a name after '.'");
+        sb_putc(&sb, '.');
+        sb_putn(&sb, t->start, (size_t)t->length);
+    }
+    ObjString *s = lube_intern(P->I, sb.data, sb.len);
+    sb_free(&sb);
+    return s;
+}
+
+/*  import "file"           runs file.lube (once); its names join this file's
+ *  import a.b.Name         the name Name from package a.b (also: as Alias)
+ *  import a.b.*            every public name of package a.b
+ *  import a.b              the package itself, as b (also: as alias): b.Name */
 static Node *import_statement(Parser *P) {
     Token *kw = advance(P);
-    Token *path = expect(P, T_STRING, "a file path string after 'import'");
-    Node *lit = string_literal(P, path);
-    if (lit->kind != N_LITERAL) error_at(P, path, "the import path cannot use interpolation");
     Node *n = new_node(N_IMPORT, kw->line);
-    n->as.import.path = AS_STRING(lit->as.literal);
+    if (check(P, T_STRING)) {
+        Token *path = advance(P);
+        Node *lit = string_literal(P, path);
+        if (lit->kind != N_LITERAL) error_at(P, path, "the import path cannot use interpolation");
+        n->as.import.path = AS_STRING(lit->as.literal);
+    } else {
+        if (!check(P, T_IDENT)) expect(P, T_STRING, "a package name (like lube.geometry.Point) or a file path string after 'import'");
+        n->as.import.dotted = dotted_name(P, "a package name", 1, &n->as.import.star);
+        Token *t = peek(P);
+        if (t->type == T_IDENT && t->length == 2 && !memcmp(t->start, "as", 2)) {  /* as: only a word here */
+            if (n->as.import.star) error_at(P, t, "an import with * brings in every name, so it takes no 'as'");
+            advance(P);
+            n->as.import.alias = name_of(P, expect(P, T_IDENT, "a name after 'as'"));
+        }
+    }
     end_statement(P);
     return n;
 }
@@ -1123,8 +1235,13 @@ static Node *statement(Parser *P) {
         return try_statement(P);
     case T_IMPORT:
         return import_statement(P);
+    case T_PACKAGE:
+        error_at(P, t, "the package line must be the first line of a file");
+        return NULL;
     case T_CLASS:
         return class_statement(P);
+    case T_ON:
+        return on_statement(P);
     case T_LBRACE:
         return block(P);
     case T_RETURN:
@@ -1178,6 +1295,7 @@ Node *parse_program(Interp *I, Source *src, Arena **arena) {
     P.depth = 0;
 
     Node *program = new_node(N_BLOCK, 1);
+    src->package = NULL;
     if (setjmp(jb) != 0) {  /* syntax error: free everything */
         while (pending.nbufs > 0) sb_free(&pending.bufs[--pending.nbufs]);
         while (pending.ntoks > 0) free(pending.toks[--pending.ntoks].items);
@@ -1185,6 +1303,12 @@ Node *parse_program(Interp *I, Source *src, Arena **arena) {
         arena_free(tree);
         tree = NULL;
         return NULL;
+    }
+    skip_newlines(&P);
+    if (check(&P, T_PACKAGE)) {  /* package a.b: the file's names live in package a.b */
+        advance(&P);
+        src->package = dotted_name(&P, "a package name after 'package'", 0, NULL);
+        end_statement(&P);
     }
     for (;;) {
         skip_newlines(&P);

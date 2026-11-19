@@ -411,12 +411,12 @@ double range_length(ObjRange *r) {
  * ==================================================================== */
 
 static const char *TYPE_NAMES[TT_COUNT] = {
-    "List", "str", "String", "Number", "Bool", "Object", "Map", "List", "Function", "Range",
+    "List", "str", "String", "Number", "Bool", "Object", "Map", "List", "Function", "Range", "Channel", "Isolate",
     "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64",
 };
 static const char *LIST_NAMES[TT_COUNT] = {
     "List", "str[]", "String[]", "Number[]", "Bool[]", "Object[]", "Map[]", "List[]", "Function[]", "Range[]",
-    "int8[]", "int16[]", "int32[]", "int64[]", "uint8[]", "uint16[]", "uint32[]", "uint64[]",
+    "Channel[]", "Isolate[]", "int8[]", "int16[]", "int32[]", "int64[]", "uint8[]", "uint16[]", "uint32[]", "uint64[]",
 };
 
 /* The TypeTag of a type name such as "String" or "int32", or -1. */
@@ -430,7 +430,7 @@ const char *tag_name(int tag) { return TYPE_NAMES[tag]; }
 
 /* "Map" or "Map[Object, String]" (built once per combination). */
 static const char *map_name(int ktype, int vtype) {
-    static char names[TT_COUNT][TT_COUNT][48];
+    static LUBE_THREAD_LOCAL char names[TT_COUNT][TT_COUNT][48];
     if (ktype == TT_ANY) return "Map";
     char *s = names[ktype][vtype];
     if (!s[0]) snprintf(s, sizeof names[0][0], "Map[%s, %s]", TYPE_NAMES[ktype], TYPE_NAMES[vtype]);
@@ -440,8 +440,8 @@ static const char *map_name(int ktype, int vtype) {
 /* "a String", "an Object", "an int32": for error messages. A few rotating
  * buffers let one message use it several times. */
 const char *with_article(const char *name) {
-    static char bufs[4][80];
-    static int next = 0;
+    static LUBE_THREAD_LOCAL char bufs[4][80];
+    static LUBE_THREAD_LOCAL int next = 0;
     char *b = bufs[next];
     next = (next + 1) % 4;
     snprintf(b, sizeof bufs[0], "%s %s", strchr("AEIOUaeiou", name[0]) ? "an" : "a", name);
@@ -465,6 +465,10 @@ TypeDesc desc_of(Value v) {
         case OBJ_STROBJ: d.kind = TD_STROBJ; break;
         case OBJ_LIST: d.kind = TD_LIST; d.a = (unsigned char)AS_LIST(v)->elem; break;
         case OBJ_RANGE: d.kind = TD_RANGE; break;
+        case OBJ_CLASS: d.kind = TD_CLASSVAL; break;
+        case OBJ_CHANNEL: d.kind = TD_CHANNEL; break;
+        case OBJ_ISOLATE: d.kind = TD_ISOLATE; break;
+        case OBJ_PACKAGE: d.kind = TD_OBJECT; break;
         case OBJ_MAP:
             if (AS_MAP(v)->klass) { d.kind = TD_CLASS; d.cls = AS_MAP(v)->klass; }
             else if (AS_MAP(v)->dict) { d.kind = TD_MAP; d.a = AS_MAP(v)->ktype; d.b = AS_MAP(v)->vtype; }
@@ -494,6 +498,9 @@ int desc_accepts(TypeDesc d, Value v, Value *out) {
     case TD_OBJECT: return IS_OBJ(v) && !IS_STRING(v);
     case TD_FUNCTION: return IS_CALLABLE(v);
     case TD_RANGE: return IS_RANGE(v);
+    case TD_CHANNEL: return IS_CHANNEL(v);
+    case TD_ISOLATE: return IS_ISOLATE(v);
+    case TD_CLASSVAL: return IS_CLASS(v);
     default: return IS_INSTANCE(v) && is_subclass(AS_MAP(v)->klass, d.cls);  /* TD_CLASS */
     }
 }
@@ -510,13 +517,19 @@ const char *desc_name(TypeDesc d) {
     case TD_OBJECT: return "Object";
     case TD_FUNCTION: return "Function";
     case TD_RANGE: return "Range";
+    case TD_CHANNEL: return "Channel";
+    case TD_ISOLATE: return "Isolate";
+    case TD_CLASSVAL: return "Class";
     default: return d.cls->name->chars;  /* TD_CLASS */
     }
 }
 
+/* "str[]", "int32[]", "List": the name of a list holding `tag`. */
+const char *list_type_name(int tag) { return LIST_NAMES[tag]; }
+
 /* The name of a written type, for messages (a class by its name). */
 const char *ann_name(const TypeAnn *t) {
-    return t->d.kind == TD_CLASS ? t->cls->as.var.name->chars : desc_name(t->d);
+    return t->d.kind == TD_CLASS ? lube_shown(t->cls) : desc_name(t->d);
 }
 
 int value_has_type(Value v, int tag) {
@@ -531,6 +544,8 @@ int value_has_type(Value v, int tag) {
     case TT_LIST: return IS_LIST(v);
     case TT_FUNCTION: return IS_CALLABLE(v);
     case TT_RANGE: return IS_RANGE(v);
+    case TT_CHANNEL: return IS_CHANNEL(v);
+    case TT_ISOLATE: return IS_ISOLATE(v);
     default: return IS_INT(v) && v.ikind == tag - TT_INT8;
     }
 }
@@ -608,6 +623,12 @@ int values_equal(Value a, Value b) {
                     p->inclusive == q->inclusive;
             break;
         }
+        case OBJ_CHANNEL:  /* the same channel, held through two wrappers (an isolate's handle has just one) */
+            equal = AS_CHANNEL(x)->ch == AS_CHANNEL(y)->ch;
+            break;
+        case OBJ_PACKAGE:  /* the same package, imported in two files */
+            equal = AS_PACKAGE(x)->name == AS_PACKAGE(y)->name;
+            break;
         default:
             equal = 0;  /* functions are equal only to themselves */
         }
@@ -631,7 +652,10 @@ const char *type_name(Value v) {
         if (AS_MAP(v)->klass) return AS_MAP(v)->klass->name->chars;
         return AS_MAP(v)->dict ? map_name(AS_MAP(v)->ktype, AS_MAP(v)->vtype) : "Object";
     case OBJ_RANGE: return "Range";
-    case OBJ_CLASS: return "Class"; /* LCOV_EXCL_LINE: no value is ever a class */
+    case OBJ_CLASS: return "Class";
+    case OBJ_CHANNEL: return "Channel";
+    case OBJ_ISOLATE: return "Isolate";
+    case OBJ_PACKAGE: return "Package";
     default: return "Function";  /* OBJ_FUNCTION or OBJ_NATIVE */
     }
 }
@@ -730,10 +754,18 @@ static void append_inner(StrBuf *sb, Value v, int quote, int depth) {
         sb_putc(sb, ']');
         return;
     }
-    case OBJ_CLASS:  /* LCOV_EXCL_START: a class name alone makes an instance, so no value is a class */
+    case OBJ_CLASS:
         sb_printf(sb, "<class %s>", AS_CLASS(v)->name->chars);
         return;
-        /* LCOV_EXCL_STOP */
+    case OBJ_CHANNEL:
+        sb_puts(sb, "<channel>");
+        return;
+    case OBJ_ISOLATE:
+        sb_puts(sb, "<isolate>");
+        return;
+    case OBJ_PACKAGE:
+        sb_printf(sb, "<package %s>", AS_PACKAGE(v)->name->chars);
+        return;
     case OBJ_MAP: {
         ObjMap *m = AS_MAP(v);
         if (depth >= MAX_PRINT_DEPTH) { sb_puts(sb, "{...}"); return; }

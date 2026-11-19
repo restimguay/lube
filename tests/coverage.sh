@@ -30,9 +30,13 @@ fi
 FLAGS=""
 if [ "$(uname -s)" = Darwin ]; then FLAGS="-DLUBE_STACK_SIZE=0x3F00000 -Wl,-stack_size,0x3F00000"; fi
 # shellcheck disable=SC2086
-${CC:-cc} -std=c99 -O0 -g -fprofile-instr-generate -fcoverage-mapping $FLAGS -o "$OUT/lube" src/*.c -lm
+# atomic counters: isolates run on several threads at once
+${CC:-cc} -std=c99 -O0 -g -fprofile-instr-generate -fcoverage-mapping -fprofile-update=atomic $FLAGS -o "$OUT/lube" src/*.c -lm -lpthread
 
-if ! LLVM_PROFILE_FILE="$OUT/run-%p.profraw" sh tests/run.sh "$OUT/lube" >"$OUT/tests.log" 2>&1; then
+# An absolute path (some tests run lube, and programs built with it, from
+# other folders), and a pool of files every run merges into under a lock (%8m):
+# named by process id alone, a reused id would overwrite an earlier run's counts.
+if ! LLVM_PROFILE_FILE="$PWD/$OUT/run-%8m.profraw" sh tests/run.sh "$OUT/lube" >"$OUT/tests.log" 2>&1; then
     cat "$OUT/tests.log"
     exit 1
 fi

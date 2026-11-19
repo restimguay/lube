@@ -1,0 +1,62 @@
+// hot_reload(): tests/cli.sh copies this into an empty folder; it writes its own modules.
+write_file("game.lube", 'class Animal {
+  var name = "a"
+  fn speak(): str => "..."
+}
+class Player extends Animal {
+  var title = "player"
+  constructor(n: str = "p") { this.name = n }
+  fn greet(): str => "hello " + this.name
+}
+fn score(n: Number): Number => n * 1
+var lives = 3
+on lives (old, new) { print("lives", old, "->", new) }
+')
+write_file("busy.lube", 'fn work(): str {
+  write_file("busy.lube", "fn work(): str => \\"new work\\"")
+  print("reloaded while running:", hot_reload())
+  return "old work finished"
+}
+')
+import "game"
+import "busy"
+var p = Player("ada")
+print(score(5), p.greet(), p.speak(), lives)
+
+// functions are replaced, existing instances get new methods, vars keep their values
+write_file("game.lube", read_file("game.lube").replace("n * 1", "n * 10").replace("hello", "hi")
+  .replace('"..."', '"grr"').replace("var lives = 3", "var lives = 99\nvar bonus = 7\nfn extra() => bonus + 1")
+  .replace('print("lives", old', 'print("new block: lives", old'))
+print(hot_reload())
+print(score(5), p.greet(), p.speak(), lives, bonus, extra(), Player().greet())
+print(hot_reload())
+lives -= 1  // the reloaded file's on block replaced the old one: it runs once
+
+// a function that is running when its file is replaced finishes with its old code
+print(work())
+print(work())
+
+// a class can gain fields: new instances have them
+write_file("game.lube", read_file("game.lube").replace('var title = "player"', 'var title = "player"\n  var level = 1'))
+print(hot_reload(), fields(Player()), p)
+
+// a name that was a variable can become a class
+write_file("game.lube", read_file("game.lube") + 'class bonus {\n  var v = 1\n}\n')
+print(hot_reload(), type(bonus))
+
+// new imports in a changed file run; a reload never starts inside another
+write_file("extra.lube", 'print("extra imported", hot_reload())\nfn from_extra() => "x"')
+write_file("game.lube", read_file("game.lube") + 'import "extra"\n')
+print(hot_reload(), from_extra())
+
+// errors are reported and the program keeps the code it had
+write_file("game.lube", "fn score(n) => n +")
+print(hot_reload(), score(5))
+write_file("game.lube", "fn score(n) => n\nbreak")
+print(hot_reload(), score(5))
+write_file("game.lube", 'class Animal extends Player {\n}\n')
+print(hot_reload(), parent_of(find_class("Player")))
+write_file("game.lube", "fn score(n) => 1 / 0\nvar later = undefined_thing")
+print(hot_reload())
+try { score(1) } catch e { print(e) }
+print(classes())

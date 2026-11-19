@@ -163,3 +163,20 @@ let continued = true
   and false
 print(continued, Range, type(Range))
 print("done")
+
+// fractional remainders, and a call that lends more than four places
+print(5.5 % 2, -5.5 % 2, 7 % -2.5, -6 % 3)
+fn five(&a, &b, &c, &d, &e) {
+  a += 1
+  e += 1
+}
+var l1 = 1
+var l2 = 2
+var l3 = 3
+var l4 = 4
+var l5 = 5
+five(&l1, &l2, &l3, &l4, &l5)
+print(l1, l5)
+
+// a built-in called back from C with the wrong number of arguments
+try { ["x"].map(pad_left) } catch e { print(e) }

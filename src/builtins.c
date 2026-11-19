@@ -337,9 +337,16 @@ NATIVE(n_remove) {
 }
 
 /* Removes a key; returns whether it was there. */
+/* An instance always has exactly the fields its class declares. */
+static Value fixed_fields(Interp *I, const char *fn, Value v) {
+    return lube_error(I, "%s() cannot remove fields from %s: an instance always has every field its class declares", fn,
+                      a_type(v));
+}
+
 NATIVE(n_delete) {
     (void)argc;
     NEED_MAP(0);
+    if (IS_INSTANCE(argv[0])) return fixed_fields(I, FNAME, argv[0]);
     if (!map_key_ok(AS_MAP(argv[0]), argv[1]) || !map_get(AS_MAP(argv[0]), argv[1], NULL)) return BOOL_VAL(0);
     make_unique(&argv[0]);
     map_delete(AS_MAP(argv[0]), argv[1], NULL);
@@ -349,6 +356,7 @@ NATIVE(n_delete) {
 NATIVE(n_clear) {
     (void)argc;
     NEED(IS_LIST(argv[0]) || IS_MAP(argv[0]), 0, "a List or Object");
+    if (IS_INSTANCE(argv[0])) return fixed_fields(I, FNAME, argv[0]);
     Value empty;
     if (IS_LIST(argv[0])) {  /* a cleared String[] is still a String[] */
         ObjList *l = new_list();
@@ -495,6 +503,10 @@ NATIVE(n_index_of) {
 }
 
 NATIVE(n_join) {
+    if (IS_ISOLATE(argv[0])) {  /* iso.join(): waits for an isolate (isolate.c) */
+        if (argc > 1) return lube_error(I, "join() takes just the isolate when waiting for one");
+        return lube_join_isolate(I, argv[0]);
+    }
     if (argc > 1) NEED_STR(1);
     LIST_ARG(l, 0);
     ObjString *sep = argc > 1 ? text_of(argv[1]) : NULL;
@@ -1243,6 +1255,15 @@ INT_TYPE(n_uint64, IK_U64)
  * Misc
  * ==================================================================== */
 
+/* hot_reload(): applies the files of the program that changed since it
+ * started (or since the last reload) and returns their paths. lube --hot
+ * does this by itself while the program runs. */
+NATIVE(n_hot_reload) {
+    (void)argc;
+    (void)argv;
+    return OBJ_VAL(lube_hot_reload(I));
+}
+
 NATIVE(n_assert) {
     if (is_truthy(argv[0])) return NIL_VAL;
     if (argc > 1) {
@@ -1361,6 +1382,7 @@ static const struct {
     {"shuffle", n_shuffle, 1, 1, 0},
     /* misc */
     {"assert", n_assert, 1, 2, 0},
+    {"hot_reload", n_hot_reload, 0, 0, 0},
 };
 
 void register_builtins(Interp *I) {

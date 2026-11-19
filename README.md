@@ -24,6 +24,7 @@ make            # builds ./lube (needs only a C compiler)
 make test       # runs the test suite
 make check      # runs it again with memory sanitizers and a leak check
 make coverage   # measures test coverage (needs clang's llvm-cov); fails below 100%
+make tsan       # runs the suite with ThreadSanitizer (data races between isolates)
 make install    # copies lube to /usr/local/bin (PREFIX=... to change)
 ```
 
@@ -33,8 +34,22 @@ make install    # copies lube to /usr/local/bin (PREFIX=... to change)
 ./lube script.lube a b c     # extra arguments are in the `args` list
 ./lube -e 'print(2 ** 10)'   # run a snippet
 ./lube --check app.lube      # report syntax errors without running (exit 0 or 65)
+./lube --build app.lube      # build a standalone executable ./app (or: -o name)
+./lube --hot app.lube        # run, applying your edits to the running program
 echo 'print("hi")' | ./lube -
 ```
+
+### Shipping a program: script or executable
+
+A Lube program can be run as a script, or built into a single executable that runs without Lube installed:
+
+```sh
+./lube app.lube one two            # as a script
+./lube --build app.lube -o app     # built: app.lube and every file it imports
+./app one two                      # the same program; args is ["one", "two"]
+```
+
+The executable is a copy of the interpreter with the program appended, so it starts as fast as a script and behaves the same. Building checks every file first, so a program with a syntax error, or an import that can't be found, doesn't build. Imports are packed with the paths the program uses, so the sources aren't needed afterwards. Files the program reads with `read_file` are still read from disk, relative to the current folder. Every command-line argument goes to the program: a built executable has no options of its own.
 
 ## Memory: no garbage collector, no drama
 
@@ -105,6 +120,7 @@ Comments start with `#` or `//`. Statements end at the end of a line. Use `;` to
 | `Range`    | `0..10` (excludes 10), `1..=10` (includes 10) |
 | `Function` | `fn(x) => x * 2`                         |
 | classes    | `Dog("rex")`: see Classes below          |
+| `Channel`, `Isolate` | `channel()`, `spawn(f, x)`: see Concurrency below |
 
 `Bool`, `Number`, `str` and the sized integers are *primitives*. Everything else is an object, so `x is Object` is true for a list, a map, a `String` or a class instance, and false for `5` or `"text"`.
 
@@ -419,6 +435,110 @@ print(rex is Animal)        // true
 - **A method can change `this` only when its receiver can change.** `rex.rename("max")` works on a `var`, but on a `let` it is an error.
 - A bare class name is a default instance (`var pet = Animal` calls `Animal()`), and a `var` holding an `Animal` also accepts a `Dog`.
 - Methods and constructors can declare parameter and return types like any function (see Typed functions above). `this` never needs one.
+- `delete` and `clear` refuse instances: an instance always has every field its class declares.
+
+### Reflection
+
+A program can look at its own classes, functions and globals:
+
+```lube
+var rex = Dog("rex")
+let C = class_of(rex)              // the class itself: prints as <class Dog>
+print(C.name, type(C))             // Dog Class
+print(parent_of(C))                // <class Animal>
+print(fields(rex))                 // [{name: "name", type: "str"}, {name: "legs", type: "Number"}, ...]
+print(methods(C))                  // ["speak", "learn", "rename"]: inherited ones too
+
+fn scale(by: Number, &shape: Rect): Bool => ...
+print(signature(scale))
+// {name: "scale", params: [{name: "by", type: "Number", mode: "let", has_default: false},
+//  {name: "shape", type: "Rect", mode: "&", has_default: false}], returns: "Bool", builtin: false}
+print(signature(C, "learn"))       // a method's (without `this`); signature(C) is the constructor's
+
+let f = "name"
+print(get_field(rex, f))           // rex
+set_field(&rex, f, "max")          // checked against the field's declared type
+print(call_method(rex, "speak"))   // a method by name
+print(has_method(rex, "fly"))      // false
+
+print(classes())                   // [<class Animal>, <class Dog>, ...]
+let D = find_class("Dog")          // a class from its name
+let fido = D("fido")
+print(globals())                   // the program's global names, in order: ["Animal", "Dog", ...]
+```
+
+- A class is a value: it prints as `<class Dog>`, `type()` calls it `Class`, `c.name` is its name, and calling it makes an instance. Classes compare by identity and can be map keys. A class's own name alone, `Dog`, still makes a default instance; a variable holding a class, like `C` above, is the class itself.
+- `fields`, `methods`, `parent_of` and `signature(c, "method")` take a class or an instance.
+- In `signature`, a parameter with no declared type has type `"any"`, and `returns` is `"any"` when no return type was written (`"nothing"` in a `#strict` file).
+- `call_method(x, name, ...)` calls a method of `x`'s class, a function stored in one of its fields, or a global function as `x.name(...)` would. A method called this way can't change `x`.
+
+### Reactivity: `on`
+
+An `on` block runs whenever a global `var` changes, right after the change:
+
+```lube
+var score = 0
+var lives = 3
+
+on score (old, new) {                  // the value before and after
+  if new > old { print("+", new - old) }
+}
+
+on score {
+  print("score changed to", score)
+}
+
+on score, lives {                      // when any of these changes
+  redraw()
+}
+
+on score (old, new) when new > old {   // only when the condition holds
+  print("+", new - old)
+}
+
+score += 10      // + 10, score changed to 10, redraw()...
+score = 10       // the same value: nothing runs
+```
+
+- Any change counts: an assignment (`score = 5`, `score += 1`), a change inside the value (`items.push(x)`, `player.hp -= 1`, `grid[r][c] = 1`), or a function changing it through `&` (`heal(&player)`, `player.heal()`). Assigning the value it already has is not a change.
+- Blocks run in the order they were declared, after everything a call lent with `&` is back.
+- A block's own changes don't run it again, so `on count { count = 0 }` can't loop. A block can change other watched vars, and their blocks run.
+- An error in a block reaches the code that made the change, like an error in a function it called. A change made by a call that then fails doesn't run the blocks.
+- `on` watches global `var`s, and goes at the top level of a file. Watching a `let`, a function or a variable that doesn't exist is an error. In a `#strict` file, `(old, new)` need types: `on score (old: Number, new: Number)`.
+- With hot reload, a changed file's `on` blocks replace the old ones.
+
+### Concurrency: isolates and channels
+
+A program can use every core. `spawn` runs a function in an *isolate*: a separate interpreter, with its own heap and globals, on its own thread. Isolates share no values (Lube's values are copies anyway), so there are no locks and no data races, and each one runs at full speed. They talk through *channels*:
+
+```lube
+fn worker(jobs: Channel, results: Channel) {
+  for n in jobs {                       // until jobs is closed
+    results.send(heavy(n))
+  }
+}
+
+let jobs = channel()
+let results = channel()
+let pool = [spawn(worker, jobs, results), spawn(worker, jobs, results)]
+for n in 0..100 { jobs.send(n) }
+jobs.close()
+for w in pool { w.join() }
+print(sum(results.take(100)))
+
+let squares = parallel_map(list(1..=1000), square)   // f on every core, results in order
+print(spawn(add, 2, 3).join())                       // 5: join() gives the function's result
+```
+
+- `spawn(f, args...)` starts the top-level function `f` (declared with `fn` at the top of a file) and returns an `Isolate`. `iso.join()` waits for it and gives a copy of its result; if `f` failed, `join()` raises its error. An error nobody joins is reported when the isolate ends.
+- `channel()` is a queue; `channel(n)` holds at most `n` values, so `send` waits while it is full. `ch.send(v)` copies `v` in; `ch.receive()` waits for a value; `ch.try_receive(default)` never waits; `ch.take(n)` gives `n` values as a list; `ch.close()` ends it, and `for v in ch` reads until then.
+- What can be sent: numbers, text, lists, maps and objects, class instances, ranges, and channels themselves (that is how isolates find each other). Functions can't, and sending deep values copies them.
+- A new isolate runs the program's declarations: its functions, classes, imports and `on` blocks. A global variable gets its value the first time code in the isolate uses it, so a global that starts isolates or reads a big file costs nothing in a worker that doesn't touch it.
+- **Deadlocks are errors, not hangs.** When an isolate would wait (on a channel, or a join) while every other isolate is already waiting, nothing could ever wake it, so it gets *deadlock: every isolate is waiting* instead. A forgotten `close()` shows up at once.
+- The program ends when the main program and every isolate it started have finished. An isolate still waiting then gets the deadlock error.
+- `cores()` tells how many cores the machine has. `Channel` and `Isolate` are types like any other (`fn worker(jobs: Channel)`), and `Channel` alone makes a new channel.
+
+On a 10-core machine, `parallel_map` over 40 heavy calls runs 4.8× faster than `map`.
 
 ### Errors
 
@@ -462,7 +582,57 @@ traceback (innermost call first):
 import "vector"      # runs vector.lube (next to this file) once
 ```
 
-Imported files share the global scope, so their top-level functions and variables become available.
+Imported files share the global scope, so their top-level functions and variables become available. A file runs once, however its path is spelled (`lib/x` and `./lib/../lib/x` are the same file).
+
+### Packages
+
+A bigger program can keep its parts apart in packages. A package is a folder: every file in `lube/geometry/` starts with the line `package lube.geometry`, and together those files are the package. Its names belong to it, so two packages can both have a `Point` or a `len`:
+
+```lube
+// lube/geometry/point.lube
+package lube.geometry
+class Point { ... }
+fn _round(x: Number) => ...          // names starting with _ stay inside the package
+
+// lube/geometry/area.lube
+package lube.geometry
+fn area(p: Point): Number => ...     // the package's other files need no import
+
+// main.lube
+import lube.geometry.Point           // one name
+import lube.geometry.area as size    // ...under another name
+import lube.text.*                   // every public name of a package
+import lube.geometry                 // the package itself: geometry.Point, geometry.area(p)
+import lube.geometry as geo          // ...under another name
+
+let p = Point(3, 4)
+print(size(p), geometry.area(p), p is geo.Point)
+```
+
+- Packages are found from the main program's folder, then from the folders listed in `LUBE_PATH` (separated by `:`). Importing anything from a package loads its whole folder, once.
+- Inside a package, a name means: an imported name, else one of the package's own, else a built-in. So a package can define its own `len` without affecting anyone else.
+- `import "file"` still works as before: a file without a package line shares the importer's names. A file that has one keeps its names to itself, however it is imported.
+- Package imports go at the top level of a file. A missing package or name, a private name, or a file in a package's folder whose package line disagrees, is an error before the program runs.
+- Isolates, hot reload and `lube --build` all handle packages: a built executable carries the package files it uses.
+
+### Hot reload
+
+`lube --hot app.lube` runs a program and applies your edits while it keeps running. Save a file, and within about 50 ms of run time its new code is in the running program:
+
+```
+$ lube --hot game.lube
+...
+lube: reloaded game.lube
+```
+
+- **Functions** are replaced: the next call runs the new code.
+- **Classes** get their new methods, constructor and fields, and existing instances use the new methods right away. (An existing instance keeps the fields it was made with; new instances get the new ones.)
+- **Variables keep their values.** A `var` or `let` that already exists isn't run again, so the program's state survives. New globals are created, and new imports run.
+- **Nothing else runs again:** top-level statements like a main loop keep running with the new functions.
+- A call that is running when its file changes finishes with the old code.
+- An edit with an error is reported, and the program goes on with the code it had. When you fix the file, the fix is applied.
+
+A program can also apply changes itself, at a moment it chooses: `hot_reload()` looks at every file the program was loaded from, applies the ones that changed, and returns their paths. `--hot` looks while the program runs code, so a program waiting in `input()` gets the changes when it continues.
 
 ## Standard library
 
@@ -480,7 +650,9 @@ All of these are globals, and all of them can be called in method style.
 | strings | `upper`, `lower`, `trim`, `split(s, sep?)`, `replace(s, old, new)`, `starts_with`, `ends_with`, `chars`, `ord`, `chr`, `pad_left(x, width, fill?)`, `pad_right`, `fixed(n, digits?)` |
 | math | `abs`, `floor`, `ceil`, `round(x, digits?)`, `sqrt`, `pow`, `sin`, `cos`, `tan`, `atan2`, `log(x, base?)`, `exp`, `PI`, `INF` |
 | random | `random()`, `random_int(lo, hi)`, `choice(xs)`, `shuffle(xs)`, `seed(n)` |
-| misc | `assert(cond, message?)`, `clock()` (CPU seconds), `time()` (Unix time), `args` |
+| reflection | `class_of`, `parent_of`, `fields`, `methods`, `signature(f)` / `signature(class, method)`, `get_field`, `set_field(&x, name, value)`, `call_method(x, name, ...)`, `has_method`, `classes()`, `find_class(name)`, `globals()` (see Reflection) |
+| concurrency | `spawn(f, args...)`, `iso.join()`, `channel(n?)`, `send`, `receive`, `try_receive(ch, default)`, `take(ch, n)`, `close`, `cores()`, `parallel_map(xs, f)` (see Concurrency) |
+| misc | `assert(cond, message?)`, `clock()` (CPU seconds), `time()` (Unix time), `hot_reload()` (see Hot reload), `args` |
 
 Everything outside the first row returns a new value and leaves its arguments alone; `sort` and `reverse` return new lists. `map`, `filter` and `each` also pass the index when the function takes two parameters: `xs.map(fn(x, i) => ...)`. A `sort` comparator can return a number (negative means `a` goes first) or a bool (`true` means `a` goes first).
 
@@ -489,24 +661,32 @@ Lengths and indexes count bytes. Iterating text, `chars()`, `ord()`, `chr()` and
 ## How the interpreter works
 
 ```
-source ──► lexer ──► tokens ──► parser ──► AST ──► resolver ──► interpreter
+source ──► lexer ──► tokens ──► parser ──► AST ──► resolver ──► compiler ──► bytecode ──► VM
 ```
+
+Programs are compiled to bytecode every time they run, in memory: there is no build step. The VM runs a call to a Lube function in the same loop as its caller, with a frame of its own, so recursion doesn't use the C stack at all: a program can recurse 100,000 calls deep on a phone's small thread stack, and runaway recursion is a clean error. Next to the tree-walking interpreter it replaced, it runs function calls about 1.8× faster and loops about 5× faster.
 
 | file | role |
 |---|---|
 | `src/lexer.c` | Turns text into tokens. Emits end-of-statement tokens at line breaks where a statement can end. |
 | `src/parser.c` | Recursive-descent parser that builds the syntax tree in an arena (freed in one step). Desugars `\|` into calls and parses string interpolations. |
 | `src/resolver.c` | Runs before execution. Gives every local a slot in its function's frame and works out what each closure must copy. Enforces `let`/`var` and the closure rules, and catches misplaced `return` or `break`. |
-| `src/interp.c` | Tree-walking evaluator. Errors are ordinary return values, so every path releases what it owns. Also handles copy-on-write updates, lending with `&`, and recursion limits. |
+| `src/compile.c` | Turns the resolved tree into bytecode: 32-bit instruction words, a source line for each, constants, and descriptors for calls, places, classes and `try` blocks. |
+| `src/interp.c` | The VM and the runtime around it. Errors are ordinary return values, so every path releases what it owns. Also handles copy-on-write updates, lending with `&`, `on` blocks, imports and hot reload. |
 | `src/value.c` | Text, lists (including typed lists), objects and maps (insertion-ordered hash maps), class instances, ranges, type names, equality and printing. |
 | `src/integer.c` | Sized integers: conversions, overflow-checked arithmetic, exact comparisons across number types. |
 | `src/memory.c` | Owner counts and freeing. Freeing never recurses, so even a list nested 100,000 levels deep is freed safely. |
 | `src/builtins.c` | The standard library. |
+| `src/reflect.c` | Reflection: classes, fields, methods, signatures and globals, from inside a program. |
+| `src/bundle.c` | Building a program and its imports into a standalone executable, and running one. |
+| `src/isolate.c` | Isolates and channels: starting isolates, copying values between their heaps, and noticing deadlocks. |
+| `src/thread.c` | The operating system's threads (POSIX threads, or Win32): starting one, and a lock to wait on. |
 | `src/main.c` | Command line and REPL. |
 
 Testing:
 
 - `make test` runs `tests/*.lube` and compares the output with the `.out` files next to them.
-- `make check` runs the same suite on a build with AddressSanitizer and UndefinedBehaviorSanitizer. That build also fails if any object is still alive at exit.
+- `make check` runs the same suite on a build with AddressSanitizer and UndefinedBehaviorSanitizer. That build also fails if any object is still alive at exit, in the main program or in any isolate.
+- `make tsan` runs it with ThreadSanitizer, which reports any data race between isolates.
 - `tests/cli.sh` covers the command line, the REPL, exit codes, tracebacks, the `LUBE_MAX_*` limits, and the programs in `tests/cli/stops.txt` that each stop with an error.
 - `make coverage` builds with clang's source-based coverage, runs the suite, and fails unless every line and every function of the interpreter ran. The few defensive lines that no program can reach are marked `LCOV_EXCL_LINE` (or sit between `LCOV_EXCL_START` and `LCOV_EXCL_STOP`), and the report counts them.

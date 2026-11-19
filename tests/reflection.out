@@ -1,0 +1,65 @@
+<class Dog> Dog Class true
+true true false
+[<class Animal>, <class Dog>, <class Puppy>, <class Plain>]
+class_of() needs an instance of a class, not a Number
+there is no class named 'Cat'
+find_class() needs a name (a str), not a Number
+a Class has no field 'size'
+Plain {v: 0} Plain
+<class Plain> Plain {v: 0}
+Plain {v: 0} Plain {v: 0}
+'some_class' is a Class, so it cannot hold a Number: a var keeps the type it starts with
+<class Animal>
+1 2
+<class Animal> <class Animal> <class Dog>
+Animal has no parent class: it extends Object directly
+parent_of() needs a class or an instance of one, not a str
+[{name: "name", type: "str"}, {name: "legs", type: "Number"}, {name: "tricks", type: "str[]"}]
+[{name: "v", type: "Number"}]
+["speak", "learn", "rename"]
+["speak", "learn", "rename"]
+[]
+fields() needs a class or an instance of one, not a Number
+methods() needs a class or an instance of one, not a List
+{name: "scale", params: [{name: "by", type: "Number", mode: "let", has_default: false}, {name: "shape", type: "Object", mode: "&", has_default: false}, {name: "times", type: "int32", mode: "var", has_default: true}], returns: "Bool", builtin: false}
+{name: "untyped", params: [{name: "a", type: "any", mode: "let", has_default: false}, {name: "b", type: "any", mode: "let", has_default: true}], returns: "any", builtin: false}
+{name: "<lambda>", params: [{name: "x", type: "str", mode: "let", has_default: false}], returns: "Number", builtin: false}
+{name: "learn", params: [{name: "trick", type: "str", mode: "let", has_default: false}], returns: "any", builtin: false}
+str
+[{name: "n", type: "str", mode: "let", has_default: false}]
+{name: "Dog", params: [{name: "name", type: "str", mode: "let", has_default: true}], returns: "Dog", builtin: false}
+{name: "Puppy", params: [{name: "name", type: "str", mode: "let", has_default: true}], returns: "Puppy", builtin: false}
+{name: "Plain", params: [], returns: "Plain", builtin: false}
+{name: "print", params: [], returns: "any", builtin: true}
+Dog has no method 'fly'
+signature() needs a class or an instance of one, not a Number
+signature() needs a name (a str) as its second argument, not a Number
+signature() needs a function or a class, not a Number
+rex 1 4
+a Dog has no field 'age'
+get_field() needs an object or an instance, not a List
+get_field() needs a name (a str) as its second argument, not a Number
+max 3
+field 'name' of Dog is a str, so it cannot hold a Number
+a Dog has no field 'age'
+set_field() needs a name (a str) as its second argument, not a Number
+{debug: true, level: 2}
+set_field() needs an object or an instance, not a Map[str, Number]
+set_field() needs an object or an instance, not a Number
+Plain {v: 7}
+max makes a sound: woof
+Dog
+3 [1, 2, 3] AB
+hi bob
+cannot change 'this' here: the method was called on something that cannot change (a let, or a value that is not in a variable)
+a Dog has no method 'fly'
+call_method() needs a name (a str) as its second argument, not a Number
+push() changes its argument, so it cannot be used as a callback
+true true false
+true false false
+has_method() needs a name (a str) as its second argument, not a Number
+["Animal", "Dog", "Puppy", "Plain", "rex", "C", "P", "make"]
+true false
+delete() cannot remove fields from a Dog: an instance always has every field its class declares
+clear() cannot remove fields from a Dog: an instance always has every field its class declares
+Dog {name: "max", legs: 3, tricks: []}

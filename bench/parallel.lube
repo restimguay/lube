@@ -1,0 +1,15 @@
+fn work(n: Number): Number {
+  var total = 0
+  var i = 0
+  while i < 400000 {
+    total += (i * n) % 7
+    i += 1
+  }
+  return total
+}
+let inputs = list(1..=40)
+let start = clock()
+let serial = inputs.map(work)
+let mid = clock()
+let parallel = parallel_map(inputs, work)
+print(serial == parallel, cores(), "cores")

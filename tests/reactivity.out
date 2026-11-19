@@ -1,0 +1,24 @@
++ 10
+score changed to 10
+redraw: score 10 lives 3
+redraw: score 10 lives 2
+score changed to 4
+redraw: score 4 lives 2
+score went down by 6
+items: 0 -> 1
+items: 1 -> 2
+items: 2 -> 2
+player hp 10 -> 7
+player hp 7 -> 7
+player hp 7 -> 8
++ 5
+score changed to 9
+redraw: score 9 lives 2
+caught: failed after changing it score is 10
+count 0 -> 1
+count is 2
+b is now 10
+caught: guarded cannot be negative
+guarded is -1
+heating up fast: 22 -> 30
+2 10

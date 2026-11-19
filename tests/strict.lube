@@ -57,3 +57,6 @@ fn maybe_print(flag: Bool) {
 }
 maybe_print(false)
 maybe_print(true)
+
+// reflection reports that a #strict function without a return type returns nothing
+print(signature(maybe_print).returns, signature(sum_of).returns)

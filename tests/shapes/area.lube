@@ -1,0 +1,6 @@
+package shapes
+
+// names from the package's other files need no import; built-ins stay built-ins
+fn area(p: Point): Number => abs(p.x * p.y)
+fn _helper() => "private"
+fn len(p: Point): Number => sqrt(p.x ** 2 + p.y ** 2)   // the package's own len

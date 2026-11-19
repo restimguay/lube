@@ -36,7 +36,7 @@ static const struct {
     {"continue", T_CONTINUE}, {"else", T_ELSE}, {"extends", T_EXTENDS}, {"false", T_FALSE},
     {"fn", T_FN},         {"for", T_FOR},       {"if", T_IF},         {"import", T_IMPORT},
     {"in", T_IN},         {"is", T_IS},         {"let", T_LET},       {"nil", T_NIL},
-    {"not", T_NOT},       {"or", T_OR},         {"return", T_RETURN}, {"super", T_SUPER},
+    {"not", T_NOT},       {"on", T_ON},         {"or", T_OR},         {"package", T_PACKAGE}, {"return", T_RETURN}, {"super", T_SUPER},
     {"this", T_THIS},
     {"throw", T_THROW},   {"true", T_TRUE},     {"try", T_TRY},       {"var", T_VAR},
     {"while", T_WHILE},
@@ -362,7 +362,9 @@ int lex(Source *src, const char *begin, const char *end, int line, const char *l
                 lex_error(&L, tline, tls, start, "unexpected character '%c'", c);
             return 0;
         }
+        TokenType before = L.last;
         emit(&L, t, start, tline, tls);
+        if (t == T_STAR && before == T_DOT) L.last = T_IDENT;  /* import a.b.*: the star ends the statement */
     }
 
     if (can_end_statement(L.last)) emit(&L, T_NEWLINE, L.cur, L.line, L.line_start);

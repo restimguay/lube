@@ -4,3 +4,5 @@ lube-check
 lube-check.dSYM/
 .DS_Store
 *.profraw
+lube-tsan
+lube-tsan.dSYM/

@@ -1,0 +1,31 @@
+// Packages: `package a.b` files in the folder a/b, imported by name.
+import shapes.Point
+import shapes.area as size
+import shapes.extra.*
+import shapes
+import shapes.extra as ex
+import shapes as geometry
+
+let p = Point(3, 4)
+print(p, size(p), label(p), shapes.origin(), ex.label(shapes.Point(1, 2)))
+print(type(p), p is Point, p is shapes.Point, class_of(p).name, shapes, ex == ex)
+print(Square(2).side(), Square(2) is Point)
+print(type(geometry), geometry == shapes, geometry == ex, geometry.area(p))
+
+// each package has its own names: shapes.len is not the built-in len
+print(len([1, 2, 3]), shapes.len(p))
+
+// a package's variables live in the package
+print(shapes.count)
+shapes.bump()
+shapes.bump()
+print(shapes.count, shapes.tell())
+
+// names starting with _ stay inside the package
+try { print(shapes._secret) } catch e { print(e) }
+try { shapes._helper() } catch e { print(e) }
+try { shapes.missing } catch e { print(e) }
+try { shapes.count() } catch e { print(e) }
+
+// isolates find a package's functions too
+print(spawn(size, Point(5, 6)).join(), parallel_map([Point(1, 1), Point(2, 3)], size))

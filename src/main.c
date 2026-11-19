@@ -17,6 +17,10 @@ static void usage(FILE *out) {
             "  lube -e CODE          run CODE and print the value of the last expression\n"
             "  lube -                read a script from standard input\n"
             "  lube --check FILE     report syntax errors without running anything (FILE may be -)\n"
+            "  lube --hot FILE [ARGS...]\n"
+            "                        run FILE, applying changes to its files while it runs\n"
+            "  lube --build FILE [-o OUT]\n"
+            "                        build FILE and its imports into a standalone executable\n"
             "  lube -v, --version    print the version\n"
             "  lube -h, --help       show this help\n",
             LUBE_VERSION);
@@ -118,9 +122,12 @@ int main(int argc, char **argv) {
     lower_limit("LUBE_MAX_ITEMS", &lube_max_items);
     lower_limit("LUBE_MAX_BYTES", &lube_max_bytes);
     Interp *I = lube_new(&stack_marker);
-    int status = 0;
+    int bundled = lube_run_bundle(I, argv[0], argc, argv);  /* a built program runs itself */
+    int status = bundled >= 0 ? bundled : 0;
 
-    if (argc < 2) {
+    if (bundled >= 0) {
+        /* done: every argument went to the program */
+    } else if (argc < 2) {
         set_args(I, argc, argv, argc);
         repl(I);
     } else if (!strcmp(argv[1], "-h") || !strcmp(argv[1], "--help")) {
@@ -151,6 +158,41 @@ int main(int argc, char **argv) {
                 status = lube_check_source(I, lube_add_source(I, from_stdin ? "<stdin>" : argv[2], text, len));
             }
         }
+    } else if (!strcmp(argv[1], "--hot")) {
+        if (argc < 3) {
+            usage(stderr);
+            status = 64;
+        } else {
+            I->hot = 1;
+            set_args(I, argc, argv, 3);
+            status = lube_run_file(I, argv[2]);
+        }
+    } else if (!strcmp(argv[1], "--build")) {
+        /* lube --build app.lube [-o app]: the output is named after the file by default */
+        if (argc != 3 && !(argc == 5 && !strcmp(argv[3], "-o"))) {
+            usage(stderr);
+            status = 64;
+        } else {
+            StrBuf out;
+            sb_init(&out);
+            if (argc == 5) {
+                sb_puts(&out, argv[4]);
+            } else {
+                const char *name = strrchr(argv[2], '/') ? strrchr(argv[2], '/') + 1 : argv[2];
+                const char *dot = strrchr(name, '.');
+                sb_putn(&out, name, dot && dot != name ? (size_t)(dot - name) : strlen(name));
+#ifdef _WIN32
+                sb_puts(&out, ".exe");
+#endif
+            }
+            if (!strcmp(out.data, argv[2])) {
+                fprintf(stderr, "lube: the executable would replace '%s': name it with -o\n", argv[2]);
+                status = 64;
+            } else {
+                status = lube_build(I, argv[0], argv[2], out.data);
+            }
+            sb_free(&out);
+        }
     } else if (!strcmp(argv[1], "-")) {
         set_args(I, argc, argv, 2);
         size_t len;
@@ -165,6 +207,7 @@ int main(int argc, char **argv) {
         status = lube_run_file(I, argv[1]);
     }
 
+    lube_wait_isolates();  /* the program ends when every isolate has */
     fflush(stdout);
     size_t leaked = lube_free(I);
 #ifdef LUBE_CHECK_LEAKS
@@ -176,5 +219,6 @@ int main(int argc, char **argv) {
 #else
     (void)leaked;
 #endif
+    if (lube_isolates_leaked()) return 99;  /* an isolate reported a leak (only after a bug) */
     return status;
 }
