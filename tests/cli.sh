@@ -11,7 +11,8 @@ LUBE=${1:-./lube}
 SECTION=${2:-common}
 OS=$(uname -s)
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/lube-test.XXXXXX" | sed 's|//*|/|g')  # one slash: lube tidies paths
-case "$OS" in  # Windows (MSYS2): the path as lube sees and prints it, C:/...
+TMP_IN_PATH=$TMP
+case "$OS" in  # Windows (MSYS2): the path as lube sees and prints it, C:/... (but not in PATH, split at :)
     MINGW* | MSYS* | CYGWIN*) OS=Windows TMP=$(cygpath -m "$TMP") ;;
 esac
 trap 'rm -rf "$TMP"' EXIT
@@ -49,6 +50,8 @@ ABS="$(cd "$(dirname "$LUBE")" && pwd)/$(basename "$LUBE")"
 if [ "$SECTION" = os ]; then
     printf 'print("default name", args)\n' >"$TMP/tool.lube"
     run "build named after the file" sh -c 'cd "$1" && "$2" --build tool.lube && ./tool x' sh "$TMP" "$ABS"
+    printf 'print(1)\n' >"$TMP/noext"  # (on Windows the executable is noext.exe)
+    run "build that would replace its source" sh -c 'cd "$1" && "$2" --build noext' sh "$TMP" "$ABS"
     if [ "$OS" != Windows ]; then  # (Windows always says where lube is)
         run "build when lube cannot find itself" perl -e 'exec {shift} "no-such-lube", @ARGV' "$ABS" --build "$TMP/tool.lube" -o "$TMP/x"
     fi
@@ -100,14 +103,12 @@ mv "$TMP/app" "$TMP/app-moved"  # the executable no longer needs the sources
 run "run the executable, with arguments" sh -c 'cd "$1/elsewhere" && ./app one --help -e' sh "$TMP"
 printf 'print("default name", args)\n' >"$TMP/tool.lube"
 run "build found on PATH" env PATH="/no/such/dir:$(dirname "$ABS"):$PATH" "$(basename "$ABS")" --build "$TMP/tool.lube" -o "$TMP/tool2"
-run "run a build found on PATH" env PATH="$TMP:$PATH" tool2 y
+run "run a build found on PATH" env PATH="$TMP_IN_PATH:$PATH" tool2 y
 printf 'let x = (\n' >"$TMP/broken.lube"
 printf 'import "missing"\n' >"$TMP/needs.lube"
-printf 'print(1)\n' >"$TMP/noext"
 run "build a file with errors" "$LUBE" --build "$TMP/broken.lube" -o "$TMP/x"
 run "build with a missing import" "$LUBE" --build "$TMP/needs.lube" -o "$TMP/x"
 run "build a missing file" "$LUBE" --build "$TMP/none.lube" -o "$TMP/x"
-run "build that would replace its source" sh -c 'cd "$1" && "$2" --build noext' sh "$TMP" "$ABS"
 run "build to a folder that does not exist" "$LUBE" --build "$TMP/tool.lube" -o "$TMP/no/such/dir/app"
 run "build with bad options" "$LUBE" --build "$TMP/tool.lube" -x out
 

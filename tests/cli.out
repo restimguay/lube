@@ -153,9 +153,6 @@ lube: cannot build: 'missing' (imported by TMP/needs.lube) not found
 --- build a missing file
 lube: cannot open file 'TMP/none.lube'
 [exit 66]
---- build that would replace its source
-lube: the executable would replace 'noext': name it with -o
-[exit 64]
 --- build to a folder that does not exist
 lube: cannot write 'TMP/no/such/dir/app'
 [exit 73]
