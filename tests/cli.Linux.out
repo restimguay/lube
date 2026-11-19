@@ -1,0 +1,16 @@
+--- build named after the file
+built tool: 1 file, N bytes
+default name ["x"]
+[exit 0]
+--- build when lube cannot find itself
+built TMP/x: 1 file, N bytes
+[exit 0]
+--- debugger: Ctrl-C pauses a running program
+Lube debugger: h lists the commands (Ctrl-C pauses the program)
+   at <script> (TMP/spin.lube:N)
+    N | (a line of the loop)
+(lube) paused
+   at <script> (TMP/spin.lube:N)
+    N | (a line of the loop)
+(lube) true
+(lube) [exit 0]

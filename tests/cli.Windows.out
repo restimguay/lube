@@ -1,0 +1,4 @@
+--- build named after the file
+built tool.exe: 1 file, N bytes
+default name ["x"]
+[exit 0]

@@ -1,14 +1,18 @@
 #!/bin/sh
 # Command-line tests: flags, the REPL, standard input, files, exit codes,
 # environment limits, and programs that stop with an error (each needs a run
-# of its own). run.sh compares the output with tests/cli.out.
+# of its own). run.sh compares the output with tests/cli.out, and the output
+# of `cli.sh LUBE os` (what differs from system to system) with
+# tests/cli.<system>.out.
 #
-#   sh tests/cli.sh [path-to-lube]
+#   sh tests/cli.sh [path-to-lube] [os]
 cd "$(dirname "$0")/.." || exit 1
 LUBE=${1:-./lube}
+SECTION=${2:-common}
+OS=$(uname -s)
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/lube-test.XXXXXX" | sed 's|//*|/|g')  # one slash: lube tidies paths
-case "$(uname -s)" in  # Windows (MSYS2): the path as lube sees and prints it, C:/...
-    MINGW* | MSYS* | CYGWIN*) TMP=$(cygpath -m "$TMP") ;;
+case "$OS" in  # Windows (MSYS2): the path as lube sees and prints it, C:/...
+    MINGW* | MSYS* | CYGWIN*) OS=Windows TMP=$(cygpath -m "$TMP") ;;
 esac
 trap 'rm -rf "$TMP"' EXIT
 
@@ -39,6 +43,30 @@ status() {  # status LABEL COMMAND...: only the exit status (for exit codes)
     "$@" >/dev/null 2>&1
     echo "[exit $?]"
 }
+ABS="$(cd "$(dirname "$LUBE")" && pwd)/$(basename "$LUBE")"
+
+# ---- what differs from system to system ----
+if [ "$SECTION" = os ]; then
+    printf 'print("default name", args)\n' >"$TMP/tool.lube"
+    run "build named after the file" sh -c 'cd "$1" && "$2" --build tool.lube && ./tool x' sh "$TMP" "$ABS"
+    if [ "$OS" != Windows ]; then  # (Windows always says where lube is)
+        run "build when lube cannot find itself" perl -e 'exec {shift} "no-such-lube", @ARGV' "$ABS" --build "$TMP/tool.lube" -o "$TMP/x"
+    fi
+    if [ "$OS" != Windows ]; then  # (MSYS2's kill cannot send Ctrl-C to a Windows program)
+        printf 'var i = 0\nwhile true {\n  i += 1\n}\n' >"$TMP/spin.lube"
+        printf 'c\np i > 0\nq\n' >"$TMP/spin.cmds"
+        echo "--- debugger: Ctrl-C pauses a running program"
+        "$LUBE" --debug "$TMP/spin.lube" <"$TMP/spin.cmds" >"$TMP/out" 2>&1 &
+        pid=$!
+        sleep 1
+        kill -INT "$pid"
+        wait "$pid"
+        code=$?
+        sed "s|$TMP|TMP|g" "$TMP/out" | sed -E 's/spin\.lube:[0-9]+/spin.lube:N/; s/^    [0-9] \| .*/    N | (a line of the loop)/'
+        echo "[exit $code]"
+    fi
+    exit 0
+fi
 
 # ---- flags ----
 run "version" "$LUBE" --version
@@ -62,7 +90,6 @@ run "check a missing file" "$LUBE" --check tests/does-not-exist.lube
 run "check without a file" "$LUBE" --check
 
 # ---- standalone executables ----
-ABS="$(cd "$(dirname "$LUBE")" && pwd)/$(basename "$LUBE")"
 mkdir -p "$TMP/app/lib" "$TMP/shared" "$TMP/elsewhere"
 printf 'import "lib/greet"\nimport "../shared/util"\nprint(greeting("app"), shout("hi"), args)\nprint(read_file("data.txt"))\n' >"$TMP/app/main.lube"
 printf 'import "../../shared/util"\nfn greeting(who: str): str => "hello from " + who\n' >"$TMP/app/lib/greet.lube"
@@ -72,7 +99,6 @@ run "build with imports" "$LUBE" --build "$TMP/app/main.lube" -o "$TMP/elsewhere
 mv "$TMP/app" "$TMP/app-moved"  # the executable no longer needs the sources
 run "run the executable, with arguments" sh -c 'cd "$1/elsewhere" && ./app one --help -e' sh "$TMP"
 printf 'print("default name", args)\n' >"$TMP/tool.lube"
-run "build named after the file" sh -c 'cd "$1" && "$2" --build tool.lube && ./tool x' sh "$TMP" "$ABS"
 run "build found on PATH" env PATH="/no/such/dir:$(dirname "$ABS"):$PATH" "$(basename "$ABS")" --build "$TMP/tool.lube" -o "$TMP/tool2"
 run "run a build found on PATH" env PATH="$TMP:$PATH" tool2 y
 printf 'let x = (\n' >"$TMP/broken.lube"
@@ -84,7 +110,6 @@ run "build a missing file" "$LUBE" --build "$TMP/none.lube" -o "$TMP/x"
 run "build that would replace its source" sh -c 'cd "$1" && "$2" --build noext' sh "$TMP" "$ABS"
 run "build to a folder that does not exist" "$LUBE" --build "$TMP/tool.lube" -o "$TMP/no/such/dir/app"
 run "build with bad options" "$LUBE" --build "$TMP/tool.lube" -x out
-run "build when lube cannot find itself" perl -e 'exec {shift} "no-such-lube", @ARGV' "$ABS" --build "$TMP/tool.lube" -o "$TMP/x"
 
 # ---- isolates (several write at once, so their lines are sorted) ----
 run "isolates that fail with nobody joining, and one left waiting at the end" sh -c '"$1" -e "$2" 2>&1 | sort' sh "$ABS" 'fn boom(n) => 1 / n
@@ -163,17 +188,6 @@ printf 'import shapes.Point\nlet p = Point(1, 2)\nprint(p)\n' >"$TMP/uses_shapes
 feed "debugger: expressions see the file's imports" 'n\np Point(3, 4)\np p.x\nc\n' env LUBE_PATH="$SHAPES" "$LUBE" --debug "$TMP/uses_shapes.lube"
 feed "debugger: no more commands runs the program on" 'b 13\nc\n' "$LUBE" --debug "$D"
 feed "debugger: in an on block in a function" 'b 7\nc\nlocals\np gain * bonus + score\nbt\nup\nlocals\nn\nn\nn\nn\nc\n' "$LUBE" --debug tests/cli/debug_on.lube
-printf 'var i = 0\nwhile true {\n  i += 1\n}\n' >"$TMP/spin.lube"
-printf 'c\np i > 0\nq\n' >"$TMP/spin.cmds"
-echo "--- debugger: Ctrl-C pauses a running program"
-"$LUBE" --debug "$TMP/spin.lube" <"$TMP/spin.cmds" >"$TMP/out" 2>&1 &
-pid=$!
-sleep 1
-kill -INT "$pid"
-wait "$pid"
-code=$?
-sed "s|$TMP|TMP|g" "$TMP/out" | sed -E 's/spin\.lube:[0-9]+/spin.lube:N/; s/^    [0-9] \| .*/    N | (a line of the loop)/'
-echo "[exit $code]"
 run "debugger without a file" "$LUBE" --debug
 
 # ---- hot reload ----

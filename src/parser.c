@@ -1309,7 +1309,6 @@ Node *parse_program(Interp *I, Source *src, Arena **arena) {
     P.jb = &jb;
     P.depth = 0;
 
-    Node *program = new_node(N_BLOCK, 1);
     src->package = NULL;
     if (setjmp(jb) != 0) {  /* syntax error: free everything */
         while (pending.nbufs > 0) sb_free(&pending.bufs[--pending.nbufs]);
@@ -1319,6 +1318,7 @@ Node *parse_program(Interp *I, Source *src, Arena **arena) {
         tree = NULL;
         return NULL;
     }
+    Node *program = new_node(N_BLOCK, 1);  /* (after setjmp: nothing it changes is used after a longjmp) */
     skip_newlines(&P);
     if (check(&P, T_PACKAGE)) {  /* package a.b: the file's names live in package a.b */
         advance(&P);
