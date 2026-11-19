@@ -664,21 +664,73 @@ A program can also apply changes itself, at a moment it chooses: `hot_reload()` 
 
 ### Debugging
 
-`lube --debug app.lube` runs a program under the debugger. It stops before the first line and takes commands (`h` lists them):
+`lube --debug` runs a program under the debugger. It stops before the first line and takes commands at a `(lube)` prompt (`h` lists them):
 
-```text
-$ lube --debug app.lube
-(lube) b 13 if item.price > 3      # a breakpoint with a condition
-(lube) b shop.lube:40 hits >= 5    # in another file, from the 5th hit on
-(lube) log 28 mapping {i.name}     # print a message there without stopping
-(lube) c                           # run to the next breakpoint
-(lube) p sum + item.price          # evaluate any expression in the paused frame
-(lube) locals                      # also: globals, bt, up, down, l (the source)
-(lube) n                           # next line; s steps into calls, o steps out
-(lube) catch all                   # stop where any error is raised (default: uncaught ones)
+```sh
+./lube --debug app.lube [args...]
 ```
 
-Ctrl-C pauses a running program. Paused inside an `on` block, you see the block's variables and those of the function it runs on.
+For example, with this program in `shop.lube`:
+
+```lube
+fn total(items) {
+  var sum = 0
+  for item in items {
+    sum += item.price * item.qty
+  }
+  return sum
+}
+
+let cart = [{name: "pen", price: 2, qty: 3}, {name: "book", price: 12, qty: 1}]
+print("total:", total(cart))
+```
+
+```text
+$ lube --debug shop.lube
+(lube) b 4 if item.name == "book"      # stop at line 4, only for the book
+(lube) c                               # run until then
+   at total (shop.lube:4)
+    4 |     sum += item.price * item.qty
+(lube) locals                          # see the variables
+items = [{name: "pen", price: 2, qty: 3}, {name: "book", price: 12, qty: 1}]
+sum = 6
+item = {name: "book", price: 12, qty: 1}
+(lube) p item.price * item.qty         # evaluate any expression here
+12
+(lube) bt                              # how we got here
+=>#0 total (shop.lube:4)
+  #1 <script> (shop.lube:10)
+(lube) n                               # next line
+(lube) p sum
+18
+(lube) c                               # run to the end
+total: 18
+```
+
+| What you want | Command |
+|---|---|
+| Run to the next breakpoint | `c` |
+| Next line / step into a call / step out of the function | `n` / `s` / `o` |
+| A breakpoint | `b 12`, or in another file: `b lib/util.lube:30` |
+| ...only when a condition holds | `b 12 if total > 100` |
+| ...only on certain hits | `b 12 hits 5` (the 5th), `hits >= 5`, `hits % 10` (every 10th) |
+| A breakpoint that removes itself after one stop | `tb 12` |
+| Print a message there without stopping | `log 12 total is {total}` |
+| List or delete breakpoints | `bl`, `d 2`, `d` (all of them) |
+| Evaluate an expression | `p expr` |
+| See variables | `locals`, `globals` |
+| The calls that led here, and moving through them | `bt`, then `up`, `down`, `frame 2` |
+| The source around the current line | `l` |
+| Stop where errors are raised | `catch all` (the default stops only for uncaught errors), `catch off` |
+| Quit | `q` |
+
+- **Ctrl-C** pauses a running program, which is handy for finding where an endless loop is stuck.
+- An uncaught error stops the program where it's raised, with every frame still there to inspect.
+- After `up`, `p` and `locals` work in the frame you moved to.
+- Paused inside an `on` block, you see the block's variables and those of the function it runs on.
+- **Ctrl-D**, or the end of piped commands, leaves the debugger and lets the program run on to the end.
+
+Without the debugger, an uncaught error prints a traceback with the file and line of every call; `lube --check app.lube` reports syntax errors without running anything; and `print(repr(x))` shows a value exactly, quotes included.
 
 ## Standard library
 
