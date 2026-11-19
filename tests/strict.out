@@ -1,0 +1,8 @@
+ada: 110 (savings) true
+deposit must be positive
+110
+[2, 4, 6]
+item 1
+item 2
+#strict: sum_of() returns a Number, but it declares no return type (add one, like ): Number)
+printed

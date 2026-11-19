@@ -1,0 +1,3 @@
+# found by fuzzing: only variables (or their parts) can be assigned to
+var grid = [[0]]
+[0][0] = 1

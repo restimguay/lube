@@ -1,0 +1,3 @@
+tests/bad_target.lube:3:8: syntax error: can only assign to a variable, an index like a[i], or a field like a.b
+    3 | [0][0] = 1
+      |        ^

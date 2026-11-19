@@ -1,0 +1,33 @@
+5 error: division by zero
+404 not found
+caught: deep problem
+index error caught
+inner -> outer
+caught 3
+bad item 2
+undefined variable 'undefined_thing'
+unsupported operand types for '+': Number and Bool
+unsupported operand types for '-': str and Number
+a Number has no field 'field'
+the object has no field 'b' (check with has() first, or use get(object, key, default))
+the object has no key "b" (check with has() first, or use get(object, key, default))
+get(): the object has no key "k" (give a default: get(object, key, default))
+num(): 'abc' is not a number (give a fallback to use instead: num(text, 0))
+find(): no item matched (give a default: find(xs, f, default))
+the function given to map() did not return a value
+a List has no field 'length'
+cannot call a Number
+len() takes 1 argument but got 2
+Object has no method 'nope'
+list index must be a whole number, got 1.5
+int() takes 1 to 2 arguments but got 0
+pop() called on an empty list
+pop() changes its first argument, so pass it with &: pop(&x, ...) or x.pop(...)
+string index 10 is out of range (length 1)
+assertion failed: math is broken
+modulo by zero
+undefined variable 'for_sure'
+two() is missing argument 'b'
+two() takes 2 arguments but got 3
+stack overflow: too much recursion
+still running

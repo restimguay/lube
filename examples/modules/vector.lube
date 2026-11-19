@@ -1,0 +1,5 @@
+# A tiny 2D vector library.
+fn vec(x, y) => {x: x, y: y}
+fn vec_add(a, b) => vec(a.x + b.x, a.y + b.y)
+fn vec_len(v) => sqrt(v.x ** 2 + v.y ** 2)
+fn vec_str(v) => "({v.x}, {v.y})"

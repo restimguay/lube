@@ -1,0 +1,46 @@
+# Extreme sizes and odd numbers give clear errors, never memory corruption.
+let nan = num("nan")
+let checks = [
+  fn() => list(0..1e18),            # too many elements for a list
+  fn() => "a" * 1e300,              # repeated string far too large
+  fn() => [0] * 1e300,
+  fn() => "ab" * -1,
+  fn() => "ab" * nan,
+  fn() => seed(1e300),
+  fn() => exit(1e300),
+  fn() => (0..5)[5],
+  fn() => (0..5)[nan],
+  fn() => [1, 2][nan],
+  fn() => [1, 2][INF],
+  fn() => chr(nan),
+  fn() => chr(INF),
+  fn() => pad_left("x", INF),
+  fn() => fixed(1, nan),
+]
+for check in checks {
+  try { print("no error:", check()) } catch e { print(e) }
+}
+
+# huge ranges are fine as long as nothing tries to list them
+let big = 0..1e300
+print(len(big), big[5], (0..100)[-1], 10 in big)
+
+# NaN and infinity never turn into bad sizes or indexes
+print(slice([1, 2, 3], nan), slice([1, 2, 3], -INF, INF), slice("hello", 1, INF))
+print(len(0..nan), list(0..nan), "" * 1e300, [] * 1e300)
+var xs = [1, 2, 3]
+xs.insert(INF, "end")
+xs.insert(-INF, "start")
+print(xs)
+
+# deep nesting in data is fine: freeing, comparing and printing don't recurse
+var deep = []
+for i in 0..200000 { deep = [deep] }
+var other = []
+for i in 0..200000 { other = [other] }
+print(deep == other, len(str(deep)) < 500)
+
+# runaway recursion is an error, not a crash
+fn forever(n) => forever(n + 1)
+try { forever(0) } catch e { print(e) }
+print("still running")

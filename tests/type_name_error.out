@@ -1,0 +1,2 @@
+tests/type_name_error.lube:2: error: 'List' is a type name, so it cannot be used as a name here
+    2 | let List = [1, 2]

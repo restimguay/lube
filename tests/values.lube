@@ -1,0 +1,106 @@
+# Value semantics: every variable owns its value.
+
+var a = [1, 2, 3]
+var b = a          # b gets its own copy (shared until one of them changes)
+b.push(4)
+b[0] = 100
+print(a, b)
+
+# passing to a function passes a copy
+fn try_to_change(var xs) {
+  xs.push("changed")
+  return xs
+}
+let original = [1]
+let changed = try_to_change(original)
+print(original, changed)
+
+# nested data copies too
+var config = {db: {host: "localhost", ports: [5432]}}
+var backup = config
+config.db.ports.push(5433)
+config.db.host = "example.org"
+print(config)
+print(backup)
+
+# & lends a variable so a function can change it in place
+fn append_twice(&list, x) {
+  list.push(x)
+  list.push(x)
+}
+var items = ["a"]
+append_twice(&items, "b")
+items.append_twice("c")
+print(items)
+
+# & works on parts of a value too
+var grid = [[0, 0], [0, 0]]
+append_twice(&grid[1], 9)
+var user = {name: "ada", tags: []}
+user.tags.push("admin")
+push(&user.tags, "dev")
+print(grid, user)
+
+# swapping two variables
+fn swap(&x, &y) {
+  let tmp = x
+  x = y
+  y = tmp
+}
+var left = "L"
+var right = "R"
+swap(&left, &right)
+print(left, right)
+
+# the built-ins that change things take their first argument with &
+var stack = [1, 2, 3]
+print(stack.pop(), stack.remove(0), stack)
+stack.insert(0, "first")
+stack.clear()
+print(stack, len(stack))
+var counts = {x: 1, y: 2}
+print(counts.delete("x"), counts.delete("x"), counts)
+
+# changes made before an error are kept
+fn fill_then_fail(&list) {
+  list.push("kept")
+  throw "failed halfway"
+}
+var log = []
+try { fill_then_fail(&log) } catch e { print(e, log) }
+
+# iterating over a variable while changing it is safe: the loop sees the
+# value as it was when the loop started
+var nums = [1, 2, 3]
+for n in nums { nums.push(n * 10) }
+print(nums)
+
+# no cycles, ever: putting a value inside itself puts a copy
+var box = {name: "box"}
+box.self = box
+print(box)
+
+# equality compares contents
+print([1, {a: [2]}] == [1, {a: [2]}], a == b)
+
+# strings and lists grow in place when nothing else shares them
+var text = ""
+for i in 0..5 { text += str(i) }
+var bag = []
+for i in 0..5 { bag += [i] }
+print(text, bag)
+
+# globals declared with let are frozen; var globals can change
+var total = 0
+fn add_to_total(n) { total += n }
+add_to_total(5)
+add_to_total(7)
+print(total)
+let LIMIT = 3   # `LIMIT = 4` would be rejected before the program runs
+print(LIMIT)
+
+# using a global while it is lent out is an error, not a surprise
+var shared = [1]
+fn sneaky(&list) { return len(shared) }
+try { sneaky(&shared) } catch e { print(e) }
+print(shared)

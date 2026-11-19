@@ -1,0 +1,44 @@
+# Conway's Game of Life on a small wrapping grid.
+
+let width = 20
+let height = 10
+
+fn empty_grid() => range(height).map(fn(_) => [false] * width)
+
+fn neighbours(grid, row, col) {
+  var count = 0
+  for dr in -1..=1 {
+    for dc in -1..=1 {
+      if dr == 0 and dc == 0 { continue }
+      if grid[(row + dr) % height][(col + dc) % width] { count += 1 }
+    }
+  }
+  return count
+}
+
+fn step(grid) {
+  var next = empty_grid()
+  for r in 0..height {
+    for c in 0..width {
+      let n = neighbours(grid, r, c)
+      next[r][c] = n == 3 or (grid[r][c] and n == 2)
+    }
+  }
+  return next
+}
+
+fn show(grid, generation) {
+  print("generation {generation}")
+  for row in grid { print(row.map(fn(alive) => alive and "#" or ".").join()) }
+}
+
+# start with a glider and a blinker
+var grid = empty_grid()
+for cell in [[0, 1], [1, 2], [2, 0], [2, 1], [2, 2], [5, 10], [5, 11], [5, 12]] {
+  grid[cell[0]][cell[1]] = true
+}
+
+for g in 0..4 {
+  show(grid, g)
+  grid = step(grid)
+}

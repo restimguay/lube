@@ -1,0 +1,2 @@
+tests/let_error.lube:2: error: cannot change 'settings': it was declared with let (use var for a variable that changes)
+    2 | settings.debug = true

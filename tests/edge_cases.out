@@ -1,0 +1,89 @@
+error: unsupported operand types for '+': List and Number
+error: unsupported operand types for '*': List and List
+error: unsupported operand types for '/': str and Number
+error: unsupported operand types for '%': str and Number
+error: unsupported operand types for '**': str and Number
+error: unsupported operand types for '<': List and List
+error: unsupported operand types for '<=': List and List
+error: unsupported operand types for '>': List and List
+error: unsupported operand types for '>=': List and List
+error: unsupported operand types for '*': Bool and Number
+error: cannot look inside a Number (expected a List, str, Object or Range)
+error: cannot look inside a Number (expected a List, str, Object or Range)
+error: cannot negate a str
+error: can only search text for text, not for a Number
+error: list index must be a Number, not a str
+error: cannot index into a Number
+error: a List has no field 'len' (to call the function, write .len())
+error: range end must be a Number, not a str
+error: range start must be a Number, not a str
+error: object keys must be str, Number or Bool values, not a List
+2 true true true true false
+200 3 3 128 1
+error: uint8 overflow: 16 * 16 is outside 0 to 255
+error: uint8 overflow: 2 ** 8 is outside 0 to 255
+error: division by zero
+error: modulo by zero
+error: int64 overflow: -9223372036854775808 / -1 is outside -9223372036854775808 to 9223372036854775807
+error: int64 overflow: -9223372036854775807 * 2 is outside -9223372036854775808 to 9223372036854775807
+error: int64 overflow: -5 * -2000000000000000000 is outside -9223372036854775808 to 9223372036854775807
+error: 1e+19 does not fit in int64 (-9223372036854775808 to 9223372036854775807); note that plain numbers are exact only up to 2^53, so write big values as a string, e.g. int64("9223372036854775807")
+error: 200 does not fit in int8 (-128 to 127)
+error: -1 does not fit in uint64 (0 to 18446744073709551615)
+true true true true 4611686018427387904
+5 1 -8 true
+exact
+true true false true
+"back\\slash tab\t cr\r" ["€", "😀"] 1 aAé
+first line
+second 2
+true true
+error: cannot change 'items' here: it belongs to an enclosing function, and closures only get a read-only copy of it
+error: cannot change 'self_push' inside its own body
+<fn countdown>
+error: undefined variable 'undefined_global'
+error: this is nested too deeply to change in one step
+error: text cannot be changed in place; build new text instead
+error: cannot set field 'field' on a Number (only objects have fields)
+error: cannot change an element of a Number
+error: the object has no field 'a' (add it first with an assignment)
+error: the object has no key 1 (add it first with an assignment)
+error: undefined variable 'missing_function'
+error: change() changes 'x', so pass it with &: change(&x)
+error: keep() does not change 'x', so it does not take '&'
+error: push() does not change argument 2, so it does not take '&'
+error: len() does not change argument 1, so it does not take '&'
+error: 'counter' is passed with & more than once in this call
+error: Pt() does not take & arguments
+Pt {x: 5} Pt
+error: 'shared' is in use: it was passed with & to a call that has not returned yet
+[1]
+error: division by zero
+error: push() changes its first argument, so pass it with &: push(&x, ...) or x.push(...)
+error: this function call does not return a value, so there is nothing to use here
+1
+error: each() does not return a value, so there is nothing to use here
+error: division by zero
+error: division by zero
+error: division by zero
+error: division by zero
+error: division by zero
+error: division by zero
+error: division by zero
+error: division by zero
+error: undefined variable 'NoSuchClass'
+error: cannot loop over a Number (expected a List, Range, str or Object)
+error: the object has no field 'missing' (add it first with an assignment)
+error: min() takes at least 1 argument but got 0
+error: 'f' is not a function (it is a Number)
+error: 'not_a_function' is not a function (it is a Number)
+error: 'five' is not a function (it is a Number)
+error: push() changes its first argument, so call it on a variable (or a field or index of one)
+error: division by zero
+error: cannot change 'FROZEN': it was declared with let (use var for a variable that changes)
+error: undefined variable 'not_declared_anywhere' (declare it first with 'var not_declared_anywhere = ...')
+error: 'lent' is in use: it was passed with & to a call that has not returned yet
+error: 'helper' is in use: it was passed with & to a call that has not returned yet
+error: a Holder has fields named by text, not a Number
+false 0..0 Range
+done

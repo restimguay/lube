@@ -1,0 +1,32 @@
+{} Map[Object, String]
+{{name: "ada", id: 1}: String("owner"), {name: "bob", id: 2}: String("guest")} 2 owner
+true false none
+ada -> owner 5
+bob -> guest 5
+true false
+6 a list still five a range a function Map
+a big integer false
+{ada: 15, bob: 7} 15 ["ada", "bob"] str[] [15, 7] Number[]
+Map[str, Number] 0 Map[str, Number] 2
+{a: 3, b: 2, c: 1} int32
+{a: 1} Map {[1]: "x", {k: 2}: "y"} Map {k: 1}
+{extra: 1} Map[str, Number]
+[] Map[] Object[] true true
+this Map[Object, str] has Object keys, not a str
+this Map[Object, String] can only hold String values, not a str
+1.5 is not a whole number, so it cannot be used as an int32 (use num(x) for decimal math)
+this Map[str, Number] can only hold Number values, not a str
+this Map[Object, str] has Object keys, not a str
+'x' is a str, so it cannot hold a Number: a var keeps the type it starts with
+this Map[str, Number] can only hold Number values, not a str
+this Map[Number, Number] has Number keys, not a str
+object keys must be str, Number or Bool values, not a List
+Object(): a List cannot be an object key (keys must be str, Number or Bool)
+Map() expects an Object, a Map or a List of [key, value] pairs as argument 1, got Number
+Map(): item 0 is not a [key, value] pair
+the map has no key {} (check with has() first, or use get(map, key, default))
+after failed change: {k: "kept"}
+this Map[str, String] can only hold String values, not a str
+{} 0
+this Map[Object, String] can only hold String values, not a str
+{{}: String("y")}

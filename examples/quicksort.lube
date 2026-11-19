@@ -1,0 +1,22 @@
+# Quicksort written functionally, compared with the built-in sort().
+
+fn quicksort(xs) {
+  if len(xs) <= 1 { return xs }
+  let pivot = xs[0]
+  let rest = xs.slice(1)
+  return quicksort(rest.filter(fn(x) => x < pivot)) + [pivot] + quicksort(rest.filter(fn(x) => x >= pivot))
+}
+
+seed(42)
+let data = range(20).map(fn(_) => random_int(1, 99))
+print("input:    ", data)
+print("quicksort:", quicksort(data))
+print("same as sort():", quicksort(data) == data.sort())
+
+# sort() takes a comparator: return a negative number (or true) if a goes first
+let people = [
+  {name: "Grace", age: 85},
+  {name: "Alan", age: 41},
+  {name: "Ada", age: 36},
+]
+for p in people.sort(fn(a, b) => a.age - b.age) { print(pad_right(p.name, 6), p.age) }

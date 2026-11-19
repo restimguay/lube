@@ -1,0 +1,54 @@
+# lists
+var xs = [3, 1, 2]
+xs.push(5)
+push(&xs, 8, 13)
+print(xs, len(xs), xs[0], xs[-1])
+xs[1] = 100
+print(xs)
+print(xs.pop(), xs)
+xs.insert(0, "first")
+print(xs)
+print(xs.remove(0), xs)
+print(slice(xs, 1, 3), xs.slice(-2), "hello".slice(1, -1))
+print([1, 2] + [3], reverse([1, 2, 3]), [3, 1, 2].sort(), ["b", "a", "c"].sort())
+print([5, 3, 9].sort(fn(a, b) => b - a), ["ccc", "a", "bb"].sort(fn(a, b) => len(a) < len(b)))
+print(contains([1, 2, 3], 2), 4 in [1, 2, 3], [1, 2].index_of(2), [1, 2].index_of(9))
+print(join(["a", "b", "c"], "-"), [1, 2, 3].join(", "), join([1, 2]))
+print(sum([1, 2, 3]), min([4, 2, 8]), max(4, 2, 8), min("b", "a"))
+var nested = [[1, 2], [3, [4, 5]]]
+nested[1][1][0] = 40
+print(nested, nested[1][1][0])
+var copy_of = xs           # assignment gives copy_of its own copy
+copy_of.push("only in copy")
+print(len(xs) != len(copy_of))
+
+# maps keep insertion order
+var person = {name: "Ada", "last name": "Lovelace", born: 1815}
+person.job = "mathematician"
+person["born"] += 0
+print(person)
+print(person.name, person["last name"], get(person, "missing", "no such key"), len(person))
+print(keys(person))
+print(values(person))
+print(person.has("job"), has(person, "age"), "name" in person)
+print(person.delete("job"), person.delete("job"), person)   # delete says whether the key was there
+print({1: "one", true: "yes"}[1], {[1 + 1]: "two"}[2])
+print(items({a: 1, b: 2}), get({a: 1}, "b", "fallback"))
+print({a: 1} + {b: 2, a: 3})
+
+# map deletion and reinsertion keeps things consistent
+var m = {}
+for i in 0..1000 { m[i] = i * i }
+for i in 0..1000 { if i % 3 != 0 { m.delete(i) } }
+print(len(m), m[999], m.has(998), m[3])
+for i in 0..1000 { m["k" + i] = i }
+print(len(m), m["k500"])
+
+# pushing a list into itself pushes a copy: values can never form cycles
+var loop = [1]
+loop.push(loop)
+print(loop)
+print({}, [], [[]], {a: {}})
+
+# zip and items
+for pair in zip(["a", "b"], [1, 2]) { print(pair[0], pair[1]) }

@@ -1,0 +1,29 @@
+# Working with records: maps, grouping, sorting and formatted output.
+
+let products = [
+  {name: "keyboard", category: "hardware", price: 49.99, stock: 12},
+  {name: "monitor", category: "hardware", price: 189.00, stock: 3},
+  {name: "editor pro", category: "software", price: 79.00, stock: 999},
+  {name: "mouse", category: "hardware", price: 19.50, stock: 0},
+  {name: "backup suite", category: "software", price: 35.25, stock: 999},
+]
+
+# group by category
+var groups = {}
+for p in products {
+  if not groups.has(p.category) { groups[p.category] = [] }
+  groups[p.category].push(p)
+}
+
+for category, items in groups {
+  print(upper(category))
+  for p in items.sort(fn(a, b) => b.price - a.price) {
+    let status = p.stock == 0 and "SOLD OUT" or "{p.stock} left"
+    print("  {pad_right(p.name, 14)} {pad_left(fixed(p.price), 8)}   {status}")
+  }
+}
+
+let in_stock = products.filter(fn(p) => p.stock > 0)
+let value = in_stock.map(fn(p) => p.price * min(p.stock, 10)) | sum()
+print("value of up to 10 units of each item in stock: {fixed(value)}")
+print("cheapest:", products.sort(fn(a, b) => a.price - b.price)[0].name)

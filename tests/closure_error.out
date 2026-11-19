@@ -1,0 +1,2 @@
+tests/closure_error.lube:4: error: cannot change 'count' here: it belongs to an enclosing function, and closures only get a read-only copy of it
+    4 |     count += 1

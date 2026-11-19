@@ -1,0 +1,15 @@
+the object has no field 'email' (check with has() first, or use get(object, key, default))
+false no email
+name: ada
+num(): 'forty-two' is not a number (give a fallback to use instead: num(text, 0))
+42 0 7
+2 none
+hi bob
+hi eve
+greet() does not return a value, so there is nothing to use here
+hi joe
+greet() does not return a value, so there is nothing to use here
+hi 1
+the function given to map() did not return a value
+true false {}
+printed because verbose is false

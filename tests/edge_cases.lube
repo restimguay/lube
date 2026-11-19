@@ -1,0 +1,165 @@
+// Rarer paths through the interpreter.
+fn show(f) {
+  try { print(f()) } catch e { print("error:", e) }
+}
+
+// operators that do not apply
+show(fn() => [1] + 5)
+show(fn() => [1] * [1])
+show(fn() => "a" / 2)
+show(fn() => "a" % 2)
+show(fn() => "a" ** 2)
+show(fn() => [1] < [2])
+show(fn() => [1] <= [2])
+show(fn() => [1] > [2])
+show(fn() => [1] >= [2])
+show(fn() => true * 2)
+show(fn() => 1 in 2)
+show(fn() => int32(1) in 5)
+show(fn() => -"x")
+show(fn() => 1 in "abc")
+show(fn() => [1]["a"])
+show(fn() => (5)[0])
+show(fn() => [1].len)
+show(fn() => 0.."x")
+show(fn() => "x"..1)
+show(fn() => {[[1]]: 2})
+var compound = 5
+compound %= 3
+print(compound, int32(5) != 6, [1] != [2], "ab" < "abc", "abc" > "ab", int32(7) != int32(7))
+
+// sized integers, unsigned and mixed
+print(uint8(200) * uint8(1), uint32(7) / uint32(2), uint32(7) % uint32(4), uint8(2) ** uint8(7), uint8(1) ** uint8(200))
+show(fn() => uint8(16) * uint8(16))
+show(fn() => uint8(2) ** uint8(8))
+show(fn() => uint16(1) / uint16(0))
+show(fn() => uint16(1) % uint16(0))
+show(fn() => int64("-9223372036854775808") / -1)
+show(fn() => int64("-9223372036854775807") * 2)
+show(fn() => int64(-5) * int64(-2000000000000000000))
+show(fn() => int64(1e19))
+show(fn() => int8(uint64(200)))
+show(fn() => uint64(int8(-1)))
+print(uint8(5) > int8(-3), uint8(5) == int8(5), int8(-1) < uint64(0), uint64(3) < int8(4), int64(2) ** 62)
+print(abs(int8(5)), int8(0) ** 0, int32(-2) ** 3, uint64("18446744073709551615") > 1e19)
+
+// a map key that is an integer no double equals
+var big = Map
+big[int64("9007199254740993")] = "exact"
+print(big[int64("9007199254740993")])
+
+// equality of large nested values
+let wide1 = list(0..200)
+let wide2 = list(0..200)
+print(wide1 == wide2, [wide1, {k: wide2}] == [wide2, {k: wide1}], print == len, print == print)
+
+// text edges
+print(repr("back\\slash tab\t cr\r"), chars("€😀"), len("\xff".chars()), "a\u{41}\u{e9}")
+let multi = "first line
+second {1 + 1}"
+print(multi)
+print(1 + 1
+  and true, false
+  or true)
+
+// variables and places
+fn outer() {
+  var items = [1]
+  return fn() { items.push(2) }
+}
+show(fn() => outer()())
+fn self_push() { self_push.push(1) }
+show(fn() => self_push())
+fn wrap() {
+  fn countdown(n) {
+    return fn() => countdown
+  }
+  return countdown(1)()
+}
+print(wrap())
+show(fn() => undefined_global.push(1))
+var deep = [[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]
+show(fn() { deep[0][0][0][0][0][0][0][0][0][0][0][0][0][0][0][0][0][0] = 1 })
+var text = "abc"
+show(fn() { text[0] = "x" })
+var nums = [1, 2]
+show(fn() { nums[0].field = 1 })
+show(fn() { nums[0][0] = 1 })
+var obj = {}
+show(fn() { obj.a.b = 1 })
+show(fn() { obj[1][2] = 3 })
+show(fn() => missing_function())
+
+// & rules
+fn change(&x) { x = x + 1 }
+fn keep(x) => x
+var counter = 1
+show(fn() => change(counter))
+show(fn() => keep(&counter))
+show(fn() => push(&counter, &counter))
+show(fn() => len(&counter))
+fn both(&a, &b) {}
+show(fn() => both(&counter, &counter))
+class Pt {
+  var x = 0
+  constructor(x) { this.x = x }
+}
+show(fn() => Pt(&counter))
+print(5.Pt(), type(5.Pt()))
+var shared = [1]
+fn redefine(&x) { import "lib/redefine" }
+show(fn() => redefine(&shared))
+print(shared)
+
+// functions
+fn defaults(a, b = 1 / 0) => a
+show(fn() => defaults(1))
+show(fn() => push([1]))
+show(fn() => (fn() {})().len())
+show(fn() => [1].each(print).len())
+fn() => "an expression statement that is a function"
+// errors inside expressions are passed along
+var items = [1, 2]
+var obj2 = {k: 1}
+show(fn() { items[1 / 0] = 1 })
+show(fn() { items = 1 / 0 })
+show(fn() => [1 / 0])
+show(fn() => str[1 / 0])
+show(fn() => {[1 / 0]: 1})
+show(fn() => {a: 1 / 0})
+show(fn() => 1 + (1 / 0))
+show(fn() => items[1 / 0])
+show(fn() => 1 is NoSuchClass)
+show(fn() { for x in 5 {} })
+show(fn() => push(&obj2.missing, 1))
+show(fn() => min())
+show(fn() => {f: 5}.f())
+let not_a_function = 5
+show(fn() => [1].not_a_function())
+let five = 5
+show(fn() => five())
+show(fn() => [1, 2].push(3))
+show(fn() { obj2.k += 1 / 0 })
+
+// globals that are frozen, missing or lent
+let FROZEN = [1]
+show(fn() => FROZEN.push(2))
+fn assign_missing() { not_declared_anywhere = 1 }
+show(fn() => assign_missing())
+var lent = [1]
+fn replace_lent(&x) { lent = [2] }
+show(fn() => replace_lent(&lent))
+var helper = fn(x) => x
+fn use_helper(&h) { return [1].helper() }
+show(fn() => use_helper(&helper))
+class Holder {
+  var v = 0
+}
+var holder = Holder
+show(fn() { holder[1] = 2 })
+
+// a statement continued on the next line
+let continued = true
+  and false
+print(continued, Range, type(Range))
+print("done")

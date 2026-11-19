@@ -1,0 +1,87 @@
+# try / catch with runtime errors
+fn safe_div(a, b) {
+  try {
+    return a / b
+  } catch e {
+    return "error: " + e
+  }
+}
+print(safe_div(10, 2), safe_div(1, 0))
+
+# throw any value
+try {
+  throw {code: 404, message: "not found"}
+} catch err {
+  print(err.code, err.message)
+}
+
+# errors unwind through function calls
+fn level3() { throw "deep problem" }
+fn level2() { level3() }
+fn level1() { level2() }
+try { level1() } catch e { print("caught:", e) }
+
+# catch without a variable
+try { [1, 2][5] } catch { print("index error caught") }
+
+# nested try: inner rethrows
+try {
+  try {
+    throw "inner"
+  } catch e {
+    throw e + " -> outer"
+  }
+} catch e {
+  print(e)
+}
+
+# loops and returns still work after errors
+var caught = 0
+for i in 0..5 {
+  try {
+    if i % 2 == 0 { throw i }
+  } catch { caught += 1 }
+}
+print("caught", caught)
+
+# errors thrown from inside callbacks of builtins
+try {
+  [1, 2, 3].map(fn(x) { if x == 2 { throw "bad item {x}" }; return x })
+} catch e { print(e) }
+
+# messages from common mistakes
+let checks = [
+  fn() => undefined_thing,
+  fn() => 1 + true,
+  fn() => "abc" - 1,
+  fn() => (5).field,
+  fn() => {a: 1}.b,
+  fn() => {a: 1}["b"],
+  fn() => get({}, "k"),
+  fn() => num("abc"),
+  fn() => find([1, 2], fn(x) => x > 5),
+  fn() => [1, 2].map(fn(x) { let y = x }),
+  fn() => [1].length,
+  fn() => (5)(),
+  fn() => len(1, 2),
+  fn() => {a: 1}.nope(),
+  fn() => [1, 2, 3][1.5],
+  fn() => int(),
+  fn() { var empty = []; return empty.pop() },
+  fn() => pop([1]),
+  fn() => "s"[10],
+  fn() => assert(1 == 2, "math is broken"),
+  fn() => 10 % 0,
+  fn() => for_sure(),
+]
+for check in checks {
+  try { check() } catch e { print(e) }
+}
+fn two(a, b) => a + b
+try { two(1) } catch e { print(e) }
+try { two(1, 2, 3) } catch e { print(e) }
+
+# stack overflow is an error, not a crash
+fn forever(n) => forever(n + 1)
+try { forever(0) } catch e { print(e) }
+print("still running")

@@ -1,0 +1,2 @@
+import "geometry"   # the .lube extension is optional
+fn describe(shape) => "{shape.kind} with area {fixed(area(shape), 2)}"

@@ -1,0 +1,312 @@
+# Programs that stop with an error (or check an edge of the syntax).
+# tests/cli.sh runs each one separately; '### name' starts a program.
+### hex literal without digits
+let x = 0x
+### number literal too long
+let x = 1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111
+### letter inside a number
+let x = 3abc
+### line continuation
+let x = 1 + \
+  2
+print(x)
+### stray backslash
+let x = 1 \ 2
+### unterminated string
+let s = "abc
+### unterminated interpolation
+let s = "a {b
+### unterminated single-quoted string
+let s = 'abc
+### strings nested too deeply
+print("{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{1}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}")
+### brackets nested too deeply
+let x = ((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((1))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
+### the old pipe operator
+let x = [1, 2] |> len
+### control character
+let x = 
+### unexpected character
+let x = $
+### two expressions on one line
+let x = 1 2
+### bad interpolation
+print("{1 2}")
+### bad hex escape
+print("\xZZ")
+### unicode escape without braces
+print("\u1234")
+### empty unicode escape
+print("\u{}")
+### unicode escape too large
+print("\u{110000}")
+### unknown escape
+print("\q")
+### other escapes
+print(repr("tab\t cr\r nul\0 esc\e joined \
+line"))
+### ampersand on a value
+fn f(&x) {}
+f(&1)
+### bad object key
+let m = {(1): 2}
+### Function has no default
+let f = Function
+### missing expression
+let x = )
+### number after a dot
+let x = [1]
+x.1
+### let without a value
+let x
+### var without a value
+var y
+### Map value type missing
+let m = Map[String, 5]
+### Map with one type
+let m = Map[String]
+### import with interpolation
+let x = 1
+import "{x}"
+### import without a string
+import x
+### unary minus nested too deeply
+let x = --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------1
+### not nested too deeply
+let x = not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not true
+### missing closing brace
+fn f() {
+  return 1
+### default for a & parameter
+fn f(&x = 1) {}
+### bad parameter
+fn f(1) {}
+### missing catch
+try { }
+print(1)
+### missing in
+for x [1] {}
+### assignment to a call
+f() = 1
+### missing block
+if true print(1)
+### missing arrow or block
+fn f() 5
+### bad second loop variable
+for a, 1 in [] {}
+### unclosed typed list
+let l = String[1, 2
+### changing a parameter
+fn f(n) { n = 1 }
+### changing a loop variable
+for i in 0..3 { i = 1 }
+### changing a caught error
+try { throw "x" } catch e { e = 1 }
+### changing a local function
+fn g() {
+  fn f() => 1
+  f = 2
+}
+### changing a built-in
+print = 1
+### changing a let in a block
+if true {
+  let x = 1
+  x += 1
+}
+### changing a top-level let
+let limit = 3
+fn raise() { limit = 4 }
+### passing a let with &
+fn f(&x) {}
+let k = [1]
+f(&k)
+### break outside a loop
+break
+### continue outside a loop
+fn f() { continue }
+### return outside a function
+return 1
+### declared twice
+fn f() {
+  let a = 1
+  let a = 2
+}
+### duplicate parameter
+fn f(a, b, a) {}
+### type name as a parameter
+fn f(String) {}
+### field declared again in a subclass
+class A {
+  var x = 1
+}
+class B extends A {
+  var x = 2
+}
+### extending something that is not a class
+let NotAClass = 5
+class B extends NotAClass {}
+### class inside a function
+fn f() {
+  class Inner {}
+}
+### this outside a class
+fn f() => this
+### super outside a class
+fn f() => super.go()
+### super() outside a constructor
+class A {
+  fn go() => super(1)
+}
+### constructor with a & parameter
+class A {
+  constructor(&x) {}
+}
+### method declared twice
+class A {
+  fn go() => 1
+  fn go() => 2
+}
+### field and method with one name
+class A {
+  var go = 1
+  fn go() => 2
+}
+### field declared twice
+class A {
+  var x = 1
+  var x = 2
+}
+### two constructors
+class A {
+  constructor() {}
+  constructor(x) {}
+}
+### something else in a class body
+class A {
+  print(1)
+}
+### field without a starting value
+class A {
+  var x
+}
+### unclosed class
+class A {
+  var x = 1
+### replacing this
+class A {
+  fn reset() { this = A }
+}
+### changing a class name
+class A {}
+A = 5
+### is with something that is not a type
+let x = 5
+print(1 is x)
+### is without a type
+print(1 is 2)
+### super to a missing method
+class A {}
+class B extends A {
+  fn go() => super.nope()
+}
+B().go()
+### super() with arguments and no parent constructor
+class A {}
+class B extends A {
+  constructor() { super(1) }
+}
+B()
+### super() with no parent constructor
+class A {}
+class B extends A {
+  constructor() { super() }
+}
+print(B())
+### class name in a class field
+class Node {
+  var label = "n"
+}
+class Tree {
+  var root = Node
+}
+print(Tree())
+### method calling a sibling through this
+class Counter {
+  var n = 0
+  fn add() { this.n += 1 }
+  fn add_twice() {
+    this.add()
+    this.add()
+  }
+}
+var c = Counter
+c.add_twice()
+print(c.n)
+### super method on a let
+class A {
+  var n = 0
+  fn bump() { this.n += 1 }
+  fn show() => this.n
+}
+class B extends A {
+  fn show() => super.show() + 100
+  fn bump() { super.bump() }
+}
+let b = B()
+print(b.show())
+b.bump()
+### strict: a parameter without a type
+#strict
+fn add(a, b: Number): Number => a + b
+### strict: a value body without a return type
+#strict
+fn area(w: Number) => w * 2
+### strict: return with a value and no return type
+#strict
+fn f(x: Number) {
+  return x
+}
+### strict: directive after code
+print(1)
+#strict
+### strict: directive after comments and blank lines, with trailing spaces
+# a comment first
+
+#strict   
+fn f(x) {}
+### not strict: a comment that only starts with #strict
+#strictly speaking, just a comment
+#
+fn f(x) => x
+print(f("ok"))
+### a bare return in a function with a return type
+fn f(): Number {
+  return
+}
+### a bare return in a function returning a class
+class Dog {
+  var name = ""
+}
+fn adopt(): Dog {
+  return
+}
+### a bare return in a lambda with a return type
+let f = fn(): str { return }
+### strict: return in a lambda without a return type
+#strict
+let f = fn() { return 1 }
+### a constructor with a return type
+class A {
+  constructor(): A {}
+}
+### a list of a class as a type
+fn f(x: Dog[]) {}
+### Map[K] without a value type
+fn f(x: Map[str]) {}
+### a class inside Map[K, V]
+fn f(x: Map[str, Dog]) {}
+### a type that is not a name
+fn f(x: 5) {}
+### a missing return type after the colon
+fn f(): => 1

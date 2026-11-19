@@ -1,0 +1,93 @@
+// Every built-in function, including how each one fails.
+fn show(f) {
+  try { print(f()) } catch e { print("error:", e) }
+}
+
+// math
+print(abs(-2.5), abs(int32(-5)), abs(int32(5)), floor(2.7), ceil(2.1), floor(int32(3)), ceil(uint8(4)))
+print(round(2.5), round(-2.5), round(3.14159, 2), round(int32(9)), round(7, 0))
+print(sqrt(16), fixed(sin(PI / 2), 3), fixed(cos(0), 3), fixed(tan(0), 3), fixed(exp(1), 5))
+print(fixed(atan2(1, 1), 4), pow(2, 10), log(exp(2)), log(8, 2), fixed(log(100, 10), 6))
+show(fn() => sqrt("x"))
+show(fn() => atan2(1, "y"))
+show(fn() => pow("2", 1))
+show(fn() => log(1, "e"))
+show(fn() => round(1.5, 0.5))
+
+// randomness, made repeatable with seed()
+seed(7)
+let a = [random(), random_int(1, 6), choice(["x", "y", "z"]), shuffle([1, 2, 3, 4])]
+seed(7)
+let b = [random(), random_int(1, 6), choice(["x", "y", "z"]), shuffle([1, 2, 3, 4])]
+print(a == b, a[0] >= 0 and a[0] < 1, a[1] >= 1 and a[1] <= 6, sort(a[3]))
+show(fn() => random_int(5, 1))
+show(fn() => choice([]))
+show(fn() => seed(1.5))
+print(len(shuffle([])), choice(0..1))
+
+// time
+print(type(clock()), type(time()), time() > 1700000000)
+
+// conversion
+print(num(true), num(false), num(" 12 "), int("7.9"), int(-7.9), bool(0), Bool(), Bool(""), Number(), Number("2.5"))
+show(fn() => num([1]))
+show(fn() => int({}))
+print(Function(print) == print, List(), Object(), String(int32(5)))
+show(fn() => Function(5))
+
+// collections
+print(len("abc"), len([1, 2]), len({a: 1}), len(0..10))
+show(fn() => len(5))
+var xs = [1, 2, 3]
+show(fn() => remove(&xs, 5))
+show(fn() => xs.remove(-9))
+print(list({a: 1, b: 2}), list("hé"), list(0..3), sum(0..5), sum([]))
+show(fn() => list(5))
+show(fn() => sum(["a"]))
+show(fn() => min([]))
+show(fn() => max(1, "a"))
+show(fn() => sort([2, num("nan")]))
+show(fn() => sort([2, 1], fn(a, b) => "neither"))
+print(min("b", "ab"), max(["x", "xy"]), sort(["b", "a", "ab"]), sort([3, 1, 2], fn(a, b) => b - a))
+print(reverse(0..3), reverse("abc"), index_of([1, 2], 3), index_of("hello", "z"), join(0..3, "-"))
+print(zip([1, 2, 3], "ab"), zip(0..2, [true, false]))
+show(fn() => zip([1], 5))
+var m = {a: 1}
+m.clear()
+print(m, len(m))
+
+// functions that take a function
+show(fn() => [1, 2].map(fn(x) => 1 / 0))
+show(fn() => [1, 2].filter(fn(x) => 1 / 0))
+show(fn() => [1, 2].each(fn(x) => 1 / 0))
+show(fn() => reduce([], fn(a, b) => a + b))
+show(fn() => reduce([1, 2], fn(a, b) => 1 / 0))
+show(fn() => find([1, 2], fn(x) => 1 / 0))
+show(fn() => any([1, 2], fn(x) => 1 / 0))
+show(fn() => all([1, 2], fn(x) => 1 / 0))
+show(fn() => find([1], 5))
+show(fn() => any([1], 5))
+show(fn() => map([1], push))
+show(fn() => map([1], fn(&x) { x = 1 }))
+print(any([false, 0]), all([1, true]), any([]), all([false]))
+each(0..0, print)
+show(fn() => [1].each(fn(x) {}).len())
+
+// text
+print(upper("abc"), lower("ABC"), trim("  x  "), "a-b".split("-"), "a  b".split(), "ab".split(""))
+print(replace("aaa", "a", "b"), replace("abc", "", "x"), starts_with("abc", "ab"), ends_with("abc", "bc"))
+print(chars("hé"), ord("é"), ord("€"), ord("😀"), chr(65), chr(233), chr(8364), chr(128512))
+print(pad_left("7", 3, "0"), pad_right("ab", 4) + "|", pad_left("long", 2), fixed(1.005, 1), fixed(2))
+show(fn() => pad_left("a", 3, "xy"))
+show(fn() => pad_left("a", 1e12))
+show(fn() => fixed(1, 30))
+show(fn() => ord(""))
+show(fn() => chr(-1))
+show(fn() => "abc".index_of(1))
+show(fn() => upper(5))
+
+// assertions
+show(fn() => assert(false))
+show(fn() => assert(1 == 2, "with a message"))
+assert(true)
+print("assert(true) passed")

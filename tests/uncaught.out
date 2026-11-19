@@ -1,0 +1,7 @@
+2
+tests/uncaught.lube:2: error: division by zero
+    2 |   return a / b
+traceback (innermost call first):
+  at divide (tests/uncaught.lube:2)
+  at average (tests/uncaught.lube:5)
+  at <script> (tests/uncaught.lube:8)

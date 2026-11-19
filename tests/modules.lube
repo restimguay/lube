@@ -1,0 +1,4 @@
+import "lib/shapes.lube"
+import "lib/geometry.lube"   # already loaded: runs only once
+print(describe({kind: "circle", r: 1}))
+print(describe({kind: "rect", w: 2, h: 3}))

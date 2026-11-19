@@ -1,0 +1,716 @@
+--- version
+lube 2.0.0
+[exit 0]
+--- short version
+lube 2.0.0
+[exit 0]
+--- help
+Lube 2.0.0 - a small, smooth scripting language
+
+usage:
+  lube                  start the interactive REPL
+  lube FILE [ARGS...]   run a Lube script (ARGS are available as `args`)
+  lube -e CODE          run CODE and print the value of the last expression
+  lube -                read a script from standard input
+  lube --check FILE     report syntax errors without running anything (FILE may be -)
+  lube -v, --version    print the version
+  lube -h, --help       show this help
+[exit 0]
+--- short help
+Lube 2.0.0 - a small, smooth scripting language
+
+usage:
+  lube                  start the interactive REPL
+  lube FILE [ARGS...]   run a Lube script (ARGS are available as `args`)
+  lube -e CODE          run CODE and print the value of the last expression
+  lube -                read a script from standard input
+  lube --check FILE     report syntax errors without running anything (FILE may be -)
+  lube -v, --version    print the version
+  lube -h, --help       show this help
+[exit 0]
+--- unknown option
+lube: unknown option '-x'
+
+Lube 2.0.0 - a small, smooth scripting language
+
+usage:
+  lube                  start the interactive REPL
+  lube FILE [ARGS...]   run a Lube script (ARGS are available as `args`)
+  lube -e CODE          run CODE and print the value of the last expression
+  lube -                read a script from standard input
+  lube --check FILE     report syntax errors without running anything (FILE may be -)
+  lube -v, --version    print the version
+  lube -h, --help       show this help
+[exit 64]
+--- -e without code
+Lube 2.0.0 - a small, smooth scripting language
+
+usage:
+  lube                  start the interactive REPL
+  lube FILE [ARGS...]   run a Lube script (ARGS are available as `args`)
+  lube -e CODE          run CODE and print the value of the last expression
+  lube -                read a script from standard input
+  lube --check FILE     report syntax errors without running anything (FILE may be -)
+  lube -v, --version    print the version
+  lube -h, --help       show this help
+[exit 64]
+--- -e prints the last value
+3
+[exit 0]
+--- -e with arguments
+["one", "two"]
+[exit 0]
+--- missing file
+lube: cannot open file 'tests/does-not-exist.lube'
+[exit 66]
+--- file arguments
+args: ["first", "second"] 2
+[exit 0]
+--- script from standard input
+from stdin ["a", "b"]
+[exit 0]
+--- check a good file
+[exit 0]
+--- check a file with an error
+tests/syntax_error.lube:2:16: syntax error: expected ')' to close the parameter list but found '{'
+    2 | fn broken(a, b {
+      |                ^
+[exit 65]
+--- check standard input
+<stdin>:2:7: syntax error: #strict: parameter 'x' needs a type, like x: Number
+    2 | fn f(x) {}
+      |       ^
+[exit 65]
+--- check runs nothing
+[exit 0]
+--- check a missing file
+lube: cannot open file 'tests/does-not-exist.lube'
+[exit 66]
+--- check without a file
+Lube 2.0.0 - a small, smooth scripting language
+
+usage:
+  lube                  start the interactive REPL
+  lube FILE [ARGS...]   run a Lube script (ARGS are available as `args`)
+  lube -e CODE          run CODE and print the value of the last expression
+  lube -                read a script from standard input
+  lube --check FILE     report syntax errors without running anything (FILE may be -)
+  lube -v, --version    print the version
+  lube -h, --help       show this help
+[exit 64]
+--- repl
+Lube 2.0.0  (type exit() or press Ctrl-D to quit)
+>>> >>> 21
+>>> ... ... >>> 40
+>>> "text"
+>>> printed
+>>> ... [1, 2]
+>>> <repl>:1: error: cannot change 'x': it was declared with let (use var for a variable that changes)
+    1 | x = 5
+>>> <repl>:1: error: undefined variable 'undefined_thing'
+    1 | undefined_thing
+>>> ... <repl>:2:1: syntax error: expected an expression but found end of file
+    2 | }"
+      | ^
+>>> <repl>:1: error: undefined variable 's'
+    1 | s
+>>> >>> >>> >>> 
+[exit 0]
+--- repl empty input
+Lube 2.0.0  (type exit() or press Ctrl-D to quit)
+>>> 
+[exit 0]
+--- repl line without newline
+Lube 2.0.0  (type exit() or press Ctrl-D to quit)
+>>> 2
+>>> 
+[exit 0]
+--- input
+name? ada
+bob
+input(): end of input
+[exit 0]
+--- write, append, read
+"hello\n42"
+read_file(): cannot read 'TMP/missing.txt'
+reading a folder: read_file(): cannot read 'TMP'
+write_file(): cannot open 'TMP/no/such/dir.txt' for writing
+append_file() expects a str as argument 1, got Number
+[exit 0]
+--- import with a syntax error
+TMP/mods/broken.lube:2:1: syntax error: expected ')' to close the argument list but found end of file
+    2 | 
+      | ^
+TMP/mods/main.lube:1: error: cannot import 'broken': the file has errors
+    1 | import "broken"
+[exit 70]
+--- import of a missing file
+TMP/mods/main2.lube:1: error: cannot import 'missing': file not found
+    1 | import "missing"
+[exit 70]
+--- import that does not resolve
+TMP/mods/bad_resolve.lube:1: error: 'break' can only be used inside a loop
+    1 | break
+TMP/mods/main3.lube:2: error: cannot import 'bad_resolve': the file has errors
+    2 | import "bad_resolve"
+[exit 70]
+--- import that raises an error
+depth 1
+TMP/mods/fails.lube:2: error: division by zero
+    2 | fn boom() => 1 / 0
+traceback (innermost call first):
+  at boom (TMP/mods/fails.lube:2)
+  at <module> (TMP/mods/fails.lube:3)
+  at <script> (TMP/mods/main4.lube:1)
+[exit 70]
+--- exit(3)
+[exit 3]
+--- exit()
+[exit 0]
+--- uncaught error
+[exit 70]
+--- syntax error
+[exit 65]
+--- deep recursion
+<eval>:1: error: division by zero
+    1 | fn dive(n) => n > 1000 and 1 / 0 or dive(n + 1)
+traceback (innermost call first):
+  at dive (<eval>:1)
+  ... repeated N more times
+  at start (<eval>:2)
+  at <script> (<eval>:3)
+[exit 70]
+--- alternating recursion
+<eval>:1: error: division by zero
+    1 | fn ping(n) => n > 40 and 1 / 0 or pong(n + 1)
+traceback (innermost call first):
+  at ping (<eval>:1)
+  at pong (<eval>:2)
+  at ping (<eval>:1)
+  at pong (<eval>:2)
+  at ping (<eval>:1)
+  at pong (<eval>:2)
+  at ping (<eval>:1)
+  at pong (<eval>:2)
+  at ping (<eval>:1)
+  at pong (<eval>:2)
+  at ping (<eval>:1)
+  at pong (<eval>:2)
+  ... N more calls ...
+  at <script> (<eval>:3)
+[exit 70]
+--- long traceback ending in repeats
+<eval>:2: error: division by zero
+    2 | fn x(n) => n > 10 and 1 / 0 or y(n + 1)
+traceback (innermost call first):
+  at x (<eval>:2)
+  at y (<eval>:3)
+  at x (<eval>:2)
+  at y (<eval>:3)
+  at x (<eval>:2)
+  at y (<eval>:3)
+  at x (<eval>:2)
+  at y (<eval>:3)
+  at x (<eval>:2)
+  at y (<eval>:3)
+  at x (<eval>:2)
+  at y (<eval>:3)
+  ... N more calls ...
+  at <script> (<eval>:4)
+[exit 70]
+--- uncaught non-string error
+<eval>:1: error: {code: 7}
+    1 | fn f() { throw {code: 7} }
+traceback (innermost call first):
+  at f (<eval>:1)
+  at <script> (<eval>:2)
+[exit 70]
+--- too many items
+lube: out of memory
+[exit 70]
+--- too many object keys
+lube: out of memory
+[exit 70]
+--- string too long
+lube: out of memory
+[exit 70]
+--- concatenation too long
+lube: out of memory
+[exit 70]
+--- printing too much
+lube: out of memory
+[exit 70]
+--- repeat over the limit
+<eval>:1: error: the repeated result would be too large
+    1 | "ab" * 600
+[exit 70]
+--- source too large
+<eval>:1: error: the file is too large
+    1 | # x
+[exit 65]
+--- syntax tree too large
+lube: out of memory
+[exit 70]
+--- limits that are ignored
+lube: ignoring LUBE_MAX_ITEMS=abc (expected a whole number below 268435456)
+lube: ignoring LUBE_MAX_BYTES=0 (expected a whole number below 1073741824)
+ok
+[exit 0]
+--- limit above the default
+lube: ignoring LUBE_MAX_ITEMS=999999999999 (expected a whole number below 268435456)
+ok
+[exit 0]
+--- hex literal without digits
+program:1:9: syntax error: hexadecimal literal needs digits after '0x'
+    1 | let x = 0x
+      |         ^
+[exit 65]
+--- number literal too long
+program:1:9: syntax error: number literal is too long
+    1 | let x = 1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111
+      |         ^
+[exit 65]
+--- letter inside a number
+program:1:10: syntax error: unexpected character 'a' in number
+    1 | let x = 3abc
+      |          ^
+[exit 65]
+--- line continuation
+3
+[exit 0]
+--- stray backslash
+program:1:11: syntax error: unexpected '\' (a line continuation must end the line)
+    1 | let x = 1 \ 2
+      |           ^
+[exit 65]
+--- unterminated string
+program:1:9: syntax error: unterminated string
+    1 | let s = "abc
+      |         ^
+[exit 65]
+--- unterminated interpolation
+program:1:9: syntax error: unterminated string (an unclosed '{' starts an interpolation; write \{ for a literal brace)
+    1 | let s = "a {b
+      |         ^
+[exit 65]
+--- unterminated single-quoted string
+program:1:9: syntax error: unterminated string
+    1 | let s = 'abc
+      |         ^
+[exit 65]
+--- strings nested too deeply
+program:1:7: syntax error: strings are nested too deeply inside interpolations
+    1 | print("{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{"{1}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}"}")
+      |       ^
+[exit 65]
+--- brackets nested too deeply
+program:1:265: syntax error: brackets are nested too deeply
+    1 | let x = ((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((1))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
+      |                                                                                                                                                                                                                                                                         ^
+[exit 65]
+--- the old pipe operator
+program:1:16: syntax error: the pipe operator is '|', not '|>': write x | f(y)
+    1 | let x = [1, 2] |> len
+      |                ^
+[exit 65]
+--- control character
+program:1:9: syntax error: unexpected control character (byte 0x01)
+    1 | let x = 
+      |         ^
+[exit 65]
+--- unexpected character
+program:1:9: syntax error: unexpected character '$'
+    1 | let x = $
+      |         ^
+[exit 65]
+--- two expressions on one line
+program:1:11: syntax error: expected a new line or ';' after the statement, found '2'
+    1 | let x = 1 2
+      |           ^
+[exit 65]
+--- bad interpolation
+program:1:11: syntax error: unexpected '2' inside string interpolation
+    1 | print("{1 2}")
+      |           ^
+[exit 65]
+--- bad hex escape
+program:1:8: syntax error: \x needs two hex digits
+    1 | print("\xZZ")
+      |        ^
+[exit 65]
+--- unicode escape without braces
+program:1:8: syntax error: expected \u{XXXX}
+    1 | print("\u1234")
+      |        ^
+[exit 65]
+--- empty unicode escape
+program:1:8: syntax error: invalid unicode escape, expected \u{XXXX}
+    1 | print("\u{}")
+      |        ^
+[exit 65]
+--- unicode escape too large
+program:1:8: syntax error: invalid unicode escape, expected \u{XXXX}
+    1 | print("\u{110000}")
+      |        ^
+[exit 65]
+--- unknown escape
+program:1:8: syntax error: unknown escape sequence '\q'
+    1 | print("\q")
+      |        ^
+[exit 65]
+--- other escapes
+"tab\t cr\r nul\x00 esc\x1b joined line"
+[exit 0]
+--- ampersand on a value
+program:2:3: syntax error: '&' must be followed by a variable, a field like a.b, or an index like a[i]
+    2 | f(&1)
+      |   ^
+[exit 65]
+--- bad object key
+program:1:10: syntax error: expected an object key (a name, string, number or [expression]) but found '('
+    1 | let m = {(1): 2}
+      |          ^
+[exit 65]
+--- Function has no default
+program:1:9: syntax error: Function has no default value: write a function with fn, or use Function[] for a list of them
+    1 | let f = Function
+      |         ^
+[exit 65]
+--- missing expression
+program:1:9: syntax error: expected an expression but found ')'
+    1 | let x = )
+      |         ^
+[exit 65]
+--- number after a dot
+program:2:3: syntax error: expected a name after '.' but found '1'
+    2 | x.1
+      |   ^
+[exit 65]
+--- let without a value
+program:1:6: syntax error: 'let x' needs a starting value (Lube has no nil)
+    1 | let x
+      |      ^
+[exit 65]
+--- var without a value
+program:1:6: syntax error: 'var y' needs a starting value (Lube has no nil)
+    1 | var y
+      |      ^
+[exit 65]
+--- Map value type missing
+program:1:21: syntax error: expected a value type after ',' in Map[...] but found '5'
+    1 | let m = Map[String, 5]
+      |                     ^
+[exit 65]
+--- Map with one type
+program:1:13: syntax error: Map[...] needs a key type and a value type, like Map[String, Number]
+    1 | let m = Map[String]
+      |             ^
+[exit 65]
+--- import with interpolation
+program:2:8: syntax error: the import path cannot use interpolation
+    2 | import "{x}"
+      |        ^
+[exit 65]
+--- import without a string
+program:1:8: syntax error: expected a file path string after 'import' but found 'x'
+    1 | import x
+      |        ^
+[exit 65]
+--- unary minus nested too deeply
+program:1:409: syntax error: code is nested too deeply
+    1 | let x = --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------1
+      |                                                                                                                                                                                                                                                                                                                                                                                                                         ^
+[exit 65]
+--- not nested too deeply
+program:1:1609: syntax error: code is nested too deeply
+    1 | let x = not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not true
+      |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ^
+[exit 65]
+--- missing closing brace
+program:3:1: syntax error: missing '}' to close the block opened on line 1
+    3 | 
+      | ^
+[exit 65]
+--- default for a & parameter
+program:1:9: syntax error: a & parameter cannot have a default value
+    1 | fn f(&x = 1) {}
+      |         ^
+[exit 65]
+--- bad parameter
+program:1:6: syntax error: expected a parameter name but found '1'
+    1 | fn f(1) {}
+      |      ^
+[exit 65]
+--- missing catch
+program:2:1: syntax error: expected 'catch' after the try block but found 'print'
+    2 | print(1)
+      | ^
+[exit 65]
+--- missing in
+program:1:7: syntax error: expected 'in' after the loop variable but found '['
+    1 | for x [1] {}
+      |       ^
+[exit 65]
+--- assignment to a call
+program:1:5: syntax error: can only assign to a variable, an index like a[i], or a field like a.b
+    1 | f() = 1
+      |     ^
+[exit 65]
+--- missing block
+program:1:9: syntax error: expected '{' to start a block but found 'print'
+    1 | if true print(1)
+      |         ^
+[exit 65]
+--- missing arrow or block
+program:1:8: syntax error: expected '{' or '=>' after the parameter list, found '5'
+    1 | fn f() 5
+      |        ^
+[exit 65]
+--- bad second loop variable
+program:1:8: syntax error: expected a second loop variable after ',' but found '1'
+    1 | for a, 1 in [] {}
+      |        ^
+[exit 65]
+--- unclosed typed list
+program:2:1: syntax error: expected ']' to close the typed list but found end of file
+    2 | 
+      | ^
+[exit 65]
+--- changing a parameter
+program:1: error: cannot change parameter 'n' (write 'var n' for a changeable copy, or '&n' to change the caller's variable)
+    1 | fn f(n) { n = 1 }
+[exit 65]
+--- changing a loop variable
+program:1: error: cannot change loop variable 'i'
+    1 | for i in 0..3 { i = 1 }
+[exit 65]
+--- changing a caught error
+program:1: error: cannot change 'e', the caught error (copy it into a var first)
+    1 | try { throw "x" } catch e { e = 1 }
+[exit 65]
+--- changing a local function
+program:3: error: cannot change 'f': it is a function declared with fn
+    3 |   f = 2
+[exit 65]
+--- changing a built-in
+program:1: error: cannot change 'print': it is a built-in (declare your own with let or var to replace it)
+    1 | print = 1
+[exit 65]
+--- changing a let in a block
+program:3: error: cannot change 'x': it was declared with let (use var for a variable that changes)
+    3 |   x += 1
+[exit 65]
+--- changing a top-level let
+program:2: error: cannot change 'limit': it was declared with let (use var for a variable that changes)
+    2 | fn raise() { limit = 4 }
+[exit 65]
+--- passing a let with &
+program:3: error: cannot change 'k': it was declared with let (use var for a variable that changes)
+    3 | f(&k)
+[exit 65]
+--- break outside a loop
+program:1: error: 'break' can only be used inside a loop
+    1 | break
+[exit 65]
+--- continue outside a loop
+program:1: error: 'continue' can only be used inside a loop
+    1 | fn f() { continue }
+[exit 65]
+--- return outside a function
+program:1: error: 'return' can only be used inside a function
+    1 | return 1
+[exit 65]
+--- declared twice
+program:3: error: 'a' is already declared in this scope
+    3 |   let a = 2
+[exit 65]
+--- duplicate parameter
+program:1: error: duplicate parameter 'a'
+    1 | fn f(a, b, a) {}
+[exit 65]
+--- type name as a parameter
+program:1: error: 'String' is a type name, so it cannot be used as a name here
+    1 | fn f(String) {}
+[exit 65]
+--- field declared again in a subclass
+program:5: error: field 'x' is already declared in A
+    5 |   var x = 2
+[exit 70]
+--- extending something that is not a class
+program:2: error: 'NotAClass' is not a class, so B cannot extend it
+    2 | class B extends NotAClass {}
+[exit 70]
+--- class inside a function
+program:2: error: classes can only be declared at the top level of a file
+    2 |   class Inner {}
+[exit 65]
+--- this outside a class
+program:1: error: 'this' can only be used inside a class's methods and constructor
+    1 | fn f() => this
+[exit 65]
+--- super outside a class
+program:1: error: 'super' can only be used directly inside a class's methods and constructor
+    1 | fn f() => super.go()
+[exit 65]
+--- super() outside a constructor
+program:2: error: super(...) calls the parent's constructor, so it can only be used in a constructor
+    2 |   fn go() => super(1)
+[exit 65]
+--- constructor with a & parameter
+program:2: error: a constructor cannot take & parameters
+    2 |   constructor(&x) {}
+[exit 65]
+--- method declared twice
+program:3: error: method 'go' is declared twice
+    3 |   fn go() => 2
+[exit 65]
+--- field and method with one name
+program:3: error: 'go' is both a field and a method
+    3 |   fn go() => 2
+[exit 65]
+--- field declared twice
+program:3: error: field 'x' is declared twice
+    3 |   var x = 2
+[exit 65]
+--- two constructors
+program:3:3: syntax error: a class has only one constructor
+    3 |   constructor(x) {}
+      |   ^
+[exit 65]
+--- something else in a class body
+program:2:3: syntax error: expected 'var', 'fn' or 'constructor' in the class body but found 'print'
+    2 |   print(1)
+      |   ^
+[exit 65]
+--- field without a starting value
+program:2:8: syntax error: expected '=' and a starting value for the field (there is no nil) but found end of line
+    2 |   var x
+      |        ^
+[exit 65]
+--- unclosed class
+program:3:1: syntax error: missing '}' to close the class opened on line 1
+    3 | 
+      | ^
+[exit 65]
+--- replacing this
+program:2: error: cannot replace 'this' itself; change its fields instead
+    2 |   fn reset() { this = A }
+[exit 65]
+--- changing a class name
+program:2: error: cannot change 'A': it is a class
+    2 | A = 5
+[exit 65]
+--- is with something that is not a type
+program:2: error: 'x' is not a type or a class
+    2 | print(1 is x)
+[exit 70]
+--- is without a type
+program:1:12: syntax error: expected a type or class name after 'is' but found '2'
+    1 | print(1 is 2)
+      |            ^
+[exit 65]
+--- super to a missing method
+program:3: error: A has no method 'nope' to call with super
+    3 |   fn go() => super.nope()
+traceback (innermost call first):
+  at go (program:3)
+  at <script> (program:5)
+[exit 70]
+--- super() with arguments and no parent constructor
+program:3: error: the parent class has no constructor to pass these arguments to
+    3 |   constructor() { super(1) }
+traceback (innermost call first):
+  at B (program:3)
+  at <script> (program:5)
+[exit 70]
+--- super() with no parent constructor
+B {}
+[exit 0]
+--- class name in a class field
+Tree {root: Node {label: "n"}}
+[exit 0]
+--- method calling a sibling through this
+2
+[exit 0]
+--- super method on a let
+100
+program:3: error: cannot change 'this' here: the method was called on something that cannot change (a let, or a value that is not in a variable)
+    3 |   fn bump() { this.n += 1 }
+traceback (innermost call first):
+  at bump (program:3)
+  at bump (program:8)
+  at <script> (program:12)
+[exit 70]
+--- strict: a parameter without a type
+program:2:9: syntax error: #strict: parameter 'a' needs a type, like a: Number
+    2 | fn add(a, b: Number): Number => a + b
+      |         ^
+[exit 65]
+--- strict: a value body without a return type
+program:2:20: syntax error: #strict: this function returns a value, so it needs a return type, like ): Number => (or use a { } body)
+    2 | fn area(w: Number) => w * 2
+      |                    ^
+[exit 65]
+--- strict: return with a value and no return type
+program:3: error: #strict: f() has no return type, so it cannot return a value (declare one, like ): Number)
+    3 |   return x
+[exit 65]
+--- strict: directive after code
+program:2:1: syntax error: #strict must come first in the file, before any code
+    2 | #strict
+      | ^
+[exit 65]
+--- strict: directive after comments and blank lines, with trailing spaces
+program:4:7: syntax error: #strict: parameter 'x' needs a type, like x: Number
+    4 | fn f(x) {}
+      |       ^
+[exit 65]
+--- not strict: a comment that only starts with #strict
+ok
+[exit 0]
+--- a bare return in a function with a return type
+program:2: error: f() must return a Number, so 'return' needs a value
+    2 |   return
+[exit 65]
+--- a bare return in a function returning a class
+program:5: error: adopt() must return a Dog, so 'return' needs a value
+    5 |   return
+[exit 65]
+--- a bare return in a lambda with a return type
+program:1: error: f() must return a str, so 'return' needs a value
+    1 | let f = fn(): str { return }
+[exit 65]
+--- strict: return in a lambda without a return type
+program:2: error: #strict: f() has no return type, so it cannot return a value (declare one, like ): Number)
+    2 | let f = fn() { return 1 }
+[exit 65]
+--- a constructor with a return type
+program:2:3: syntax error: a constructor cannot have a return type: it always makes the instance
+    2 |   constructor(): A {}
+      |   ^
+[exit 65]
+--- a list of a class as a type
+program:1:12: syntax error: typed lists hold built-in types, so 'Dog[]' is not a type (use List)
+    1 | fn f(x: Dog[]) {}
+      |            ^
+[exit 65]
+--- Map[K] without a value type
+program:1:16: syntax error: expected ',' and a value type in Map[K, V] but found ']'
+    1 | fn f(x: Map[str]) {}
+      |                ^
+[exit 65]
+--- a class inside Map[K, V]
+program:1:18: syntax error: 'Dog' is not a built-in type (Map[K, V] takes built-in types)
+    1 | fn f(x: Map[str, Dog]) {}
+      |                  ^
+[exit 65]
+--- a type that is not a name
+program:1:9: syntax error: expected a type after ':' but found '5'
+    1 | fn f(x: 5) {}
+      |         ^
+[exit 65]
+--- a missing return type after the colon
+program:1:9: syntax error: expected a type after ':' but found '=>'
+    1 | fn f(): => 1
+      |         ^
+[exit 65]

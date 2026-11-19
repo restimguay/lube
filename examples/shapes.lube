@@ -1,0 +1,80 @@
+#strict
+// Classes with typed methods: fields, constructors, inheritance, super and `is`.
+// #strict (the first line) makes every parameter declare its type; a method
+// without a return type returns nothing.
+// Run with: ./lube examples/shapes.lube
+
+class Shape {
+  var name = "shape"
+  fn area(): Number => 0
+  fn describe(): str => "{this.name} with area {fixed(this.area(), 2)}"
+}
+
+class Circle extends Shape {
+  var radius = 1
+  constructor(radius: Number) {
+    super()
+    this.name = "circle"
+    this.radius = radius
+  }
+  fn area(): Number => PI * this.radius ** 2
+}
+
+class Rect extends Shape {
+  var width = 1
+  var height = 1
+  constructor(width: Number, height: Number) {
+    this.name = "rect"
+    this.width = width
+    this.height = height
+  }
+  fn area(): Number => this.width * this.height
+  fn scale(by: Number) {     // changes this: needs a var receiver
+    this.width *= by
+    this.height *= by
+  }
+}
+
+class Square extends Rect {
+  constructor(side: Number) {
+    super(side, side)
+    this.name = "square"
+  }
+  fn describe(): str => super.describe() + " (all sides {this.width})"
+}
+
+fn largest(shapes: List): Shape {
+  var best = Shape()
+  for s in shapes {
+    if s.area() > best.area() { best = s }
+  }
+  return best
+}
+
+var shapes = [Circle(1), Rect(2, 3), Square(4)]
+for s in shapes { print(s.describe()) }
+print("largest:", largest(shapes).name)
+
+// instances are values: a copy changes on its own
+var big = Square(2)
+var bigger = big
+bigger.scale(3)
+print(big.area(), bigger.area())
+
+// `is` checks a class and its parents; every instance is an Object
+let sq = Square(1)
+print(sq is Square, sq is Rect, sq is Shape, sq is Circle, sq is Object)
+
+// types are checked: arguments, fields, and vars
+try { bigger.scale("twice") } catch e { print("error:", e) }
+try { bigger.width = "wide" } catch e { print("error:", e) }
+try { bigger.depth = 1 } catch e { print("error:", e) }
+var current = Shape()
+current = Circle(2)
+print(type(current), fixed(current.area(), 1))
+try { current = "circle" } catch e { print("error:", e) }
+
+// typed maps hold the totals
+var totals = Map[str, Number]
+for s in shapes { totals[s.name] = get(totals, s.name, 0) + s.area() }
+for name, area in totals { print(pad_right(name, 8), fixed(area, 2)) }

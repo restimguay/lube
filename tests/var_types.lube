@@ -1,0 +1,77 @@
+// A var keeps the type it starts with.
+var count = 0
+count = 41
+count += 1
+print(count)
+try { count = "forty-two" } catch e { print(e) }
+
+var name = String()      // default to ""
+try { name = "" } catch e { print(e) }
+name = String("ada")
+print(name, type(name))
+var plain = ""
+try { plain = String("x") } catch e { print(e) }
+
+// sized integers take plain whole numbers
+var small = int8(0)
+small = 100
+print(small, type(small))
+try { small = 1.5 } catch e { print(e) }
+try { small = int16(1) } catch e { print(e) }
+
+// lists and maps keep their element types
+var names = str[]
+names = names + ["a"]
+try { names = [1] } catch e { print(e) }
+var scores = Map[str, Number]
+try { scores = Map } catch e { print(e) }
+
+// a var that starts as an Object can hold any object
+var anything = Object
+anything = [1, 2]
+anything = String("text")
+anything = Map
+print(type(anything))
+try { anything = 5 } catch e { print(e) }
+
+// functions, ranges and bools too
+var action = print
+action = fn(x) => x
+var span = 0..3
+span = 5..10
+var flag = true
+try { flag = 1 } catch e { print(e) }
+print(action(7), span, flag)
+
+// parameters declared var keep the type of what was passed
+fn twice(var n) {
+  n = n * 2
+  return n
+}
+print(twice(21))
+fn break_it(var n) { n = "text" }
+try { break_it(1) } catch e { print(e) }
+
+// globals too, and a new declaration starts over
+var level = 1
+fn level_up() { level += 1 }
+level_up()
+print(level)
+var level = "one"
+print(level)
+
+// vars holding instances accept subclasses; functions and ranges keep their kind
+class Shape {
+  var sides = 0
+}
+class Square extends Shape {
+  var size = 1
+}
+var shape = Shape
+shape = Square
+print(type(shape))
+try { shape = 5 } catch e { print(e) }
+var f = print
+try { f = 5 } catch e { print(e) }
+var r = 0..1
+try { r = 5 } catch e { print(e) }

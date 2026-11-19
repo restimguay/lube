@@ -1,0 +1,16 @@
+Hello from Lube v1.0!
+math: 3 [10, 20] NESTED STRINGS
+single quotes do not {interpolate}
+escaped {braces}, tab:	|, quote: ", backslash: \
+unicode: ❤ 😀 hex: A
+multi
+line
+5 e o ABC abc
+padded| ["a", "b", "", "c"] ["split", "on", "spaces", "ok"]
+["c", "h", "a", "r", "s"] ["h", "é", "l", "l", "o"] ["a", "b", "c"]
+bANANa true true
+true true 2 cba
+65 B 233 ☃
+007 ab...| 3.142 2
+true true true
+12345

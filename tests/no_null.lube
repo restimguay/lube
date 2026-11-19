@@ -1,0 +1,37 @@
+// Lube has no null. Every value is a real value.
+
+// every variable starts with a value
+var count = 0
+var name = "anonymous"
+
+// a missing map key is an error, never a silent null...
+let user = {name: "ada", langs: ["lube"]}
+try { print(user.email) } catch e { print(e) }
+
+// ...so ask first, or say what to use instead
+print(user.has("email"), get(user, "email", "no email"))
+if user.has("name") { print("name:", user.name) }
+
+// parsing can fail loudly, or fall back to a value you choose
+try { num("forty-two") } catch e { print(e) }
+print(num("42"), num("forty-two", 0), int("7.9", 0))
+
+// searching: find_index gives -1, find takes a default
+let nums = [3, 8, 12]
+print(find_index(nums, fn(n) => n > 10), find(nums, fn(n) => n > 100, "none"))
+
+// a function with nothing to return can't be mistaken for a value
+fn greet(who) { print("hi", who) }
+greet("bob")
+try { let result = greet("eve") } catch e { print(e) }
+try { print("value: {greet("joe")}") } catch e { print(e) }
+try { [1, 2].map(fn(x) { greet(x) }) } catch e { print(e) }
+
+// delete tells you whether the key was there
+var settings = {theme: "dark"}
+print(settings.delete("theme"), settings.delete("theme"), settings)
+
+// `and`/`or` still work for control flow
+let verbose = false
+verbose and print("never printed")
+verbose or print("printed because verbose is false")

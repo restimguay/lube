@@ -1,0 +1,33 @@
+0 int32 23 int64
+0 0 0 0 0 0 0 0
+-128 127 255 -32768 65535
+9223372036854775807 -9223372036854775808 18446744073709551615
+3 -3 1 42 127 1000 100
+9 5 14 3 1 49 int32
+-4 1 8 93 int32
+34 int32
+true true true true true
+false true
+one two true 2
+20 40 [20, 30] [0, 1, 2] abab
+[10, 20, 30] 300 9
+5 5 2.5 7! id-42
+500500 uint32
+300 does not fit in int8 (-128 to 127)
+-1 does not fit in uint8 (0 to 255)
+int32 overflow: 2147483647 + 1 is outside -2147483648 to 2147483647
+int64 overflow: 9223372036854775807 * 2 is outside -9223372036854775808 to 9223372036854775807
+uint8 overflow: 0 - 1 is outside 0 to 255
+uint8 overflow: 200 + 100 is outside 0 to 255
+int8 overflow: 2 ** 7 is outside -128 to 127
+int8 overflow: -(-128) does not fit
+cannot negate 3: a uint8 cannot be below zero
+cannot mix int32 and int64 in arithmetic (convert one first, e.g. int32(x))
+1.5 is not a whole number, so it cannot be used as an int32 (use num(x) for decimal math)
+division by zero
+modulo by zero
+'12abc' is not a whole number
+nan cannot be converted to int32
+inf cannot be converted to int32
+cannot convert a List to int16
+int8 overflow: 127 + 1 is outside -128 to 127 - small stopped at 127

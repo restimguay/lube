@@ -1,0 +1,2 @@
+// imported while `shared` is lent out, to test that declaring it is refused
+var shared = "redefined"

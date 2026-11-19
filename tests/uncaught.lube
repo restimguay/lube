@@ -1,0 +1,9 @@
+fn divide(a, b) {
+  return a / b
+}
+fn average(xs) {
+  return divide(sum(xs), len(xs))
+}
+print(average([1, 2, 3]))
+print(average([]))
+print("never printed")

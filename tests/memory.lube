@@ -1,0 +1,49 @@
+# Memory is freed as soon as values go out of use. No garbage collector.
+
+# lots of short-lived values
+var keep = []
+for i in 0..20000 {
+  let tmp = [i, str(i), {n: i}]
+  if i % 1000 == 0 { keep.push(tmp) }
+}
+print(len(keep), keep[5][2].n, keep[19][1])
+
+# closures holding copies
+let adders = map(0..100, fn(n) => fn(x) => x + n)
+var junk = ""
+for i in 0..5000 { junk = str(i) + "-" + str(i * 2) }
+print(adders[42](1000), junk)
+
+# building strings
+var parts = []
+for i in 0..10000 { parts.push(i % 10) }
+print(len(join(parts)))
+
+# a big map
+var big = {}
+for i in 0..50000 { big["key" + i] = i }
+var total = 0
+for k, v in big { total += v }
+print(len(big), total)
+
+# a value nested 100,000 levels deep is freed without overflowing the stack
+var deep = []
+for i in 0..100000 { deep = [deep] }
+var depth = 0
+var cursor = deep
+while len(cursor) > 0 {
+  cursor = cursor[0]
+  depth += 1
+}
+print("depth", depth)
+print(deep == deep, len(str(deep)) < 1000)
+deep = []
+print("freed")
+
+# copy-on-write: copies are cheap until changed
+let million = list(0..1_000_000)
+var copies = []
+for i in 0..100 { copies.push(million) }   # 100 copies share one list
+var mine = copies[0]
+mine[0] = "changed"                        # only now is one copy made
+print(million[0], mine[0], len(copies))

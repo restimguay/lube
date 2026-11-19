@@ -1,0 +1,28 @@
+[3, 1, 2, 5, 8, 13] 6 3 13
+[3, 100, 2, 5, 8, 13]
+13 [3, 100, 2, 5, 8]
+["first", 3, 100, 2, 5, 8]
+first [3, 100, 2, 5, 8]
+[100, 2] [5, 8] ell
+[1, 2, 3] [3, 2, 1] [1, 2, 3] ["a", "b", "c"]
+[9, 5, 3] ["a", "bb", "ccc"]
+true false 1 -1
+a-b-c 1, 2, 3 12
+6 2 8 a
+[[1, 2], [3, [40, 5]]] 40
+true
+{name: "Ada", "last name": "Lovelace", born: 1815, job: "mathematician"}
+Ada Lovelace no such key 4
+["name", "last name", "born", "job"]
+["Ada", "Lovelace", 1815, "mathematician"]
+true false true
+true false {name: "Ada", "last name": "Lovelace", born: 1815}
+one two
+[["a", 1], ["b", 2]] fallback
+{a: 3, b: 2}
+334 998001 false 9
+1334 500
+[1, [1]]
+{} [] [[]] {a: {}}
+a 1
+b 2

@@ -1,0 +1,25 @@
+{} Object Hello String [] String[]
+"" String("") 0 false {} [] 0 uint8
+42 [1, 2] 3.5 -1 true false
+{a: 1, b: 2} {k: 1} ["a", "b", "c"] [0, 1, 2] 23
+42! 14
+["bo", "ada", "cy", "di"] str[] 4
+["ada", "bo", "cy", "di"] str[] str[] str[]
+str[] str[] List List
+[1, 12, 3] int32[] int32
+[{name: "ada"}, {name: "bob", age: 41}] [[1, 2], [3, 4]] 20
+[] str[] str[] 4
+this str[] can only hold str values, not a Number
+this str[] can only hold str values, not a Number
+this str[] can only hold str values, not a Bool
+this str[] can only hold str values, not a Number
+this str[] can only hold str values, not a Number
+this str[] can only hold str values, not a Number
+this str[] can only hold str values, not a Number
+this String[] can only hold String values, not a str
+this Number[] can only hold Number values, not an int32
+1.5 is not a whole number, so it cannot be used as an int32 (use num(x) for decimal math)
+256 does not fit in uint8 (0 to 255)
+'x' is a str, so it cannot hold a Number: a var keeps the type it starts with
+Object() expects an Object, a Map or a List of [key, value] pairs as argument 1, got Number
+after failed change: ["kept"]

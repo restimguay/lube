@@ -1,0 +1,49 @@
+# Closures, state, and how values flow in Lube.
+
+# A closure captures a *copy* of the local variables it uses,
+# made at the moment the closure is created.
+fn make_multiplier(factor) => fn(x) => x * factor
+let double = make_multiplier(2)
+let triple = make_multiplier(3)
+print("double 21:", double(21), " triple 7:", triple(7))
+
+fn snapshot_demo() {
+  var greeting = "hello"
+  let say = fn() => greeting
+  greeting = "changed"          # the closure still has its own copy
+  return say()
+}
+print("closure saw:", snapshot_demo())
+
+# State lives in plain values. Functions that change state take it with &,
+# and method syntax passes it automatically: c.tick() is tick(&c).
+fn counter(start = 0, step = 1) => {value: start, step: step}
+fn tick(&c) {
+  c.value += c.step
+  return c.value
+}
+fn reset(&c) { c.value = 0 }
+
+var c = counter()
+c.tick()
+c.tick()
+print("counter:", c.tick())             # 3
+c.reset()
+print("after reset:", c.tick())         # 1
+
+var by_ten = counter(100, 10)
+let saved = by_ten                      # a copy: unaffected by later ticks
+by_ten.tick()
+by_ten.tick()
+print("by ten:", by_ten.value, " saved copy:", saved.value)
+
+# Memoization: the cache is passed along with &, so every call shares it.
+fn fib(n, &cache) {
+  if n < 2 { return n }
+  if cache.has(n) { return cache[n] }
+  let result = fib(n - 1, &cache) + fib(n - 2, &cache)
+  cache[n] = result
+  return result
+}
+var cache = {}
+print("fib(70) =", fib(70, &cache), " cached values:", len(cache))

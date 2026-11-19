@@ -1,0 +1,19 @@
+[1, 2, 3] [100, 2, 3, 4]
+[1] [1, "changed"]
+{db: {host: "example.org", ports: [5432, 5433]}}
+{db: {host: "localhost", ports: [5432]}}
+["a", "b", "b", "c", "c"]
+[[0, 0], [0, 0, 9, 9]] {name: "ada", tags: ["admin", "dev"]}
+R L
+3 1 [2]
+[] 0
+true false {y: 2}
+failed halfway ["kept"]
+[1, 2, 3, 10, 20, 30]
+{name: "box", self: {name: "box"}}
+true false
+01234 [0, 1, 2, 3, 4]
+12
+3
+'shared' is in use: it was passed with & to a call that has not returned yet
+[1]

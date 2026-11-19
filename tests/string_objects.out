@@ -1,0 +1,15 @@
+str String Héllo wide world String("Héllo wide world")
+16 17 17 Héllo wide world str
+HéLLO WIDE WORLD héllo wide world ["H", "é", "l", "l", "o", " ", "w", "i", "d", "e", " ", "w", "o", "r", "l", "d"] str[] ["Héllo", "wide", "world"] str[]
+ String("") 42 same  "" Héllo wide world str
+Héllo wide world! String <Héllo wide world str Héllo wide worldHéllo wide world String
+true true true true H ["Héllo", "wide", "world"] HéLLO WIDE WORLD 16
+a b 
+String keys work false
+hi there String
+a str has no properties (it is plain text): use len(x) for its length, or String(x).length
+a String has no property 'size' (it has length, value, upper, lower, chars and words)
+the properties of a String are read-only
+text cannot be changed in place; build new text instead
+this String[] can only hold String values, not a str
+[String("a"), String("b")] String[] ["A", "B"]

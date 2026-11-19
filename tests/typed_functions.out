@@ -1,0 +1,44 @@
+6 a shape the shape true false
+Rect {name: "shape", w: 4, h: 6}
+parameter 'by' of scale() is a Number, so it cannot take a str
+parameter 'w' of Rect() is a Number, so it cannot take a str
+parameter 'other' of bigger() is a Shape, so it cannot take a Number
+parameter 'prefix' of describe() is a str, so it cannot take a String
+all accepted
+parameter 'b' of all_types() is a String, so it cannot take a str
+parameter 'e' of all_types() is an Object, so it cannot take a Number
+3 7
+[] []
+parameter 'm' of first_key() is a Map, so it cannot take an Object
+2
+parameter 'xs' of count_names() is a str[], so it cannot take a List
+0
+parameter 'm' of lookup() is a Map[str, Number], so it cannot take a Map
+6 int32
+parameter 'n' of next() is an int32, so it cannot take a Number
+200 uint8
+wrong() must return a str, not a Number
+forgot to return
+forgets() must return a Number, but it ended without returning a value
+1
+maybe() must return a Number, but it ended without returning a value
+Shape Rect
+not_a_shape() must return a Shape, not a Number
+[4, 5]
+parameter 'n' of bump() is an int32, so it cannot take a Number
+2 int32
+'o' is an Object, so it cannot hold a Number: a var keeps the type it starts with
+{k: 1}
+0
+hi you hi ada
+parameter 'n' of broken_default() is a Number, so it cannot take a str
+7
+true
+'NoSuchClass' is not a type or a class
+'NoSuchClass' is not a type or a class
+'NoSuchClass' is not a type or a class
+'not_a_class' is not a type or a class
+[10, 20]
+parameter 'x' of <lambda>() is a Number, so it cannot take a str
+parameter 's' of typed_lambda() is a str, so it cannot take a Number
+1 a [1]

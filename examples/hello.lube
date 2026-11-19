@@ -1,0 +1,5 @@
+#!/usr/bin/env lube
+# The classic. Run with: lube examples/hello.lube [your name]
+
+let name = len(args) > 0 and args[0] or "world"
+print("Hello, {name}!")

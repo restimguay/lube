@@ -1,0 +1,46 @@
+let nums = 1..=10
+
+# pipes pass the left side as the first argument
+let result = nums
+  | filter(fn(n) => n % 2 == 0)
+  | map(fn(n) => n * n)
+  | sum()
+print(result)
+
+# method style calls work for every function
+print(nums.filter(fn(n) => n > 7).map(fn(n) => n * 2))
+print("  Lube Is Smooth  ".trim().lower().split(" ").join("_"))
+
+fn double(x) => x * 2
+print(21.double(), 5 | double, [1, 2].map(double))
+
+# map/filter/each pass the index if the function takes two parameters
+print(["a", "b", "c"].map(fn(x, i) => "{i}{x}"))
+["x", "y"].each(fn(x, i) { print("item", i, "is", x) })
+
+# reduce, find, any, all
+print(reduce([1, 2, 3, 4], fn(acc, n) => acc * n))
+print(reduce(["a", "b"], fn(acc, s) => acc + s, ">"))
+print(find([5, 12, 8, 130], fn(n) => n > 10), find_index([5, 12], fn(n) => n > 10), find([1], fn(n) => n > 5, "none"))
+print(any([1, 2, 3], fn(n) => n > 2), all([1, 2, 3], fn(n) => n > 2), any([]), all([]))
+
+# words frequency
+let text = "the quick brown fox jumps over the lazy dog the end"
+var counts = {}
+for w in text.split() { counts[w] = get(counts, w, 0) + 1 }
+let top = items(counts).sort(fn(a, b) => b[1] - a[1]).slice(0, 2)
+print(top)
+
+# a pipe can target a method call
+let parts = ["a", "b"]
+print(", " | parts.join())
+
+# || is still "or", and a line starting with | or || continues the one before
+print(false || true, [3, 1, 2] | sort() | len, ([1, 2] | len) == 2)
+let flag = false
+  || true
+let piped = [4, 5]
+
+  | map(double)  // blank lines and comments in between are fine
+  | sum()
+print(flag, piped)

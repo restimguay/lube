@@ -1,0 +1,26 @@
+rex says woof! rex has 4 legs
+Dog {name: "max", sound: "woof", legs: 4, tricks: ["sit", "roll"]}
+max has 4 legs, knows sit, roll
+(small) bit says yip! [] 4
+Animal {name: "", sound: "...", legs: 4} Animal  says ...
+Dog true true true false true false false
+true true true false true true
+true true true true true true true
+max changed
+2 3
+true false false true
+ada false
+fido says woof! fido has 4 legs, knows 
+cannot change 'this' here: the method was called on something that cannot change (a let, or a value that is not in a variable)
+cannot change 'this' here: the method was called on something that cannot change (a let, or a value that is not in a variable)
+field 'legs' of Dog is a Number, so it cannot hold a str
+a Dog has no field 'color'
+a Dog has no field 'color'
+'x' is a str, so it cannot hold a Number: a var keeps the type it starts with
+changed
+2 2 Bird {name: "", sound: "...", legs: 2, wings: 2}
+Dog() takes 1 to 2 arguments but got 0
+Dog() takes 1 to 2 arguments but got 3
+Animal() takes 0 arguments but got 1
+Dog has no method 'fly'
+called a function stored in a field

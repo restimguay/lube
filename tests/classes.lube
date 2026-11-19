@@ -1,0 +1,100 @@
+// Classes. Every class extends Object; instances are values like everything else.
+class Animal {
+  var name = ""
+  var sound = "..."
+  var legs = 4
+  fn speak() => "{this.name} says {this.sound}"
+  fn rename(new_name) { this.name = new_name }
+  fn describe() => "{this.name} has {this.legs} legs"
+}
+
+class Dog extends Animal {
+  var tricks = str[]
+  constructor(name, sound = "woof") {
+    this.name = name
+    this.sound = sound
+  }
+  fn speak() => super.speak() + "!"
+  fn learn(trick) { this.tricks.push(trick) }
+  fn show() => this.describe() + ", knows " + this.tricks.join(", ")
+}
+
+class Puppy extends Dog {
+  constructor(name) {
+    super(name, "yip")
+    this.legs = 4
+  }
+  fn speak() => "(small) " + super.speak()
+}
+
+class Bird extends Animal {
+  var wings = 2
+}
+
+// building and using instances
+var rex = Dog("rex")
+print(rex.speak(), rex.describe())
+rex.learn("sit")
+rex.learn("roll")
+rex.rename("max")
+print(rex)
+print(rex.show())
+var pup = Puppy("bit")
+print(pup.speak(), pup.tricks, pup.legs)
+
+// a bare class name is a new instance with its starting values, like Object
+var blank = Animal
+print(blank, type(blank), Animal().speak())
+
+// types: every instance is its class, its parents, and an Object
+print(type(rex), rex is Dog, rex is Animal, rex is Object, rex is Puppy, pup is Dog, rex is String, 5 is Object)
+print("x" is str, String("x") is String, String("x") is Object, "x" is Object, [1] is List, [1] is Object)
+print(Map is Map, {} is Object, int32(1) is int32, 1 is Number, true is Bool, print is Function, 1..2 is Range)
+
+// values, not references: a copy never changes with the original
+let snapshot = rex
+rex.rename("changed")
+print(snapshot.name, rex.name)
+var team = Object[rex, pup]
+rex.learn("fetch")
+print(len(team[0].tricks), len(rex.tricks))
+
+// equal when the class and every field are equal
+print(Dog("a") == Dog("a"), Dog("a") == Dog("b"), Dog("a") == Puppy("a"), Animal == Animal)
+
+// instances as map keys and in typed containers
+var owners = Map[Object, str]
+owners[Dog("rex")] = "ada"
+print(owners[Dog("rex")], owners.has(Dog("max")))
+
+// a method called on something that cannot change gets a read-only `this`
+let fixed = Dog("fido")
+print(fixed.speak(), fixed.show())
+try { fixed.rename("x") } catch e { print(e) }
+try { Dog("tmp").learn("x") } catch e { print(e) }
+
+// fields keep the type they start with, and only declared fields exist
+try { rex.legs = "four" } catch e { print(e) }
+try { rex.color = "brown" } catch e { print(e) }
+try { print(rex.color) } catch e { print(e) }
+fn give_text(&x) { x = 5 }
+try { give_text(&rex.name) } catch e { print(e) }
+print(rex.name)
+var counter = Bird
+counter.legs -= 2
+counter.wings += 0
+print(counter.legs, counter.wings, counter)
+
+// errors around constructors and methods
+try { Dog() } catch e { print(e) }
+try { Dog("a", "b", "c") } catch e { print(e) }
+try { Animal("a") } catch e { print(e) }
+try { rex.fly() } catch e { print(e) }
+
+// methods can be used through UFCS-style calls on fields holding functions too
+class Box {
+  var item = Object
+  var action = print
+}
+var box = Box
+box.action("called a function stored in a field")

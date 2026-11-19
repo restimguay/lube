@@ -1,0 +1,28 @@
+# Errors: throw anything, catch it with try/catch.
+
+fn parse_age(text) {
+  let n = num(text, -1)
+  if n == -1 { throw "'{text}' is not a number" }
+  if n < 0 or n > 150 { throw {field: "age", problem: "out of range", value: n} }
+  return n
+}
+
+for input in ["42", "abc", "-5"] {
+  try {
+    print("age:", parse_age(input))
+  } catch err {
+    if type(err) == "Object" {
+      print("invalid {err.field}: {err.problem} ({err.value})")
+    } else {
+      print("invalid input:", err)
+    }
+  }
+}
+
+# Runtime errors are catchable too; the error is a message string.
+try {
+  let empty = []
+  print(empty[0])
+} catch e {
+  print("caught:", e)
+}

@@ -1,0 +1,59 @@
+#strict
+// In a #strict file every parameter declares its type, and a function
+// without a return type returns nothing.
+
+class Account {
+  var owner = ""
+  var balance = 0
+  constructor(owner: str) {
+    this.owner = owner
+  }
+  fn deposit(amount: Number) {
+    if amount <= 0 { throw "deposit must be positive" }
+    this.balance += amount
+  }
+  fn can_pay(amount: Number): Bool => this.balance >= amount
+  fn summary(): str => "{this.owner}: {this.balance}"
+}
+
+class Savings extends Account {
+  var rate = 0.05
+  constructor(owner: str, rate: Number) {
+    super(owner)
+    this.rate = rate
+  }
+  fn add_interest() {
+    this.deposit(this.balance * this.rate)
+  }
+  fn summary(): str => super.summary() + " (savings)"
+}
+
+var acct = Savings("ada", 0.1)
+acct.deposit(100)
+acct.add_interest()
+print(acct.summary(), acct.can_pay(50))
+try { acct.deposit(-1) } catch e { print(e) }
+
+fn total(accounts: List): Number {
+  var sum = 0
+  for a in accounts { sum += a.balance }
+  return sum
+}
+print(total([acct, Account("bob")]))
+
+// lambdas declare their types too; a call body may return nothing
+let doubled = [1, 2, 3].map(fn(n: Number): Number => n * 2)
+print(doubled)
+[1, 2].each(fn(n: Number) => print("item", n))
+
+// a body that is a call returning a value still needs a return type
+fn sum_of(xs: List) => sum(xs)
+try { sum_of([1, 2]) } catch e { print(e) }
+
+// a bare return is fine where nothing is returned
+fn maybe_print(flag: Bool) {
+  if not flag { return }
+  print("printed")
+}
+maybe_print(false)
+maybe_print(true)

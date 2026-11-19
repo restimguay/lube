@@ -1,0 +1,15 @@
+7 9 2.5 1 2 -2 1024 -4
+0.30000000000000004 0.3333333333333333 1e+21 1000000 255 3 0
+true true true false true true
+x = 2
+99
+false true false true
+default zero is truthy so is empty string
+true
+false
+Number str List Object Bool Function Function Range
+42! 4.5 -1 -3 12 true false
+"quote\"d\n" [1, "two", true]
+n=5 5=n list: [1, 2]
+true true false false
+ababab [0, 0, 0, 0] xyxy

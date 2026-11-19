@@ -1,0 +1,22 @@
+list(): the range has too many elements (1e+18) to make a list
+the repeated result would be too large
+the repeated result would be too large
+can only repeat by a whole, non-negative number
+can only repeat by a whole, non-negative number
+seed() expects a whole number below 2^53 as argument 1, got Number
+exit() expects a whole number from 0 to 255 as argument 1, got Number
+range index 5 is out of range (length 5)
+range index must be a whole number
+list index must be a whole number, got nan
+list index inf is out of range (length 2)
+chr() expects a whole Number as argument 1, got Number
+chr(): inf is not a valid character code
+pad_left(): width is too large
+fixed() expects a whole Number as argument 2, got Number
+1e+300 5 99 true
+[1, 2, 3] [1, 2, 3] ello
+0 []  []
+["start", 1, 2, 3, "end"]
+true true
+stack overflow: too much recursion
+still running

@@ -1,0 +1,7 @@
+# `import` runs another file once; its top-level names become available.
+import "vector"     # finds vector.lube next to this file
+
+let a = vec(3, 4)
+let b = vec(1, 2)
+print("a + b =", vec_str(vec_add(a, b)))
+print("|a| =", vec_len(a))

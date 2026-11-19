@@ -1,0 +1,27 @@
+# A number guessing game (reads from the keyboard).
+
+let secret = random_int(1, 100)
+var tries = 0
+print("I'm thinking of a number between 1 and 100.")
+
+while true {
+  var line = ""
+  try {
+    line = input("your guess: ")
+  } catch {                       # end of input (Ctrl-D)
+    print("\nbye! it was {secret}")
+    break
+  }
+  let guess = num(line, -1)       # -1 when the text is not a number
+  if guess < 0 {
+    print("that's not a number")
+    continue
+  }
+  tries += 1
+  if guess < secret { print("higher") }
+  else if guess > secret { print("lower") }
+  else {
+    print("yes! {secret} in {tries} {tries == 1 and "try" or "tries"}")
+    break
+  }
+}

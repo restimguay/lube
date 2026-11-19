@@ -1,0 +1,3 @@
+tests/nil_error.lube:1:14: syntax error: Lube has no nil (no null): give every variable a value, check object keys with has(), or use get(object, key, default)
+    1 | let config = nil
+      |              ^

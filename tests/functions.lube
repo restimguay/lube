@@ -1,0 +1,115 @@
+# basic functions and recursion
+fn add(a, b) { return a + b }
+fn fact(n) {
+  if n <= 1 { return 1 }
+  return n * fact(n - 1)
+}
+print(add(2, 3), fact(10))
+
+# arrow functions and lambdas
+fn square(x) => x * x
+let cube = fn(x) => x * x * x
+let shout = fn(s) {
+  return upper(s) + "!"
+}
+print(square(7), cube(3), shout("hey"))
+
+# a lambda bound with let knows its own name, so it can recurse
+let countdown = fn(n) => n == 0 and "liftoff" or countdown(n - 1)
+print(countdown(5), countdown)
+
+# default parameters (can refer to earlier parameters)
+fn greet(name, greeting = "Hello", end = greeting == "Hello" and "." or "!") {
+  return "{greeting}, {name}{end}"
+}
+print(greet("Ada"), greet("Bob", "Hi"))
+
+# a function without a return value can be called, but its result can't be used:
+# there is no nil
+fn log(msg) { print("log:", msg) }
+log("hello")
+try { let r = log("again") } catch e { print(e) }
+
+# parameters are read-only unless declared var (a changeable copy)...
+fn apply_n(f, n, var x) {
+  for _ in 0..n { x = f(x) }
+  return x
+}
+let start = 1
+print(apply_n(fn(x) => x * 2, 10, start), start)
+
+# ...or & (changes the caller's variable)
+fn add_tax(&price, rate = 0.25) { price = price * (1 + rate) }
+var price = 100
+add_tax(&price)
+price.add_tax(0.1)
+print(price)
+
+# closures capture a copy of each outer variable, made when they are created
+fn make_adder(n) => fn(x) => x + n
+let add5 = make_adder(5)
+print(add5(10), make_adder(1)(1))
+
+fn snapshot() {
+  var base = 10
+  let get_base = fn() => base
+  base = 99
+  return [get_base(), base]   # [10, 99]: the closure kept its copy
+}
+print(snapshot())
+
+# top-level variables are globals: every function sees their current value
+var level = 1
+fn current_level() => level
+level = 2
+print(current_level())
+
+# each loop iteration's closure keeps its own value
+var fns = []
+for i in 0..3 {
+  fns.push(fn() => i * 10)
+}
+print(fns.map(fn(f) => f()))
+
+# objects: a map of data, plus functions that take it with &
+fn account(owner) => {owner: owner, balance: 0}
+fn deposit(&acct, amount) {
+  if amount <= 0 { throw "deposit must be positive" }
+  acct.balance += amount
+}
+var acct = account("ada")
+acct.deposit(50)
+deposit(&acct, 25)
+print(acct)
+try { acct.deposit(-5) } catch e { print("refused:", e) }
+print(acct.balance)
+
+# top-level functions can call each other in any order
+fn is_even(n) => n == 0 or is_odd(n - 1)
+fn is_odd(n) => n != 0 and is_even(n - 1)
+print(is_even(10), is_odd(7), is_even(7))
+
+# nested functions see enclosing values (copied in when created)
+fn outer(prefix) {
+  let sep = ": "
+  fn label(x) => prefix + sep + str(x)
+  return [1, 2].map(label)
+}
+print(outer("item"))
+
+# higher-order functions
+fn compose(f, g) => fn(x) => f(g(x))
+let inc_then_double = compose(fn(x) => x * 2, fn(x) => x + 1)
+print(inc_then_double(5))
+
+# functions are values
+let ops = {add: add, mul: fn(a, b) => a * b}
+print(ops.add(2, 3), ops.mul(2, 3), ops["add"](10, 20))
+print(add, fn() => 1, print)
+
+# deep recursion
+fn count_down(n) {
+  if n == 0 { return "done" }
+  return count_down(n - 1)
+}
+print(count_down(3000))

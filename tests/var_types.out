@@ -1,0 +1,22 @@
+42
+'count' is a Number, so it cannot hold a str: a var keeps the type it starts with
+'name' is a String, so it cannot hold a str: a var keeps the type it starts with (convert it with String(x))
+ada String
+'plain' is a str, so it cannot hold a String: a var keeps the type it starts with (use x.value for its str)
+100 int8
+'small' is an int8, so it cannot hold a Number: a var keeps the type it starts with
+'small' is an int8, so it cannot hold an int16: a var keeps the type it starts with
+'names' is a str[], so it cannot hold a List: a var keeps the type it starts with
+'scores' is a Map[str, Number], so it cannot hold a Map: a var keeps the type it starts with
+Map
+'anything' is an Object, so it cannot hold a Number: a var keeps the type it starts with
+'flag' is a Bool, so it cannot hold a Number: a var keeps the type it starts with
+7 5..10 true
+42
+'n' is a Number, so it cannot hold a str: a var keeps the type it starts with
+2
+one
+Square
+'shape' is a Shape, so it cannot hold a Number: a var keeps the type it starts with
+'f' is a Function, so it cannot hold a Number: a var keeps the type it starts with
+'r' is a Range, so it cannot hold a Number: a var keeps the type it starts with

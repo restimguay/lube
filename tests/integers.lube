@@ -1,0 +1,70 @@
+// Sized integers. (Comments can start with // or #.)
+let number1 = int32();      // default 0
+let number2 = int64(23);
+print(number1, type(number1), number2, type(number2))
+
+// every size, signed and unsigned
+print(int8(), int16(), int32(), int64(), uint8(), uint16(), uint32(), uint64())
+print(int8(-128), int8(127), uint8(255), int16(-32768), uint16(65535))
+print(int64("9223372036854775807"), int64("-9223372036854775808"), uint64("18446744073709551615"))
+
+// converting: fractions are dropped, strings are parsed, other int types are range-checked
+print(int32(3.99), int32(-3.99), int32(true), int32(" 42 "), int32("0x7f"), int32("1_000"), int8(int64(100)))
+
+// arithmetic keeps the type; a plain whole number adapts to it
+var n = int32(7)
+let two = int32(2)
+print(n + two, n - two, n * two, n / two, n % two, n ** two, type(n * two))
+print(-n / two, -n % two, n + 1, 100 - n, type(n + 1))
+n += 10
+n *= 2
+print(n, type(n))
+
+// comparisons and equality work across all number types, by exact value
+print(int32(5) == 5, int32(5) == int64(5), uint8(5) == 5.0, int8(-1) < uint64(0), int32(5) < 5.5)
+print(int64("9007199254740993") == 9007199254740992, int64("9007199254740993") > 9007199254740992)
+
+// equal numbers are the same map key
+var names = {}
+names[1] = "one"
+names[int64(2)] = "two"
+print(names[int8(1)], names[2], names.has(uint16(2)), len(names))
+
+// usable anywhere a number is
+let xs = [10, 20, 30, 40]
+print(xs[int8(1)], xs[uint8(3)], xs.slice(int32(1), int32(3)), list(0..int16(3)), "ab" * int32(2))
+print([int32(30), int32(10), int32(20)].sort(), sum([int16(100), int16(200)]), max(uint8(3), uint8(9)))
+print(abs(int32(-5)), floor(int32(5)), num(int32(5)) / 2, str(uint64(7)) + "!", "id-" + int64(42))
+
+// counting with a fixed-size integer
+var total = uint32(0)
+for i in 1..=1000 { total += i }
+print(total, type(total))
+
+// everything that would go wrong is an error instead
+let checks = [
+  fn() => int8(300),
+  fn() => uint8(-1),
+  fn() => int32(2147483647) + 1,
+  fn() => int64("9223372036854775807") * 2,
+  fn() => uint8(0) - 1,
+  fn() => uint8(200) + uint8(100),
+  fn() => int8(2) ** 7,
+  fn() => -int8(-128),
+  fn() => -uint8(3),
+  fn() => int32(5) + int64(5),
+  fn() => int32(5) * 1.5,
+  fn() => int32(1) / 0,
+  fn() => int32(1) % 0,
+  fn() => int32("12abc"),
+  fn() => int32(num("nan")),
+  fn() => int32(INF),
+  fn() => int16([1]),
+]
+for check in checks {
+  try { print("no error:", check()) } catch e { print(e) }
+}
+var small = int8(120)
+try {
+  for i in 0..10 { small += 1 }
+} catch e { print(e, "- small stopped at", small) }

@@ -1,0 +1,20 @@
+let name = "Lube"
+let version = 1
+print("Hello from {name} v{version}.0!")
+print("math: {1 + 2} {[1, 2].map(fn(x) => x * 10)} {upper("nested {"strings"}")}")
+print('single quotes do not {interpolate}')
+print("escaped \{braces\}, tab:\t|, quote: \", backslash: \\")
+print("unicode: \u{2764} \u{1F600} hex: \x41")
+print("multi
+line")
+print(len("hello"), "hello"[1], "hello"[-1], "abc".upper(), "ABC".lower())
+print("  padded  ".trim() + "|", "a,b,,c".split(","), "split on spaces  ok".split())
+print("chars".chars(), "héllo".chars(), "abc".split(""))
+print("banana".replace("an", "AN"), "hello".starts_with("he"), "hello".ends_with("lo"))
+print("hello".contains("ell"), "ell" in "hello", "hello".index_of("l"), reverse("abc"))
+print(ord("A"), chr(66), ord("é"), chr(9731))
+print(pad_left(7, 3, "0"), pad_right("ab", 5, ".") + "|", fixed(PI, 3), fixed(2, 0))
+print("a" < "b", "apple" < "apricot", "Z" < "a")
+var s = ""
+for i in 1..=5 { s += str(i) }
+print(s)

@@ -1,0 +1,64 @@
+2.5 5 5 2 3 3 4
+3 -2 3.14 9 7
+4 1.000 1.000 0.000 2.71828
+0.7854 1024 2 3 2.000000
+error: sqrt() expects a Number as argument 1, got str
+error: atan2() expects a Number as argument 2, got str
+error: pow() expects a Number as argument 1, got str
+error: log() expects a Number as argument 2, got str
+error: round() expects a whole Number as argument 2, got Number
+true true true [1, 2, 3, 4]
+error: random_int(): the first number must not be larger than the second
+error: choice() of an empty list
+error: seed() expects a whole number below 2^53 as argument 1, got Number
+0 0
+Number Number true
+1 0 12 7 -7 true false true 0 2.5
+error: num() cannot convert a List to a Number
+error: int() cannot convert an Object to a Number
+true [] {} 5
+error: Function() expects a Function as argument 1, got Number
+3 2 1 10
+error: len() expects a str, List, Object or Range as argument 1, got Number
+error: remove(): index 5 is out of range (length 3)
+error: remove(): index -9 is out of range (length 3)
+["a", "b"] ["h", "é"] [0, 1, 2] 10 0
+error: list() expects a List, Range, str or Object, got Number
+error: sum() can only add numbers, found a str
+error: min() of an empty list
+error: max() cannot compare a str with a Number
+error: sort() cannot order nan
+error: sort() comparator must return a Number or a Bool, not a str
+ab xy ["a", "ab", "b"] [3, 2, 1]
+[2, 1, 0] cba -1 -1 0-1-2
+[[1, "a"], [2, "b"]] [[0, true], [1, false]]
+error: zip() expects a List, Range, str or Object, got Number
+{} 0
+error: division by zero
+error: division by zero
+error: division by zero
+error: reduce() of an empty list needs a starting value
+error: division by zero
+error: division by zero
+error: division by zero
+error: division by zero
+error: find() expects a Function as argument 2, got Number
+error: any() expects a Function as argument 2, got Number
+error: push() changes its argument, so it cannot be used as a callback
+error: <lambda>() changes its argument 'x' with &, so it cannot be used as a callback
+true true false false
+error: each() does not return a value, so there is nothing to use here
+ABC abc x ["a", "b"] ["a", "b"] ["a", "b"]
+bbb abc true true
+["h", "é"] 233 8364 128512 A é € 😀
+007 ab  | long 1.0 2.00
+error: pad_left(): the fill must be a single character
+error: pad_left(): width is too large
+error: fixed(): digits must be between 0 and 20
+error: ord() needs a non-empty string
+error: chr(): -1 is not a valid character code
+error: index_of() expects a str as argument 2, got Number
+error: upper() expects a str as argument 1, got Number
+error: assertion failed
+error: assertion failed: with a message
+assert(true) passed

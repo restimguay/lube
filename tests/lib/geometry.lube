@@ -1,0 +1,5 @@
+print("geometry loaded")
+fn area(shape) {
+  if shape.kind == "circle" { return PI * shape.r ** 2 }
+  return shape.w * shape.h
+}

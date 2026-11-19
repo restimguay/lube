@@ -1,0 +1,64 @@
+// Type names: a bare type name is its default value, Type(x) converts,
+// and Type[] is a list that only holds that type.
+var o = Object
+var s = String("Hello");
+var arrstring = String[]
+print(o, type(o), s, type(s), arrstring, type(arrstring))
+
+// default values: every variable can start from one (there is no nil)
+print(repr(str), repr(String), Number, Bool, Object, List, int32, type(uint8))
+
+// conversions
+print(String(42), String([1, 2]), Number("3.5"), Number("x", -1), Bool(0), Bool(false))
+print(Object([["a", 1], ["b", 2]]), Object({k: 1}), List("abc"), List(0..3), int64("23"))
+print(42.String() + "!", "7".Number() * 2)
+
+// typed lists
+var names = str["bea", "ada"]
+names.push("cy")
+names[0] = "bo"
+names += ["di"]
+print(names, type(names), len(names))
+print(names.sort(), type(names.sort()), type(names.slice(1)), type(names.filter(fn(n) => len(n) > 2)))
+print(type(names + ["ed"]), type(names * 2), type(List(names)), type(names.map(fn(n) => len(n))))
+
+// integer lists take plain whole numbers and keep their type
+var ids = int32[1, 2]
+ids.push(3)
+ids[1] += 10
+print(ids, type(ids), type(ids[2]))
+
+// lists of objects, lists, functions
+var people = Object[{name: "ada"}, {name: "bob"}]
+people[1].age = 41
+var matrix = List[[1, 2], [3, 4]]
+var steps = Function[fn(x) => x + 1, fn(x) => x * 10]
+print(people, matrix, steps.reduce(fn(acc, f) => f(acc), 1))
+
+// copies and cleared lists keep the element type
+let snapshot = names
+names.clear()
+print(names, type(names), type(snapshot), len(snapshot))
+
+// a typed list never takes the wrong type, from anywhere
+fn put_number(&x) { x = 42 }
+let attempts = [
+  fn() { var l = str[]; l.push(5) },
+  fn() { var l = str[]; l.push("fine", 5); return l },
+  fn() { var l = str["x"]; l[0] = true },
+  fn() { var l = str["x"]; l.insert(0, 1) },
+  fn() { var l = str["x"]; l += [1] },
+  fn() { var l = str["x"]; return l + [1] },
+  fn() => str[1],
+  fn() { var l = String[]; l.push("a str is not a String") },
+  fn() { var l = Number[]; l.push(int32(5)) },
+  fn() { var l = int32[]; l.push(1.5) },
+  fn() { var l = uint8[]; l.push(256) },
+  fn() { var l = str["x"]; put_number(&l[0]) },
+  fn() => Object(5),
+]
+for attempt in attempts {
+  try { print("no error:", attempt()) } catch e { print(e) }
+}
+var safe = str["kept"]
+try { put_number(&safe[0]) } catch e { print("after failed change:", safe) }

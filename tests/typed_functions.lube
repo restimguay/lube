@@ -1,0 +1,138 @@
+// Parameters and return values can declare types: name: Type and ): Type.
+// Without #strict the types are optional; where written, they are checked.
+
+class Shape {
+  var name = "shape"
+  fn area(): Number => 0
+  fn describe(prefix: str = "a"): String => String("{prefix} {this.name}")
+}
+class Rect extends Shape {
+  var w = 1
+  var h = 1
+  constructor(w: Number, h: Number) {
+    this.w = w
+    this.h = h
+  }
+  fn area(): Number => this.w * this.h
+  fn scale(by: Number) {
+    this.w *= by
+    this.h *= by
+  }
+  fn bigger(other: Shape): Bool => this.area() > other.area()
+}
+
+var r = Rect(2, 3)
+print(r.area(), r.describe(), r.describe("the"), r.bigger(Shape()), r.bigger(Rect(9, 9)))
+r.scale(2)
+print(r)
+
+// arguments of the wrong type are refused at the call
+try { r.scale("x") } catch e { print(e) }
+try { Rect("a", 1) } catch e { print(e) }
+try { r.bigger(5) } catch e { print(e) }
+try { r.describe(String("x")) } catch e { print(e) }
+
+// every built-in type can be written
+fn all_types(a: str, b: String, c: Number, d: Bool, e: Object, f: Map, g: List, h: Function, i: Range,
+             j: int8, k: uint64, l: str[], m: Map[str, Number]): str => "all accepted"
+var scores = Map[str, Number]
+print(all_types("a", String("b"), 1, true, [1], Map, [2], print, 0..1, 5, 6, str["x"], scores))
+try { all_types("a", "b", 1, true, [1], Map, [2], print, 0..1, 5, 6, str["x"], scores) } catch e { print(e) }
+try { all_types("a", String("b"), 1, true, 5, Map, [2], print, 0..1, 5, 6, str["x"], scores) } catch e { print(e) }
+
+// List and Map take any list or map; str[] and Map[K, V] only that exact kind
+fn total(xs: List): Number => sum(xs)
+print(total([1, 2]), total(Number[3, 4]))
+fn first_key(m: Map): Object => keys(m)
+print(first_key(scores), first_key(Map))
+try { first_key({a: 1}) } catch e { print(e) }
+fn count_names(xs: str[]): Number => len(xs)
+print(count_names(str["a", "b"]))
+try { count_names(["a"]) } catch e { print(e) }
+fn lookup(m: Map[str, Number], k: str): Number => get(m, k, 0)
+print(lookup(scores, "none"))
+try { lookup(Map, "a") } catch e { print(e) }
+
+// a plain whole number becomes the integer type a parameter or result asks for
+fn next(n: int32): int32 => n + 1
+print(next(5), type(next(5)))
+try { next(1.5) } catch e { print(e) }
+fn small(): uint8 => 200
+print(small(), type(small()))
+
+// results are checked too
+fn wrong(): str => 5
+try { wrong() } catch e { print(e) }
+fn forgets(): Number { print("forgot to return") }
+try { forgets() } catch e { print(e) }
+fn maybe(flag: Bool): Number {
+  if flag { return 1 }
+}
+print(maybe(true))
+try { maybe(false) } catch e { print(e) }
+fn make(n: Number): Shape {
+  if n > 1 { return Rect(n, n) }
+  return Shape()
+}
+print(type(make(1)), type(make(2)))
+fn not_a_shape(): Shape => 5
+try { not_a_shape() } catch e { print(e) }
+
+// & parameters: the caller's variable must already have the type (nothing converts)
+fn grow(&xs: Number[], v: Number) { xs.push(v) }
+var nums = Number[]
+grow(&nums, 4)
+nums.grow(5)
+print(nums)
+var plain_number = 5
+fn bump(&n: int32) { n += 1 }
+try { bump(&plain_number) } catch e { print(e) }
+var counter = int32(1)
+bump(&counter)
+print(counter, type(counter))
+
+// a typed var parameter keeps its declared type
+fn reuse(var o: Object): Object {
+  o = {k: 1}
+  try { o = 5 } catch e { print(e) }
+  return o
+}
+print(reuse([1]))
+fn countdown(var n: Number): Number {
+  while n > 0 { n -= 1 }
+  return n
+}
+print(countdown(3))
+
+// defaults are checked like arguments
+fn greet(name: str = "you"): str => "hi " + name
+print(greet(), greet("ada"))
+fn broken_default(n: Number = "zero"): Number => n
+try { broken_default() } catch e { print(e) }
+print(broken_default(7))
+
+// a class named in a type is looked up when the function runs
+fn uses_later(x: DefinedLater): Bool => x is DefinedLater
+class DefinedLater {
+  var v = 0
+}
+print(uses_later(DefinedLater()))
+fn unknown_type(x: NoSuchClass) {}
+try { unknown_type(1) } catch e { print(e) }
+fn unknown_default(x: NoSuchClass = 1) {}
+try { unknown_default() } catch e { print(e) }
+fn unknown_result(): NoSuchClass => 1
+try { unknown_result() } catch e { print(e) }
+let not_a_class = 5
+fn not_class_type(x: not_a_class) {}
+try { not_class_type(1) } catch e { print(e) }
+
+// lambdas can declare types too
+print([1, 2].map(fn(x: Number): Number => x * 10))
+try { [1, "two"].map(fn(x: Number): Number => x) } catch e { print(e) }
+let typed_lambda = fn(s: str): Number => len(s)
+try { typed_lambda(5) } catch e { print(e) }
+
+// untyped functions are unchanged
+fn anything(x) => x
+print(anything(1), anything("a"), anything([1]))

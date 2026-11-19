@@ -1,0 +1,29 @@
+// str is plain text; String is an object with read-only properties.
+let plain = "Héllo wide world"
+let s = String(plain)
+print(type(plain), type(s), s, repr(s))
+print(s.length, len(s), len(plain), s.value, type(s.value))
+print(s.upper, s.lower, s.chars, type(s.chars), s.words, type(s.words))
+print(String(), repr(String()), String(42), String(String("same")), str, repr(str), str(s), type(str(s)))
+
+// Strings work wherever text does
+print(s + "!", type(s + "!"), "<" + s, type("<" + s), s * 2, type(s * 2))
+print(s == plain, String("a") == String("a"), s < "Z", "ll" in s, s[0], s.split(" "), s.upper(), len(s.chars))
+for ch in String("ab") { write(ch, "") }
+print()
+var m = Map[Object, str]
+m[s] = "String keys work"
+print(m[String(plain)], m.has([1]))
+var greeting = String("hi")
+greeting += " there"
+print(greeting, type(greeting))
+
+// a str has no properties, and String properties cannot change
+try { print(plain.length) } catch e { print(e) }
+try { print(s.size) } catch e { print(e) }
+var t = String("x")
+try { t.length = 3 } catch e { print(e) }
+try { t[0] = "y" } catch e { print(e) }
+try { var l = String[]; l.push("plain") } catch e { print(e) }
+var objs = String[String("a"), String("b")]
+print(objs, type(objs), objs.map(fn(x) => x.upper))
