@@ -28,7 +28,9 @@ static void add_lube(char ***names, int *n, int *cap, const char *name) {
 }
 
 #ifdef _WIN32
+#define TokenType WinTokenType  /* winnt.h has a TokenType of its own */
 #include <windows.h>
+#undef TokenType
 
 struct LubeLock {
     CRITICAL_SECTION cs;

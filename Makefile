@@ -56,8 +56,10 @@ lube-tsan: $(SRC) src/lube.h
 test: lube$(EXE)
 	@sh tests/run.sh ./lube
 
+# (Lube checks its own leaks. It measures recursion by the addresses of
+# locals, which ASan's use-after-return checking moves off the stack.)
 check: lube-check
-	@ASAN_OPTIONS=detect_leaks=0 sh tests/run.sh ./lube-check
+	@ASAN_OPTIONS=detect_leaks=0:detect_stack_use_after_return=0 sh tests/run.sh ./lube-check
 
 tsan: lube-tsan
 	@sh tests/run.sh ./lube-tsan
