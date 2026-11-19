@@ -98,3 +98,27 @@ class Box {
 }
 var box = Box
 box.action("called a function stored in a field")
+
+// changing a list or a number inside a field, through a path
+class Bag {
+  var items = [1, 2]
+  var n = 0
+}
+var bag = Bag()
+bag.items[0] = 9
+bag.items[1] += 5
+bag.n += 2
+var copy = bag             // a copy: changing it leaves bag alone
+copy.items[0] = 1
+copy.n = 40
+print(bag, copy)
+var grid = [[0, 0], [0, 0]]
+grid[1][0] = 7
+grid[1][1] += 3
+var nums = Number[1, 2]
+nums[0] = 5
+try { nums[1] = "x" } catch e { print(e) }
+try { bag.n = "x" } catch e { print(e) }
+print(grid, nums)
+bag["n" + ""] = 5          // a field named by text made at run time
+print(bag.n)

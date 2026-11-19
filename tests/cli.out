@@ -634,6 +634,14 @@ traceback (innermost call first):
 TMP/mods/main5.lube:2: error: this 'on' block would never run: cannot change 'LIMIT': it was declared with let (use var for a variable that changes)
     2 | on LIMIT { print(LIMIT) }
 [exit 70]
+--- a fn an import replaces
+1
+TMP/mods/main6.lube:2: error: 'helper' is not a function (it is a Number)
+    2 | fn use() => helper()
+traceback (innermost call first):
+  at use (TMP/mods/main6.lube:2)
+  at <script> (TMP/mods/main6.lube:5)
+[exit 70]
 --- exit(3)
 [exit 3]
 --- exit()

@@ -1,0 +1,2 @@
+// Starting up: the time to print one line.
+print("hello")

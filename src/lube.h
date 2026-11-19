@@ -407,6 +407,11 @@ typedef struct {
     int changeable;         /* locals only; globals are checked at run time */
     Origin origin;
     OnList *watch;          /* a changeable local: the `on` blocks that watch it (the list may be empty) */
+    /* (run time, a global) caches: where it is in I->globals (+1; 0: not yet), and its
+     * origin (-1: a var) as of I->epoch == cepoch */
+    int gslot;
+    unsigned cepoch;
+    int corigin;
 } VarRef;
 
 typedef struct {
@@ -446,10 +451,15 @@ typedef enum {
     OP_INDEX, OP_FIELD, OP_CLOSURE, OP_CHECK_CALLABLE, OP_CALL, OP_CALL_PREP, OP_METHOD_PREP,
     OP_SUPER_PREP, OP_INVOKE, OP_RETURN, OP_RETURN_NIL, OP_THROW, OP_FOR_PREP, OP_FOR_NEXT,
     OP_WATCH_BEFORE, OP_WATCH_AFTER, OP_ASSIGN, OP_IMPORT, OP_CLASS_BEGIN, OP_CLASS_FIELD,
-    OP_CLASS_FIELD_SET, OP_CLASS_END, OP_ON, OP_LWATCH_BEFORE, OP_LWATCH_AFTER, OP_ARG_DEFAULT, OP_DEF_PARAM, OP_PRINT_REPL,
+    OP_CLASS_FIELD_SET, OP_CLASS_END, OP_ON, OP_LWATCH_BEFORE, OP_LWATCH_AFTER,
+    OP_ASSIGN_DROP, OP_BINARY2, OP_CMP_JUMP, OP_SET_LOCAL, OP_CALL_FN, OP_INDEX2, OP_FIELD_LOCAL, OP_ARG_DEFAULT, OP_DEF_PARAM, OP_PRINT_REPL,
     OP_HOT_KEEP, OP_IF_GLOBAL, OP_FAIL, OP_LAZY_GLOBAL, OP_IMPORT_PACKAGE,
     OP_COUNT
 } OpCode;
+
+/* Where an operand of OP_BINARY2 or OP_CMP_JUMP comes from: a local's slot
+ * or a Number constant, read in place, or else the stack. */
+enum { OPND_STACK, OPND_LOCAL, OPND_CONST };
 
 typedef struct {            /* x, x.a or x[i][j]: a variable, then keys taken from the stack */
     VarRef var;
@@ -460,12 +470,16 @@ typedef struct {            /* x, x.a or x[i][j]: a variable, then keys taken fr
 typedef struct {            /* a call's arguments: each a value, or & a place */
     int nargs;
     int *place;             /* place[i]: an index into Code.places, or -1 for a value */
+    int refs;               /* some argument is & a place */
 } CallDesc;
 
 typedef struct {            /* x.name(args) */
     ObjString *name;
     int recv_place;         /* the receiver's place, or -1 when it is not a variable path */
     VarRef fallback;        /* the variable `name`: x.f(a) can mean f(x, a) */
+    ObjClass *cache_class;  /* (run time) the method last found here, for instances of this class */
+    Value cache_method;     /* (borrowed: classes and their methods live until shutdown) */
+    unsigned cache_epoch;   /* ...as of this I->epoch */
 } MethodDesc;
 
 typedef struct {            /* super.name(args), or super(args) when name is NULL */
@@ -478,6 +492,7 @@ typedef struct {            /* place op value, where op is = or += and the like 
     int place;
     TokenType op;
     int global;             /* for a global var: its name's constant (else -1) */
+    int kconst;             /* OP_ASSIGN_DROP: the value is this Number constant (else -1: on the stack) */
 } AssignDesc;
 
 typedef struct {            /* class Name extends Parent { fields, methods, constructor } */
@@ -599,6 +614,10 @@ struct FuncDecl {
     ObjClass *owner;        /* the class a method belongs to (set when the class is made) */
     unsigned char *has_default;  /* has_default[i]: param i has a default value */
     struct OnDesc *on_block;     /* an `on` block that runs on its function's frame */
+    unsigned char has_ref;       /* a parameter takes & (compile.c) */
+    unsigned char plain;         /* (compile.c) no & or var parameter, none with a default, each untyped or a
+                                    Number, not a constructor: OP_CALL starts it without enter() */
+    unsigned char plain_method;  /* a method whose other parameters are like that: OP_INVOKE's fast path */
     Code code;              /* its bytecode (compile.c) */
 };
 
@@ -619,7 +638,7 @@ struct Node {
         struct { Node *target, *value; TokenType op; } assign;    /* N_ASSIGN */
         struct { TokenType op; Node *operand; } unary;            /* N_UNARY */
         struct { TokenType op; Node *left, *right; } binary;      /* N_BINARY, N_AND, N_OR */
-        struct { Node *callee; NodeList args; } call;             /* N_CALL */
+        struct { Node *callee; NodeList args; int known_fn; } call;  /* N_CALL (known_fn: a top-level fn is called) */
         struct { Node *object; ObjString *name; NodeList args;
                  VarRef fallback; } method;                       /* N_METHOD */
         struct { Node *object, *index; } index;                   /* N_INDEX */
@@ -718,7 +737,6 @@ typedef struct Frame {              /* one active call (or script) */
 #endif
 
 struct Interp {
-    Value stack[LUBE_STACK_MAX];    /* frames: parameters and locals */
     TypeDesc *decl;                 /* the declared type of each stack slot */
     int sp;
     Frame *frame;
@@ -759,6 +777,8 @@ struct Interp {
     int hot;                        /* lube --hot: reload changed files while running */
     int hot_busy;                   /* a reload is applying a file */
     unsigned hot_ticks;             /* blocks run since the last look at the files */
+    unsigned epoch;                 /* changes when a global becomes a constant (or stops being one) or a
+                                       class is made: VarRef and MethodDesc caches older than it are stale */
     long hot_last;                  /* clock() when the files were last looked at */
     ObjList *imports_found;         /* while building: the import paths the resolver sees */
     ObjString *chars[256];          /* cached one-byte strings */
@@ -781,6 +801,8 @@ struct Interp {
     Source *sources;
     struct Arena **arenas;          /* syntax trees of every program run */
     int narenas, cap_arenas;
+    Value stack[LUBE_STACK_MAX];    /* frames: parameters and locals (last: the fields above stay
+                                       close to the struct's start, cheap to reach) */
 };
 
 /* ======================================================================

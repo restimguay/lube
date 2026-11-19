@@ -1,0 +1,6 @@
+// A hash map with string keys: inserting, then looking up.
+var m = {}
+for i in 0..500000 { m["k{i}"] = i }
+var total = 0
+for i in 0..500000 { total += m["k{i}"] }
+print(len(m), total)

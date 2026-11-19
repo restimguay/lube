@@ -232,6 +232,9 @@ run "import that raises an error" "$LUBE" "$TMP/mods/main4.lube"
 printf 'let LIMIT = 5\n' >"$TMP/mods/consts.lube"
 printf 'import "consts"\non LIMIT { print(LIMIT) }\n' >"$TMP/mods/main5.lube"
 run "on a let from an import" "$LUBE" "$TMP/mods/main5.lube"
+printf 'fn helper() => 1\nfn use() => helper()\nprint(use())\nimport "replaces"\nprint(use())\n' >"$TMP/mods/main6.lube"
+printf 'let helper = 5\n' >"$TMP/mods/replaces.lube"
+run "a fn an import replaces" "$LUBE" "$TMP/mods/main6.lube"
 
 # ---- exit codes ----
 status "exit(3)" "$LUBE" -e 'exit(3)'

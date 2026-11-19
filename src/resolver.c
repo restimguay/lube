@@ -316,6 +316,7 @@ static void note_use(Resolver *R, OnDesc *od, Local *l) {
 
 static VarRef lookup(Resolver *R, FnCtx *f, ObjString *name, int allow_self) {
     VarRef r;
+    memset(&r, 0, sizeof r);
     r.name = name;
     r.kind = VAR_GLOBAL;
     r.index = 0;
@@ -616,10 +617,20 @@ static void resolve_node(Resolver *R, Node *n) {
         resolve(R, n->as.binary.left);
         resolve(R, n->as.binary.right);
         break;
-    case N_CALL:
-        resolve(R, n->as.call.callee);
+    case N_CALL: {
+        Node *callee = n->as.call.callee;
+        ObjString *raw = callee->kind == N_VAR ? callee->as.var.name : NULL;
+        resolve(R, callee);
         resolve_list(R, &n->as.call.args);
+        if (raw && callee->as.var.kind == VAR_GLOBAL) {  /* a top-level fn (of this file, or made before): always callable */
+            Value v;
+            Origin origin;
+            n->as.call.known_fn = (map_get(R->own, OBJ_VAL(raw), &v) && IS_NUM(v) && v.as.number == 2 &&
+                                   callee->as.var.name == decl_key(R, raw)) ||
+                                  (global_is_frozen(R, callee->as.var.name, &origin) && origin == ORIGIN_FN);
+        }
         break;
+    }
     case N_METHOD:
         resolve(R, n->as.method.object);
         resolve_list(R, &n->as.method.args);
@@ -757,7 +768,9 @@ int resolve_program(Interp *I, Node *program, Source *src, Arena *tree) {
     for (int i = 0; i < stmts->count; i++) {  /* the names this file declares */
         Node *s = stmts->items[i];
         ObjString *name = s->kind == N_LET ? s->as.let.var.name : s->kind == N_CLASS ? s->as.klass.var.name : NULL;
-        if (name) map_set(R.own, retain(OBJ_VAL(name)), BOOL_VAL(1));
+        if (!name) continue;
+        int fn = s->kind == N_LET && s->as.let.is_fn && !map_get(R.own, OBJ_VAL(name), NULL);  /* 2: a fn (declared once) */
+        map_set(R.own, retain(OBJ_VAL(name)), NUM_VAL(fn ? 2 : 1));
     }
     if (R.ns) R.pkg_names = package_names(&R, R.ns, 1);
     for (int i = 0; i < stmts->count; i++)  /* imports first: they decide what names mean */

@@ -212,11 +212,11 @@ static Value keep_type(Interp *I, const VarRef *r, Value v) {
 }
 
 /* A class field keeps the type it starts with. Takes over v. */
-static Value keep_field_type(Interp *I, const TypeDesc *d, Value field, const char *holder, Value v) {
+static Value keep_field_type(Interp *I, const TypeDesc *d, Value field, Value holder, Value v) {
     Value out;
     if (desc_accepts(*d, v, &out)) return out;
-    Value e = lube_error(I, "field '%s' of %s is %s, so it cannot hold %s", AS_STRING(field)->chars, holder,
-                       with_article(desc_name(*d)), a_type(v));
+    Value e = lube_error(I, "field '%s' of %s is %s, so it cannot hold %s", AS_STRING(field)->chars,
+                         type_name(holder), with_article(desc_name(*d)), a_type(v));
     release(v);
     return e;
 }
@@ -224,6 +224,18 @@ static Value keep_field_type(Interp *I, const TypeDesc *d, Value field, const ch
 static int keys_same(Value a, Value b) {
     ObjString *x = AS_STRING(a), *y = AS_STRING(b);
     return x == y || (x->length == y->length && memcmp(x->chars, y->chars, x->length) == 0);
+}
+
+/* Where field `name` (an interned name) is in instance m: an instance has
+ * its class's fields in their order, and none is ever removed, so field f
+ * is entry f. -1 if the name is not found this way (the caller then looks
+ * the slow way, which also explains what is wrong). */
+static inline int field_slot(ObjMap *m, ObjString *name) {
+    ObjClass *c = m->klass;
+    for (int f = 0; f < c->nfields; f++)
+        if (c->field_names[f] == name)
+            return (size_t)f < m->used && m->entries[f].live && m->entries[f].key.as.obj == (Obj *)name ? f : -1;
+    return -1;
 }
 
 static Value find_method(ObjClass *c, ObjString *name) {
@@ -247,6 +259,7 @@ static int define_global(Interp *I, ObjString *name, Value v, int kind) {
     map_set(I->globals, retain(OBJ_VAL(name)), v);
     if (kind == 0) map_delete(I->constants, OBJ_VAL(name), NULL);
     else map_set(I->constants, retain(OBJ_VAL(name)), NUM_VAL(kind == 2 ? ORIGIN_FN : ORIGIN_LET));
+    I->epoch++;
     return 0;
 }
 
@@ -280,6 +293,32 @@ static Value *lookup_global(Interp *I, ObjString *name, int *failed) {
     return r > 0 ? map_find(I->globals, OBJ_VAL(name)) : NULL;
 }
 
+/* The global r names, found through r's cache (checked: the entry must
+ * still be that global's, as in global_slot). */
+static Value *global_ref(Interp *I, const VarRef *r, int *failed) {
+    ObjMap *g = I->globals;
+    int at = r->gslot - 1;
+    if (at >= 0 && (size_t)at < g->used && g->entries[at].live && g->entries[at].key.as.obj == (Obj *)r->name) {
+        *failed = 0;
+        return &g->entries[at].value;
+    }
+    Value *v = lookup_global(I, r->name, failed);
+    if (v) ((VarRef *)r)->gslot = (int)((MapEntry *)(void *)((char *)v - offsetof(MapEntry, value)) - I->globals->entries) + 1;
+    return v;
+}
+
+/* global_origin for r, through r's cache. */
+static int global_origin_ref(Interp *I, const VarRef *r, Origin *origin) {
+    if (r->cepoch != I->epoch) {
+        Origin o;
+        ((VarRef *)r)->corigin = global_origin(I, r->name, &o) ? (int)o : -1;
+        ((VarRef *)r)->cepoch = I->epoch;
+    }
+    if (r->corigin < 0) return 0;
+    *origin = (Origin)r->corigin;
+    return 1;
+}
+
 static Value get_var(Interp *I, const VarRef *r) {
     switch (r->kind) {
     case VAR_LOCAL: return retain(SLOT(r->index));
@@ -288,7 +327,7 @@ static Value get_var(Interp *I, const VarRef *r) {
     case VAR_GLOBAL: break;
     }
     int failed;
-    Value *g = lookup_global(I, r->name, &failed);
+    Value *g = global_ref(I, r, &failed);
     if (failed) return ERR_VAL;
     if (!g) return lube_error(I, "undefined variable '%s'", lube_shown(r->name));
     if (g->type == VAL_LENT) return lube_error(I, IN_USE, lube_shown(r->name));
@@ -372,16 +411,38 @@ static Value in_op(Interp *I, Value item, Value container) {
 }
 
 /* Borrows a and b; returns a new reference. */
+/* a op b for two plain Numbers, without a call: 1 with *out set; 0 leaves
+ * it to binary_op (other operators, division by zero, % of other numbers). */
+static inline int num_op(int op, double x, double y, Value *out) {
+    switch (op) {
+    case T_PLUS: *out = NUM_VAL(x + y); return 1;
+    case T_MINUS: *out = NUM_VAL(x - y); return 1;
+    case T_STAR: *out = NUM_VAL(x * y); return 1;
+    case T_SLASH:
+        if (y == 0) return 0;  /* the error comes from binary_op */
+        *out = NUM_VAL(x / y);
+        return 1;
+    case T_PERCENT:  /* positive whole numbers */
+        if (!(x > 0 && y > 0 && x < 9e15 && y < 9e15 && x == (double)(int64_t)x && y == (double)(int64_t)y)) return 0;
+        *out = NUM_VAL((double)((int64_t)x % (int64_t)y));
+        return 1;
+    case T_LT: *out = BOOL_VAL(x < y); return 1;
+    case T_LE: *out = BOOL_VAL(x <= y); return 1;
+    case T_GT: *out = BOOL_VAL(x > y); return 1;
+    case T_GE: *out = BOOL_VAL(x >= y); return 1;
+    case T_EQ: *out = BOOL_VAL(x == y); return 1;
+    case T_NEQ: *out = BOOL_VAL(x != y); return 1;
+    default: return 0;
+    }
+}
+
 static Value binary_op(Interp *I, TokenType op, Value a, Value b) {
-    if (IS_NUM(a) && IS_NUM(b)) {
+    Value quick;
+    if (IS_NUM(a) && IS_NUM(b) && num_op(op, a.as.number, b.as.number, &quick)) return quick;
+    if (IS_NUM(a) && IS_NUM(b)) {  /* what num_op leaves */
         double x = a.as.number, y = b.as.number;
         switch (op) {
-        case T_PLUS: return NUM_VAL(x + y);
-        case T_MINUS: return NUM_VAL(x - y);
-        case T_STAR: return NUM_VAL(x * y);
-        case T_SLASH:
-            if (y == 0) return lube_error(I, "division by zero");
-            return NUM_VAL(x / y);
+        case T_SLASH: return lube_error(I, "division by zero");
         case T_PERCENT: {
             if (y == 0) return lube_error(I, "modulo by zero");
             if (fabs(x) < 9e15 && fabs(y) < 9e15 && x == floor(x) && y == floor(y)) {  /* whole numbers: no fmod */
@@ -622,7 +683,7 @@ LUBE_NOINLINE static int check_changeable(Interp *I, Place *p) {
         origin = r->origin;
         break;
     case VAR_GLOBAL:
-        if (!global_origin(I, r->name, &origin)) return 0;
+        if (!global_origin_ref(I, r, &origin)) return 0;
         break;
     case VAR_CAPTURE:
         origin = ORIGIN_CAPTURE;
@@ -640,14 +701,14 @@ static int place_changeable(Interp *I, Place *p) {
     const VarRef *r = p->root;
     Origin origin;
     if (r->kind == VAR_LOCAL) return r->changeable && !(r->origin == ORIGIN_THIS && I->frame->this_locked);
-    return r->kind == VAR_GLOBAL && !global_origin(I, r->name, &origin);
+    return r->kind == VAR_GLOBAL && !global_origin_ref(I, r, &origin);
 }
 
 static Value *root_slot(Interp *I, Place *p) {
     const VarRef *r = p->root;
     if (r->kind == VAR_LOCAL) return &SLOT(r->index);
     int failed;
-    Value *g = lookup_global(I, r->name, &failed);
+    Value *g = global_ref(I, r, &failed);
     if (failed) return NULL;
     if (!g) {
         lube_error(I, "undefined variable '%s' (declare it first with 'var %s = ...')", lube_shown(r->name),
@@ -666,13 +727,14 @@ static Value *root_slot(Interp *I, Place *p) {
  * With `made` (for `=`), a missing last map key is created holding nothing,
  * and *made is set to that map so a failed assignment can remove the key
  * again (no "nothing" may stay behind in a value). */
-static Value *navigate(Interp *I, Value *slot, Place *p, ObjMap **made, int *elem, const char **holder,
+static Value *navigate(Interp *I, Value *slot, Place *p, ObjMap **made, int *elem, const Value **holder,
                        const TypeDesc **ftype) {
     *elem = TT_ANY;  /* the type the container holding the final slot accepts... */
-    *holder = NULL;  /* ...and that container's type name, for messages */
+    *holder = NULL;  /* ...and that container (its type names it in messages) */
     *ftype = NULL;   /* ...or, for a field of an instance, that field's declared type */
     for (int i = 0; i < p->nkeys; i++) {
         Value key = p->keys[i];
+        *ftype = NULL;  /* (it describes the last step only: a list in a field holds anything it takes) */
         if (p->is_field[i] && !IS_MAP(*slot)) {
             if (IS_STROBJ(*slot))
                 lube_error(I, "the properties of a String are read-only");
@@ -686,8 +748,16 @@ static Value *navigate(Interp *I, Value *slot, Place *p, ObjMap **made, int *ele
             if (!list_index(I, key, AS_LIST(*slot)->count, "list", &k)) return NULL;
             make_unique(slot);
             *elem = AS_LIST(*slot)->elem;
-            *holder = type_name(*slot);
+            *holder = slot;
             slot = &AS_LIST(*slot)->items[k];
+        } else if (IS_INSTANCE(*slot) && IS_STRING(key) && field_slot(AS_MAP(*slot), AS_STRING(key)) >= 0) {
+            make_unique(slot);  /* a field of an instance: no hashing (see field_slot) */
+            ObjMap *m = AS_MAP(*slot);
+            int f = field_slot(m, AS_STRING(key));
+            *elem = m->vtype;
+            *holder = slot;
+            *ftype = &m->klass->field_types[f];
+            slot = &m->entries[f].value;
         } else if (IS_MAP(*slot)) {
             if (!map_key_ok(AS_MAP(*slot), key)) {
                 bad_key(I, AS_MAP(*slot), key);
@@ -695,7 +765,7 @@ static Value *navigate(Interp *I, Value *slot, Place *p, ObjMap **made, int *ele
             }
             make_unique(slot);
             *elem = AS_MAP(*slot)->vtype;
-            *holder = type_name(*slot);
+            *holder = slot;
             ObjMap *m = AS_MAP(*slot);
             if (m->klass) {  /* an instance: only its declared fields exist */
                 ObjClass *c = m->klass;
@@ -746,7 +816,7 @@ LUBE_NOINLINE static int place_take(Interp *I, Place *p, Value *holder, Value *o
     if (!root) return -1;
     Value empty = p->root->kind == VAR_GLOBAL ? LENT_VAL : NIL_VAL;
     int elem;
-    const char *container;
+    const Value *container;
     const TypeDesc *ftype;
     if (p->nkeys == 0) {
         *out = *root;
@@ -772,7 +842,8 @@ LUBE_NOINLINE static int place_take(Interp *I, Place *p, Value *holder, Value *o
  * holder was private while the value was out. */
 LUBE_NOINLINE static void place_restore(Interp *I, Place *p, Value holder, Value value) {
     const VarRef *r = p->root;
-    Value *root = r->kind == VAR_LOCAL ? &SLOT(r->index) : map_find(I->globals, OBJ_VAL(r->name));
+    int failed;
+    Value *root = r->kind == VAR_LOCAL ? &SLOT(r->index) : global_ref(I, r, &failed);
     if (p->nkeys == 0) {
         release(*root);
         *root = value;
@@ -848,8 +919,12 @@ static int ann_desc(Interp *I, const TypeAnn *t, TypeDesc *out) {
  * Every parameter keeps a type: a typed var parameter the declared one,
  * the others their value's. Returns 0 after raising an error. */
 static int check_param(Interp *I, FuncDecl *d, const char *name, int i, Value *v, int slot) {
+    const TypeAnn *t = d->types && d->types[i].set ? &d->types[i] : NULL;
+    if (!t || (t->d.kind == TD_NUM && IS_NUM(*v))) {  /* untyped, or the common typed case */
+        if (d->modes[i] != PARAM_LET) I->decl[slot] = t ? t->d : desc_of(*v);  /* (only a var or & changes) */
+        return 1;
+    }
     I->decl[slot] = desc_of(*v);
-    if (!d->types || !d->types[i].set) return 1;
     TypeDesc want;
     Value out;
     if (!ann_desc(I, &d->types[i], &want)) return 0;
@@ -869,6 +944,7 @@ static int check_param(Interp *I, FuncDecl *d, const char *name, int i, Value *v
 static Value check_return(Interp *I, FuncDecl *d, const char *name, Value result) {
     Value out;
     TypeDesc want;
+    if (d->ret.set && d->ret.d.kind == TD_NUM && IS_NUM(result)) return result;  /* the common typed case */
     if (!d->ret.set) {
         if (IS_NIL(result)) return result;
         out = lube_error(I, "#strict: %s() returns %s, but it declares no return type (add one, like ): %s)", name,
@@ -1137,11 +1213,7 @@ static int same_root(Place *a, Place *b) {
 /* Does a call to f need & somewhere (so a call without any must be refused)? */
 static int takes_ref(Value f) {
     if (IS_NATIVE(f)) return AS_NATIVE(f)->changes_first;
-    if (!IS_FUNCTION(f)) return 0;
-    FuncDecl *d = AS_FUNCTION(f)->decl;
-    for (int i = 0; i < d->nparams; i++)
-        if (d->modes[i] == PARAM_REF) return 1;
-    return 0;
+    return IS_FUNCTION(f) && AS_FUNCTION(f)->decl->has_ref;
 }
 
 static int takes_first_by_ref(Value f) {
@@ -1151,6 +1223,57 @@ static int takes_first_by_ref(Value f) {
     return d->nparams > 0 && d->modes[0] == PARAM_REF;
 }
 
+
+
+/* place op= *rhs the quick way, for the common cases: the root a var (a
+ * global one not lent out), then lists (a whole index in range) and
+ * instances (a declared field), each held by nothing else (so nothing needs
+ * copying first), and a Number (or anything, into an untyped list). The
+ * keys are on top of the stack. Returns 1 when done, with *rhs the value
+ * stored (the slot took it over); 0 to go the general way. */
+static int fast_assign(Interp *I, PlaceDesc *pd, TokenType op, Value *rhs) {
+    const VarRef *r = &pd->var;
+    Value *slot = NULL;
+    Origin origin;
+    int failed;
+    if (r->kind == VAR_LOCAL && r->changeable && !(r->origin == ORIGIN_THIS && I->frame->this_locked)) {
+        slot = &SLOT(r->index);
+    } else if (r->kind == VAR_GLOBAL) {
+        Value *g = global_ref(I, r, &failed);
+        if (g && g->type != VAL_LENT && !global_origin_ref(I, r, &origin)) slot = g;
+    }
+    if (!slot) return 0;
+    const Value *keys = &I->stack[I->sp - pd->nkeys];
+    int numeric = 1;  /* the final slot takes only a Number (a typed field), or anything (an untyped list) */
+    for (int i = 0; i < pd->nkeys; i++) {  /* (only the last step's type matters: the others hold containers) */
+        int last = i == pd->nkeys - 1;
+        if (!IS_OBJ(*slot) || slot->as.obj->rc != 1) return 0;
+        if (pd->is_field[i]) {
+            int fs = IS_INSTANCE(*slot) ? field_slot(AS_MAP(*slot), AS_STRING(keys[i])) : -1;
+            if (fs < 0 || (last && AS_MAP(*slot)->klass->field_types[fs].kind != TD_NUM)) return 0;
+            slot = &AS_MAP(*slot)->entries[fs].value;
+            numeric = 1;
+        } else {
+            double d = IS_NUM(keys[i]) ? keys[i].as.number : -1;
+            if (!IS_LIST(*slot) || !(d >= 0 && d < (double)AS_LIST(*slot)->count && d == (double)(size_t)d)) return 0;
+            int elem = AS_LIST(*slot)->elem;
+            if (last && elem != TT_ANY && elem != TT_NUMBER) return 0;
+            numeric = elem == TT_NUMBER;
+            slot = &AS_LIST(*slot)->items[(size_t)d];
+        }
+    }
+    Value v = *rhs;
+    if (op == T_ASSIGN) {
+        if (numeric && !IS_NUM(v)) return 0;
+    } else if (!IS_NUM(*slot) || !IS_NUM(v) || !num_op(compound_base(op), slot->as.number, v.as.number, &v)) {
+        return 0;
+    }
+    Value old = *slot;
+    *slot = v;
+    release(old);
+    *rhs = v;
+    return 1;
+}
 
 /* ======================================================================
  * Assignment: place op= rhs, with the place's keys already evaluated.
@@ -1162,7 +1285,7 @@ LUBE_NOINLINE static Value do_assign(Interp *I, TokenType op, Place *place, Valu
 #define p (*place)
     Value *slot = NULL;
     int elem = TT_ANY;
-    const char *holder = NULL;
+    const Value *holder = NULL;
     const TypeDesc *ftype = NULL;
     int whole = p.nkeys == 0;  /* assigning the variable itself */
     Value field = whole ? NIL_VAL : p.keys[p.nkeys - 1];
@@ -1180,12 +1303,13 @@ LUBE_NOINLINE static Value do_assign(Interp *I, TokenType op, Place *place, Valu
 #define KEEP_TYPE(v)                                                                          \
     do {                                                                                      \
         if (whole) v = keep_type(I, p.root, v);                                            \
-        else if (ftype) v = keep_field_type(I, ftype, field, holder, v);                   \
+        else if (ftype && !(ftype->kind == TD_NUM && IS_NUM(v)))                            \
+            v = keep_field_type(I, ftype, field, *holder, v);                               \
     } while (0)
 
     if (op == T_ASSIGN) {
         if (elem != TT_ANY) {  /* into a typed list or map */
-            Value c = lube_check_elem(I, holder, elem, rhs);
+            Value c = lube_check_elem(I, type_name(*holder), elem, rhs);
             release(rhs);
             rhs = c;
         }
@@ -1230,10 +1354,11 @@ LUBE_NOINLINE static Value do_assign(Interp *I, TokenType op, Place *place, Valu
             return retain(*slot);
         }
     }
-    Value r = binary_op(I, bin, *slot, rhs);
+    Value r;
+    if (!IS_NUM(*slot) || !IS_NUM(rhs) || !num_op(bin, slot->as.number, rhs.as.number, &r)) r = binary_op(I, bin, *slot, rhs);
     release(rhs);
     if (!IS_ERR(r) && elem != TT_ANY) {
-        Value c = lube_check_elem(I, holder, elem, r);
+        Value c = lube_check_elem(I, type_name(*holder), elem, r);
         release(r);
         r = c;
     }
@@ -1663,7 +1788,13 @@ LUBE_NOINLINE static int prep_method(Interp *I, MethodDesc *md, Value obj, Place
         return push_call(I, callee, SELF_NONE, NIL_VAL, NULL);
     }
     if (IS_INSTANCE(obj)) {
-        Value m = find_method(AS_MAP(obj)->klass, name);
+        ObjClass *klass = AS_MAP(obj)->klass;
+        if (md->cache_class != klass || md->cache_epoch != I->epoch) {  /* (found the slow way once per class) */
+            md->cache_class = klass;
+            md->cache_method = find_method(klass, name);
+            md->cache_epoch = I->epoch;
+        }
+        Value m = md->cache_method;
         if (!IS_NIL(m)) {
             if (have_place && place_changeable(I, place)) {
                 release(obj);
@@ -1857,6 +1988,7 @@ LUBE_NOINLINE static int class_begin(Interp *I, ClassDesc *cd) {
 }
 
 static void class_end(Interp *I, ClassDesc *cd) {
+    I->epoch++;  /* (a class updated by a hot reload has new methods) */
     ObjClass *c = AS_CLASS(I->stack[I->sp - 1]);
     Value into_val = I->stack[I->sp - 2];
     for (int i = 0; i < cd->nmethods; i++) {
@@ -1981,6 +2113,7 @@ static Value execute(Interp *I) {
     Code *code = &f->proto->code;
     const Instr *ip = f->pc;
     Value r;
+    int assign_at = 0, assign_drop = 0;  /* (OP_SET_LOCAL goes on in OP_ASSIGN's code) */
     for (;;) {
         if (I->dbg) {  /* the debugger looks before each instruction */
             f->pc = ip;
@@ -2032,7 +2165,8 @@ static Value execute(Interp *I) {
         case OP_DEF_LOCAL: {
             int slot = f->base + ARG_OF(in);
             Value v = POP();
-            I->decl[slot] = desc_of(v);  /* the var keeps this type */
+            if (IS_NUM(v)) I->decl[slot].kind = TD_NUM;  /* the var keeps this type */
+            else I->decl[slot] = desc_of(v);
             Value old = I->stack[slot];
             I->stack[slot] = v;
             release(old);
@@ -2123,33 +2257,63 @@ static Value execute(Interp *I) {
         case OP_BINARY: {
             Value b = I->stack[I->sp - 1], a = I->stack[I->sp - 2];
             int op = ARG_OF(in);
-            if (IS_NUM(a) && IS_NUM(b)) {  /* the common case, without a call */
-                double x = a.as.number, y = b.as.number;
-                switch (op) {
-                case T_PLUS: r = NUM_VAL(x + y); goto bin_done;
-                case T_MINUS: r = NUM_VAL(x - y); goto bin_done;
-                case T_STAR: r = NUM_VAL(x * y); goto bin_done;
-                case T_SLASH:
-                    if (y == 0) break;  /* the error comes from binary_op */
-                    r = NUM_VAL(x / y);
-                    goto bin_done;
-                case T_LT: r = BOOL_VAL(x < y); goto bin_done;
-                case T_LE: r = BOOL_VAL(x <= y); goto bin_done;
-                case T_GT: r = BOOL_VAL(x > y); goto bin_done;
-                case T_GE: r = BOOL_VAL(x >= y); goto bin_done;
-                case T_EQ: r = BOOL_VAL(x == y); goto bin_done;
-                case T_NEQ: r = BOOL_VAL(x != y); goto bin_done;
-                default: break;
-                }
+            if (!IS_NUM(a) || !IS_NUM(b) || !num_op(op, a.as.number, b.as.number, &r)) {
+                r = binary_op(I, (TokenType)op, a, b);
+                release(a);
+                release(b);
             }
-            r = binary_op(I, (TokenType)op, a, b);
-            release(a);
-            release(b);
-        bin_done:
             I->sp -= 2;
             if (IS_ERR(r)) goto error;
             PUSH(r);
             break;
+        }
+        case OP_BINARY2: {  /* a op b, b (and perhaps a) read in place: a local or a Number */
+            int arg = ARG_OF(in), op = arg & 0xff, ka = (arg >> 8) & 3, kb = arg >> 10;
+            Value b = kb == OPND_LOCAL ? I->stack[f->base + (int)ip[1]] : K(ip[1]);
+            Value a = ka == OPND_LOCAL ? I->stack[f->base + (int)ip[0]] : ka == OPND_CONST ? K(ip[0]) : TOP;
+            ip += 2;
+            if (!IS_NUM(a) || !IS_NUM(b) || !num_op(op, a.as.number, b.as.number, &r)) {
+                r = binary_op(I, (TokenType)op, a, b);
+                if (ka == OPND_STACK) release(a);
+            }
+            if (ka == OPND_STACK) I->sp--;
+            if (IS_ERR(r)) goto error;
+            PUSH(r);
+            break;
+        }
+        case OP_CMP_JUMP: {  /* if a < b (or another comparison) is false: jump; a and b as in OP_BINARY2 */
+            int word = (int)ip[0], op = word & 0xff, ka = (word >> 8) & 3, kb = word >> 10;
+            int stacked = (ka == OPND_STACK) + (kb == OPND_STACK);
+            Value b = kb == OPND_LOCAL ? I->stack[f->base + (int)ip[2]] : kb == OPND_CONST ? K(ip[2]) : TOP;
+            Value a = ka == OPND_LOCAL   ? I->stack[f->base + (int)ip[1]]
+                      : ka == OPND_CONST ? K(ip[1])
+                                         : I->stack[I->sp - stacked];
+            ip += 3;
+            if (!IS_NUM(a) || !IS_NUM(b) || !num_op(op, a.as.number, b.as.number, &r)) {
+                r = binary_op(I, (TokenType)op, a, b);
+                if (ka == OPND_STACK) release(a);
+                if (kb == OPND_STACK) release(b);
+            }
+            I->sp -= stacked;
+            if (IS_ERR(r)) goto error;
+            if (!r.as.boolean) ip = code->code + ARG_OF(in);
+            break;
+        }
+        case OP_SET_LOCAL: {  /* x op= value, a statement, x a local var: the common Number cases here */
+            int word = (int)ip[0], aop = word & 0xff, k = (word >> 8) - 1, at = f->base + ARG_OF(in);
+            Value rhs = k >= 0 ? K(k) : TOP, *slot = &I->stack[at];
+            if (IS_NUM(rhs) && (aop == T_ASSIGN ? I->decl[at].kind == TD_NUM  /* (so the value there is a Number too) */
+                                                : IS_NUM(*slot) && num_op(compound_base(aop), slot->as.number,
+                                                                          rhs.as.number, &rhs))) {
+                *slot = rhs;
+                if (k < 0) I->sp--;
+                ip += 2;
+                break;
+            }
+            assign_at = (int)ip[1];  /* the rest: the general way */
+            assign_drop = 1;
+            ip += 2;
+            goto assign_with;
         }
         case OP_NEG: {
             Value v = POP();
@@ -2226,6 +2390,16 @@ static Value execute(Interp *I) {
         }
         case OP_INDEX: {
             Value idx = POP(), obj = POP();
+            if (IS_LIST(obj) && IS_NUM(idx)) {  /* the common case: a whole number in range */
+                double d = idx.as.number;
+                ObjList *l = AS_LIST(obj);
+                if (d >= 0 && d < (double)l->count && d == (double)(size_t)d) {
+                    r = retain(l->items[(size_t)d]);
+                    release(obj);
+                    PUSH(r);
+                    break;
+                }
+            }
             r = index_get(I, obj, idx);
             release(obj);
             release(idx);
@@ -2233,8 +2407,42 @@ static Value execute(Interp *I) {
             PUSH(r);
             break;
         }
+        case OP_INDEX2: {  /* obj[index], index (and perhaps obj) read in place: see OP_BINARY2 */
+            int ka = ARG_OF(in) & 3, kb = ARG_OF(in) >> 2;
+            Value idx = kb == OPND_LOCAL ? I->stack[f->base + (int)ip[1]] : K(ip[1]);
+            Value obj = ka == OPND_LOCAL ? I->stack[f->base + (int)ip[0]] : ka == OPND_CONST ? K(ip[0]) : TOP;
+            ip += 2;
+            double d = IS_NUM(idx) ? idx.as.number : -1;
+            if (IS_LIST(obj) && d >= 0 && d < (double)AS_LIST(obj)->count && d == (double)(size_t)d)
+                r = retain(AS_LIST(obj)->items[(size_t)d]);
+            else
+                r = index_get(I, obj, idx);
+            if (ka == OPND_STACK) {
+                release(obj);
+                I->sp--;
+            }
+            if (IS_ERR(r)) goto error;
+            PUSH(r);
+            break;
+        }
+        case OP_FIELD_LOCAL: {  /* x.name, x a local: read in place */
+            Value obj = I->stack[f->base + ARG_OF(in)];
+            ObjString *name = AS_STRING(K(*ip++));
+            int fs = IS_INSTANCE(obj) ? field_slot(AS_MAP(obj), name) : -1;
+            r = fs >= 0 ? retain(AS_MAP(obj)->entries[fs].value) : field_get(I, obj, name);
+            if (IS_ERR(r)) goto error;
+            PUSH(r);
+            break;
+        }
         case OP_FIELD: {
             Value obj = POP();
+            int fs = IS_INSTANCE(obj) ? field_slot(AS_MAP(obj), AS_STRING(K(ARG_OF(in)))) : -1;
+            if (fs >= 0) {  /* a field of an instance: no hashing */
+                r = retain(AS_MAP(obj)->entries[fs].value);
+                release(obj);
+                PUSH(r);
+                break;
+            }
             r = field_get(I, obj, AS_STRING(K(ARG_OF(in))));
             release(obj);
             if (IS_ERR(r)) goto error;
@@ -2253,8 +2461,50 @@ static Value execute(Interp *I) {
                 goto error;
             }
             break;
-        case OP_CALL: {
-            int argc = ARG_OF(in), ci = I->sp - argc - 1;
+        case OP_CALL:
+        case OP_CALL_FN: {  /* FN: a top-level fn (argc | name constant + 1 << 8), not checked yet */
+            int fn_call = OP_OF(in) == OP_CALL_FN, argc = fn_call ? ARG_OF(in) & 0xff : ARG_OF(in);
+            int ci = I->sp - argc - 1;
+            if (IS_FUNCTION(I->stack[ci])) {  /* a plain function: started here (see FuncDecl.plain) */
+                ObjFunction *fn = AS_FUNCTION(I->stack[ci]);
+                FuncDecl *d = fn->decl;
+                int base = ci + 1, ok = d->plain && argc == d->nparams && I->depth < LUBE_MAX_FRAMES &&
+                                        base + d->nslots + d->code.maxstack <= LUBE_STACK_MAX;
+                for (int i = 0; ok && d->types && i < argc; i++)
+                    ok = !d->types[i].set || IS_NUM(I->stack[base + i]);
+                if (ok) {
+                    for (int i = base + argc; i < base + d->nslots; i++) I->stack[i] = NIL_VAL;
+                    I->sp = base + d->nslots;
+                    Frame *nf = new_frame(I);
+                    nf->prev = f;
+                    nf->name = d->name ? d->name->chars : "<lambda>";
+                    nf->src = d->src;
+                    nf->line = d->line;
+                    nf->base = base;
+                    nf->fn = fn;
+                    nf->this_locked = 0;
+                    nf->proto = d;
+                    nf->pc = d->code.code;
+                    nf->argc = argc;
+                    nf->call_base = ci;
+                    nf->pending = I->npending;
+                    nf->construct = 0;
+                    nf->entry = 0;
+                    nf->block = 0;
+                    nf->opbase = base + d->nslots;
+                    nf->loans = NULL;
+                    nf->nloans = 0;
+                    nf->dbg_line = -1;
+                    I->frame = nf;
+                    SWITCH_FRAME();
+                    break;
+                }
+            }
+            if (fn_call && !IS_CALLABLE(I->stack[ci]) && !IS_CLASS(I->stack[ci])) {  /* replaced since */
+                lube_error(I, "'%s' is not a function (it is %s)", AS_STRING(K((ARG_OF(in) >> 8) - 1))->chars,
+                           a_type(I->stack[ci]));
+                goto error;
+            }
             if (takes_ref(I->stack[ci]) && check_loans(I, I->stack[ci], argc, NULL, 0, 0) < 0) goto error;
             if (start_call(I, ci, argc, NULL, 0, 0, &r)) {
                 SWITCH_FRAME();
@@ -2321,7 +2571,60 @@ static Value execute(Interp *I) {
             break;
         }
         case OP_INVOKE: {
-            int started = invoke(I, code, &code->calls[ARG_OF(in)], &r);
+            CallDesc *cd = &code->calls[ARG_OF(in)];
+            PendingCall *pc = &I->pending[I->npending - 1];
+            if (pc->mode == SELF_LEND && pc->place.nkeys == 0 && !cd->refs && IS_FUNCTION(I->stack[pc->callee])) {
+                /* x.method(args), x a variable: lend x straight into the new frame (see invoke) */
+                ObjFunction *fn = AS_FUNCTION(I->stack[pc->callee]);
+                FuncDecl *d = fn->decl;
+                const VarRef *rv = pc->place.root;
+                int ci = pc->callee, base = ci + 1, argc = 1 + cd->nargs, failed = 0;
+                int ok = d->plain_method && argc == d->nparams && I->depth < LUBE_MAX_FRAMES &&
+                         base + d->nslots + d->code.maxstack <= LUBE_STACK_MAX &&
+                         (rv->kind == VAR_LOCAL ? !(rv->watch && rv->watch->n) : !watched_name(I, rv->name));
+                for (int i = 1; ok && d->types && i < argc; i++) ok = !d->types[i].set || IS_NUM(I->stack[base + i]);
+                Value *root = !ok ? NULL : rv->kind == VAR_LOCAL ? &SLOT(rv->index) : global_ref(I, rv, &failed);
+                if (failed) goto error;
+                if (root && root->type != VAL_LENT) {
+                    Loan *L = new_loans(I, 1);
+                    L->pos = 0;
+                    move_place(&L->place, &pc->place);
+                    L->holder = NIL_VAL;
+                    L->lent = 1;
+                    L->watched = NULL;
+                    L->lwatched = NULL;
+                    L->before = NIL_VAL;
+                    I->npending--;
+                    I->stack[base] = *root;  /* its arguments are in place after it */
+                    *root = rv->kind == VAR_GLOBAL ? LENT_VAL : NIL_VAL;
+                    for (int i = base + argc; i < base + d->nslots; i++) I->stack[i] = NIL_VAL;
+                    I->sp = base + d->nslots;
+                    Frame *nf = new_frame(I);
+                    nf->prev = f;
+                    nf->name = d->name->chars;
+                    nf->src = d->src;
+                    nf->line = d->line;
+                    nf->base = base;
+                    nf->fn = fn;
+                    nf->this_locked = 0;
+                    nf->proto = d;
+                    nf->pc = d->code.code;
+                    nf->argc = argc;
+                    nf->call_base = ci;
+                    nf->pending = I->npending;
+                    nf->construct = 0;
+                    nf->entry = 0;
+                    nf->block = 0;
+                    nf->opbase = base + d->nslots;
+                    nf->loans = L;
+                    nf->nloans = 1;
+                    nf->dbg_line = -1;
+                    I->frame = nf;
+                    SWITCH_FRAME();
+                    break;
+                }
+            }
+            int started = invoke(I, code, cd, &r);
             if (started < 0) goto error;
             if (started) {
                 SWITCH_FRAME();
@@ -2340,6 +2643,16 @@ static Value execute(Interp *I) {
             if (f->fn && (f->proto->ret.set || f->proto->strict)) {
                 r = check_return(I, f->proto, f->name, r);
                 if (IS_ERR(r)) goto error;
+            }
+            if (!f->entry && !f->construct && !f->loans && !f->block && I->npending == f->pending && !I->dbg &&
+                !(I->nfwatch && I->fwatch[I->nfwatch - 1].depth >= I->depth)) {  /* nothing else to do (see leave) */
+                pop_to(I, f->call_base);  /* its slots, the arguments and the callee */
+                I->frame = f->prev;
+                I->depth--;
+                SWITCH_FRAME();
+                ip++;  /* past the call it waited on */
+                PUSH(r);
+                break;
             }
             {
                 int entry = f->entry;
@@ -2360,7 +2673,8 @@ static Value execute(Interp *I) {
                 lube_error(I, "cannot loop over %s (expected a List, Range, str, Object or Channel)", a_type(it));
                 goto error;
             }
-            PUSH(NUM_VAL(0));  /* position (in text: bytes; in a map: entries) */
+            PUSH(NUM_VAL(IS_RANGE(it) ? range_length(AS_RANGE(it)) : 0));  /* position (in text: bytes; in a map:
+                                                                              entries; a range: its length) */
             PUSH(NUM_VAL(0));  /* count */
             break;
         }
@@ -2374,7 +2688,7 @@ static Value execute(Interp *I) {
             int done = 0;
             if (IS_RANGE(it)) {
                 ObjRange *rg = AS_RANGE(it);
-                if (k >= range_length(rg)) done = 1;
+                if (k >= pos) done = 1;  /* (its length, from OP_FOR_PREP) */
                 else second = NUM_VAL(rg->start + k * rg->step);
             } else if (IS_CHANNEL(it)) {  /* waits for each value, until the channel is closed */
                 int got = channel_next(I, it, &second);
@@ -2443,16 +2757,23 @@ static Value execute(Interp *I) {
             PUSH(r);
             break;
         }
-        case OP_ASSIGN: {
-            AssignDesc *ad = &code->assigns[ARG_OF(in)];
+        case OP_ASSIGN:
+        case OP_ASSIGN_DROP:  /* DROP: a statement (the value is not kept) */
+            assign_drop = OP_OF(in) == OP_ASSIGN_DROP;
+            assign_at = ARG_OF(in);
+        assign_with: {
+            int drop = assign_drop;
+            AssignDesc *ad = &code->assigns[assign_at];
             PlaceDesc *pd = &code->places[ad->place];
-            Value rhs = POP();
+            Value rhs = drop && ad->kconst >= 0 ? K(ad->kconst) : POP();
             if (pd->nkeys == 0 && pd->var.kind == VAR_LOCAL && pd->var.changeable && pd->var.origin != ORIGIN_THIS) {
-                Value *slot = &I->stack[f->base + pd->var.index];  /* a local: the common case */
+                int at = f->base + pd->var.index;
+                Value *slot = &I->stack[at];  /* a local: the common case */
                 if (ad->op == T_ASSIGN) {
-                    r = keep_type(I, &pd->var, rhs);
-                } else if (IS_NUM(*slot) && IS_NUM(rhs)) {
-                    r = binary_op(I, compound_base(ad->op), *slot, rhs);  /* a Number var stays a Number */
+                    r = I->decl[at].kind == TD_NUM && IS_NUM(rhs) ? rhs : keep_type(I, &pd->var, rhs);
+                } else if (IS_NUM(*slot) && IS_NUM(rhs)) {  /* a Number var stays a Number */
+                    if (!num_op(compound_base(ad->op), slot->as.number, rhs.as.number, &r))
+                        r = binary_op(I, compound_base(ad->op), *slot, rhs);
                 } else {
                     goto assign_general;
                 }
@@ -2460,7 +2781,7 @@ static Value execute(Interp *I) {
                 Value old = *slot;
                 *slot = r;
                 release(old);
-                PUSH(retain(r));
+                if (!drop) PUSH(retain(r));
                 break;
             }
             if (pd->nkeys == 0 && pd->var.kind == VAR_GLOBAL && (ad->op == T_ASSIGN || IS_NUM(rhs))) {
@@ -2471,12 +2792,19 @@ static Value execute(Interp *I) {
                 if (!g || g->type == VAL_LENT || global_origin(I, pd->var.name, &origin) ||
                     (ad->op != T_ASSIGN && !IS_NUM(*g)))
                     goto assign_general;  /* errors and the rest: the general way */
-                r = ad->op == T_ASSIGN ? keep_type(I, &pd->var, rhs) : binary_op(I, compound_base(ad->op), *g, rhs);
+                if (ad->op == T_ASSIGN) r = keep_type(I, &pd->var, rhs);
+                else if (!IS_NUM(*g) || !num_op(compound_base(ad->op), g->as.number, rhs.as.number, &r))
+                    r = binary_op(I, compound_base(ad->op), *g, rhs);
                 if (IS_ERR(r)) goto error;
                 Value old = *g;
                 *g = r;
                 release(old);
-                PUSH(retain(r));
+                if (!drop) PUSH(retain(r));
+                break;
+            }
+            if (pd->nkeys > 0 && fast_assign(I, pd, ad->op, &rhs)) {  /* xs[i] = v, p.x += 1, bodies[i].vx -= d */
+                pop_to(I, I->sp - pd->nkeys);  /* the keys */
+                if (!drop) PUSH(retain(rhs));
                 break;
             }
         assign_general: {
@@ -2484,7 +2812,8 @@ static Value execute(Interp *I) {
             take_place(I, pd, &p);
             r = do_assign(I, ad->op, &p, rhs);
             if (IS_ERR(r)) goto error;
-            PUSH(r);
+            if (drop) release(r);
+            else PUSH(r);
             break;
         }
         }
@@ -3145,6 +3474,7 @@ void lube_define(Interp *I, const char *name, Value v) {
     ObjString *key = lube_intern(I, name, strlen(name));
     map_set(I->globals, retain(OBJ_VAL(key)), v);
     map_set(I->constants, retain(OBJ_VAL(key)), NUM_VAL(ORIGIN_BUILTIN));
+    I->epoch++;
 }
 
 Interp *lube_new(char *stack_base) {
@@ -3152,6 +3482,7 @@ Interp *lube_new(char *stack_base) {
     if (!I) lube_out_of_memory(); /* LCOV_EXCL_LINE: only if the system has no memory left */
     I->ret_val = NIL_VAL;
     I->error_val = NIL_VAL;
+    I->epoch = 1;  /* (zeroed caches are stale) */
     I->stack_base = stack_base;
     size_t margin = LUBE_STACK_SIZE / 8 > 512u * 1024u ? LUBE_STACK_SIZE / 8 : 512u * 1024u;
     I->stack_budget = LUBE_STACK_SIZE - margin;

@@ -1,0 +1,102 @@
+// n-body: floating point and fields (after the Computer Language Benchmarks Game).
+let PI = 3.141592653589793
+let SOLAR_MASS = 4 * PI * PI
+let DAYS = 365.24
+
+class Body {
+  var x = 0
+  var y = 0
+  var z = 0
+  var vx = 0
+  var vy = 0
+  var vz = 0
+  var mass = 0
+  constructor(x: Number, y: Number, z: Number, vx: Number, vy: Number, vz: Number, mass: Number) {
+    this.x = x
+    this.y = y
+    this.z = z
+    this.vx = vx * DAYS
+    this.vy = vy * DAYS
+    this.vz = vz * DAYS
+    this.mass = mass * SOLAR_MASS
+  }
+}
+
+fn advance(&bodies, dt: Number) {
+  let n = len(bodies)
+  var i = 0
+  while i < n {
+    var j = i + 1
+    while j < n {
+      let dx = bodies[i].x - bodies[j].x
+      let dy = bodies[i].y - bodies[j].y
+      let dz = bodies[i].z - bodies[j].z
+      let d2 = dx * dx + dy * dy + dz * dz
+      let mag = dt / (d2 * sqrt(d2))
+      let mi = bodies[i].mass * mag
+      let mj = bodies[j].mass * mag
+      bodies[i].vx -= dx * mj
+      bodies[i].vy -= dy * mj
+      bodies[i].vz -= dz * mj
+      bodies[j].vx += dx * mi
+      bodies[j].vy += dy * mi
+      bodies[j].vz += dz * mi
+      j += 1
+    }
+    i += 1
+  }
+  i = 0
+  while i < n {
+    bodies[i].x += dt * bodies[i].vx
+    bodies[i].y += dt * bodies[i].vy
+    bodies[i].z += dt * bodies[i].vz
+    i += 1
+  }
+}
+
+fn energy(bodies): Number {
+  var e = 0
+  let n = len(bodies)
+  for i in 0..n {
+    let b = bodies[i]
+    e += 0.5 * b.mass * (b.vx * b.vx + b.vy * b.vy + b.vz * b.vz)
+    for j in (i + 1)..n {
+      let c = bodies[j]
+      let dx = b.x - c.x
+      let dy = b.y - c.y
+      let dz = b.z - c.z
+      e -= b.mass * c.mass / sqrt(dx * dx + dy * dy + dz * dz)
+    }
+  }
+  return e
+}
+
+fn offset(&bodies) {
+  var px = 0
+  var py = 0
+  var pz = 0
+  for b in bodies {
+    px += b.vx * b.mass
+    py += b.vy * b.mass
+    pz += b.vz * b.mass
+  }
+  bodies[0].vx = -px / SOLAR_MASS
+  bodies[0].vy = -py / SOLAR_MASS
+  bodies[0].vz = -pz / SOLAR_MASS
+}
+
+var bodies = [
+  Body(0, 0, 0, 0, 0, 0, 1),
+  Body(4.84143144246472090e+00, -1.16032004402742839e+00, -1.03622044471123109e-01,
+       1.66007664274403694e-03, 7.69901118419740425e-03, -6.90460016972063023e-05, 9.54791938424326609e-04),
+  Body(8.34336671824457987e+00, 4.12479856412430479e+00, -4.03523417114321381e-01,
+       -2.76742510726862411e-03, 4.99852801234917238e-03, 2.30417297573763929e-05, 2.85885980666130812e-04),
+  Body(1.28943695621391310e+01, -1.51111514016986312e+01, -2.23307578892655734e-01,
+       2.96460137564761618e-03, 2.37847173959480950e-03, -2.96589568540237556e-05, 4.36624404335156298e-05),
+  Body(1.53796971148509165e+01, -2.59193146099879641e+01, 1.79258772950371181e-01,
+       2.68067772490389322e-03, 1.62824170038242295e-03, -9.51592254519715870e-05, 5.15138902046611451e-05),
+]
+offset(&bodies)
+print(fixed(energy(bodies), 9))
+for s in 0..200000 { advance(&bodies, 0.01) }
+print(fixed(energy(bodies), 9))
