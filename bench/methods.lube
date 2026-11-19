@@ -1,0 +1,8 @@
+class Counter {
+  var n = 0
+  fn add(k: Number) { this.n += k }
+  fn get(): Number => this.n
+}
+var c = Counter()
+for i in 0..1000000 { c.add(i % 3) }
+print(c.get())

@@ -6,3 +6,4 @@ item 1
 item 2
 #strict: sum_of() returns a Number, but it declares no return type (add one, like ): Number)
 printed
+nothing nothing

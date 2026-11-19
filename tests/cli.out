@@ -13,6 +13,10 @@ usage:
   lube -e CODE          run CODE and print the value of the last expression
   lube -                read a script from standard input
   lube --check FILE     report syntax errors without running anything (FILE may be -)
+  lube --hot FILE [ARGS...]
+                        run FILE, applying changes to its files while it runs
+  lube --build FILE [-o OUT]
+                        build FILE and its imports into a standalone executable
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 0]
@@ -25,6 +29,10 @@ usage:
   lube -e CODE          run CODE and print the value of the last expression
   lube -                read a script from standard input
   lube --check FILE     report syntax errors without running anything (FILE may be -)
+  lube --hot FILE [ARGS...]
+                        run FILE, applying changes to its files while it runs
+  lube --build FILE [-o OUT]
+                        build FILE and its imports into a standalone executable
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 0]
@@ -39,6 +47,10 @@ usage:
   lube -e CODE          run CODE and print the value of the last expression
   lube -                read a script from standard input
   lube --check FILE     report syntax errors without running anything (FILE may be -)
+  lube --hot FILE [ARGS...]
+                        run FILE, applying changes to its files while it runs
+  lube --build FILE [-o OUT]
+                        build FILE and its imports into a standalone executable
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 64]
@@ -51,6 +63,10 @@ usage:
   lube -e CODE          run CODE and print the value of the last expression
   lube -                read a script from standard input
   lube --check FILE     report syntax errors without running anything (FILE may be -)
+  lube --hot FILE [ARGS...]
+                        run FILE, applying changes to its files while it runs
+  lube --build FILE [-o OUT]
+                        build FILE and its imports into a standalone executable
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 64]
@@ -95,6 +111,222 @@ usage:
   lube -e CODE          run CODE and print the value of the last expression
   lube -                read a script from standard input
   lube --check FILE     report syntax errors without running anything (FILE may be -)
+  lube --hot FILE [ARGS...]
+                        run FILE, applying changes to its files while it runs
+  lube --build FILE [-o OUT]
+                        build FILE and its imports into a standalone executable
+  lube -v, --version    print the version
+  lube -h, --help       show this help
+[exit 64]
+--- build with imports
+built TMP/elsewhere/app: 3 files, N bytes
+[exit 0]
+--- run the executable, with arguments
+hello from app HI! ["one", "--help", "-e"]
+data next to the executable
+
+[exit 0]
+--- build named after the file
+built tool: 1 file, N bytes
+default name ["x"]
+[exit 0]
+--- build found on PATH
+built TMP/tool2: 1 file, N bytes
+[exit 0]
+--- run a build found on PATH
+default name ["y"]
+[exit 0]
+--- build a file with errors
+TMP/broken.lube:2:1: syntax error: expected an expression but found end of file
+    2 | 
+      | ^
+[exit 65]
+--- build with a missing import
+lube: cannot build: 'missing' (imported by TMP/needs.lube) not found
+[exit 66]
+--- build a missing file
+lube: cannot open file 'TMP/none.lube'
+[exit 66]
+--- build that would replace its source
+lube: the executable would replace 'noext': name it with -o
+[exit 64]
+--- build to a folder that does not exist
+lube: cannot write 'TMP/no/such/dir/app'
+[exit 73]
+--- build with bad options
+Lube 2.0.0 - a small, smooth scripting language
+
+usage:
+  lube                  start the interactive REPL
+  lube FILE [ARGS...]   run a Lube script (ARGS are available as `args`)
+  lube -e CODE          run CODE and print the value of the last expression
+  lube -                read a script from standard input
+  lube --check FILE     report syntax errors without running anything (FILE may be -)
+  lube --hot FILE [ARGS...]
+                        run FILE, applying changes to its files while it runs
+  lube --build FILE [-o OUT]
+                        build FILE and its imports into a standalone executable
+  lube -v, --version    print the version
+  lube -h, --help       show this help
+[exit 64]
+--- build when lube cannot find itself
+lube: cannot build: cannot read the lube executable itself (run lube with its full path)
+[exit 70]
+--- isolates that fail with nobody joining, and one left waiting at the end
+lube: an isolate running boom() failed: division by zero
+lube: an isolate running boom() failed: division by zero
+lube: an isolate running waits() failed: deadlock: every isolate is waiting (for a channel that nothing will send to or close, or for a join)
+main done
+[exit 0]
+--- an isolate already waiting when the program ends
+lube: an isolate running waits() failed: deadlock: every isolate is waiting (for a channel that nothing will send to or close, or for a join)
+main done
+[exit 0]
+--- an isolate failing while it starts
+sq() failed in its isolate: spawn() cannot run while an isolate is starting (a global's value would start isolates again in every new one)
+lube: an isolate running sq() failed: spawn() cannot run while an isolate is starting (a global's value would start isolates again in every new one)
+[exit 0]
+--- a built program with isolates
+[3, 5, 7] ["x", "y"]
+[exit 0]
+--- isolates from the REPL
+Lube 2.0.0  (type exit() or press Ctrl-D to quit)
+>>> >>> 81
+>>> 
+[exit 0]
+--- import a missing name
+<eval>:1: error: package shapes has no 'Nope'
+    1 | import shapes.Nope
+[exit 65]
+--- import a private name
+<eval>:1: error: '_secret' is private to package shapes
+    1 | import shapes._secret
+[exit 65]
+--- import a missing package
+<eval>:1: error: cannot find package nowhere (in the program's folder or LUBE_PATH)
+    1 | import nowhere.Thing
+[exit 65]
+--- import * from a missing package
+<eval>:1: error: cannot find package nowhere (in the program's folder or LUBE_PATH)
+    1 | import nowhere.*
+[exit 65]
+--- import a package with no dots
+<eval>:1: error: cannot find package nowhere (in the program's folder or LUBE_PATH)
+    1 | import nowhere
+[exit 65]
+--- a package import inside a function
+<eval>:2: error: package imports go at the top level of a file
+    2 |   import shapes.Point
+[exit 65]
+--- a package line that is not first
+<eval>:2:1: syntax error: the package line must be the first line of a file
+    2 | package late
+      | ^
+[exit 65]
+--- a package with files of two packages
+TMP/pkgs/mixed/two.lube:1: error: this file is in the folder of another package than its package line says
+    1 | package other
+<eval>:1: error: package mixed has errors (see above)
+    1 | import mixed.*
+[exit 65]
+--- a package file without its package line
+TMP/pkgs/bare/three.lube:1: error: this file is in a package's folder, so it must start with its package line
+    1 | fn three() => 3
+<eval>:1: error: package bare has errors (see above)
+    1 | import bare.*
+[exit 65]
+--- a package with a syntax error
+TMP/pkgs/broken/bad.lube:3:1: syntax error: expected an expression but found end of file
+    3 | 
+      | ^
+<eval>:1: error: package broken has errors (see above)
+    1 | import broken.*
+[exit 65]
+--- a package that fails as it loads
+TMP/pkgs/boomy/b.lube:3: error: division by zero
+    3 | let x = 1 / 0
+traceback (innermost call first):
+  at <package> (TMP/pkgs/boomy/b.lube:3)
+  at <script> (<eval>:1)
+[exit 70]
+--- a package that does not resolve
+TMP/pkgs/unresolved/u.lube:3: error: 'break' can only be used inside a loop
+    3 | break
+<eval>:1: error: cannot import package unresolved: TMP/pkgs/unresolved/u.lube has errors
+    1 | import unresolved.f
+[exit 70]
+--- a string import of a package file
+<eval>:2: error: undefined variable 'Point'
+    2 | print(Point(1, 2))
+[exit 70]
+--- package imports in the REPL
+Lube 2.0.0  (type exit() or press Ctrl-D to quit)
+>>> >>> Point {x: 1, y: 2}
+>>> 
+[exit 0]
+--- a built program with packages
+["(1, 1)", "(2, 2)"]
+[exit 0]
+--- hot reload of a package file
+1
+lube: reloaded TMP/pkgs/live/live.lube
+2 new
+[exit 0]
+--- hot_reload()
+5 hello ada ... 3
+lube: reloaded game.lube
+["game.lube"]
+50 hi ada grr 3 7 8 hi p
+[]
+new block: lives 3 -> 2
+lube: reloaded busy.lube
+reloaded while running: ["busy.lube"]
+old work finished
+new work
+lube: reloaded game.lube
+["game.lube"] [{name: "name", type: "str"}, {name: "title", type: "str"}, {name: "level", type: "Number"}] Player {name: "ada", title: "player"}
+lube: reloaded game.lube
+["game.lube"] bonus
+extra imported []
+lube: reloaded game.lube
+["game.lube"] x
+game.lube:1:19: syntax error: expected an expression but found end of file
+    1 | fn score(n) => n +
+      |                   ^
+lube: game.lube not reloaded: fix the error above
+[] 50
+game.lube:2: error: 'break' can only be used inside a loop
+    2 | break
+lube: game.lube not reloaded: fix the error above
+[] 50
+game.lube:1: error: Animal cannot extend Player: Player already extends Animal
+    1 | class Animal extends Player {
+lube: game.lube reloaded only up to the error above
+[] <class Animal>
+game.lube:2: error: undefined variable 'undefined_thing'
+    2 | var later = undefined_thing
+lube: game.lube reloaded only up to the error above
+[]
+division by zero
+[<class Animal>, <class Player>, <class bonus>]
+[exit 0]
+--- lube --hot
+lube: reloaded step.lube
+saw the change: true kept the state: true
+[exit 0]
+--- lube --hot without a file
+Lube 2.0.0 - a small, smooth scripting language
+
+usage:
+  lube                  start the interactive REPL
+  lube FILE [ARGS...]   run a Lube script (ARGS are available as `args`)
+  lube -e CODE          run CODE and print the value of the last expression
+  lube -                read a script from standard input
+  lube --check FILE     report syntax errors without running anything (FILE may be -)
+  lube --hot FILE [ARGS...]
+                        run FILE, applying changes to its files while it runs
+  lube --build FILE [-o OUT]
+                        build FILE and its imports into a standalone executable
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 64]
@@ -162,6 +394,10 @@ traceback (innermost call first):
   at boom (TMP/mods/fails.lube:2)
   at <module> (TMP/mods/fails.lube:3)
   at <script> (TMP/mods/main4.lube:1)
+[exit 70]
+--- on a let from an import
+TMP/mods/main5.lube:2: error: this 'on' block would never run: cannot change 'LIMIT': it was declared with let (use var for a variable that changes)
+    2 | on LIMIT { print(LIMIT) }
 [exit 70]
 --- exit(3)
 [exit 3]
@@ -412,9 +648,8 @@ program:2:8: syntax error: the import path cannot use interpolation
       |        ^
 [exit 65]
 --- import without a string
-program:1:8: syntax error: expected a file path string after 'import' but found 'x'
+program:1: error: cannot find package x (in the program's folder or LUBE_PATH)
     1 | import x
-      |        ^
 [exit 65]
 --- unary minus nested too deeply
 program:1:409: syntax error: code is nested too deeply
@@ -712,5 +947,56 @@ program:1:9: syntax error: expected a type after ':' but found '5'
 --- a missing return type after the colon
 program:1:9: syntax error: expected a type after ':' but found '=>'
     1 | fn f(): => 1
+      |         ^
+[exit 65]
+--- on inside a function
+program:3: error: 'on' can only be used at the top level of a file
+    3 |   on score { print(score) }
+[exit 65]
+--- on a let
+program:2: error: this 'on' block would never run: cannot change 'score': it was declared with let (use var for a variable that changes)
+    2 | on score { print(score) }
+[exit 65]
+--- on a built-in
+program:1: error: this 'on' block would never run: cannot change 'print': it is a built-in (declare your own with let or var to replace it)
+    1 | on print { }
+[exit 65]
+--- on several variables with (old, new)
+program:3:9: syntax error: an 'on' block for several variables has no (old, new): read the variables in the block
+    3 | on a, b (old, new) { }
+      |         ^
+[exit 65]
+--- on with one parameter
+program:2:6: syntax error: an 'on' block takes (old, new): the value before the change and after it
+    2 | on a (value) { }
+      |      ^
+[exit 65]
+--- on with an & parameter
+program:2:6: syntax error: an 'on' block takes (old, new): the value before the change and after it
+    2 | on a (&old, new) { }
+      |      ^
+[exit 65]
+--- on with a return type
+program:2:6: syntax error: an 'on' block takes (old, new): the value before the change and after it
+    2 | on a (old, new): Number { }
+      |      ^
+[exit 65]
+--- on without a block
+program:2:6: syntax error: expected '{', (old, new) or 'when' after the variable names but found 'print'
+    2 | on a print(a)
+      |      ^
+[exit 65]
+--- on a variable that does not exist
+program:1: error: there is no global variable 'missing_var' to watch (declare it with var first)
+    1 | on missing_var { }
+[exit 70]
+--- strict: on parameters need types
+program:3:10: syntax error: #strict: parameter 'old' needs a type, like old: Number
+    3 | on a (old, new) { }
+      |          ^
+[exit 65]
+--- an Isolate has no default value
+program:1:9: syntax error: Isolate has no default value: start one with spawn(f, ...)
+    1 | var i = Isolate
       |         ^
 [exit 65]

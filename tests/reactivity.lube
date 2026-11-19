@@ -1,0 +1,82 @@
+// on: blocks that run when a global var changes, right after the change.
+
+var score = 0
+var lives = 3
+var items = str[]
+var player = {name: "ada", hp: 10}
+
+fn redraw() { print("redraw: score", score, "lives", lives) }
+
+on score (old, new) {
+  if new > old { print("+", new - old) }
+}
+on score {
+  print("score changed to", score)
+}
+on score, lives {        // any of these changed
+  redraw()
+}
+on score (old, new) when new < old {
+  print("score went down by", old - new)
+}
+on items (old, new) { print("items:", len(old), "->", len(new)) }
+on player (old, new) { print("player hp", old.hp, "->", new.hp) }
+
+score += 10
+score = 10              // the same value: nothing runs
+lives -= 1
+score = 4
+
+// changes inside a value, and changes through &, count too
+items.push("sword")
+push(&items, "shield")
+items[0] = "axe"
+player.hp -= 3
+player["name"] = "bob"
+fn heal(&p) { p.hp += 1 }
+heal(&player)
+fn add(&s, n) { s += n }
+add(&score, 5)
+score.add(0)            // no change
+fn fails(&s) {
+  s += 1
+  throw "failed after changing it"
+}
+try { fails(&score) } catch e { print("caught:", e, "score is", score) }
+
+// a block's own changes do not run it again
+var count = 0
+on count (old, new) {
+  print("count", old, "->", new)
+  if new < 3 { count = new + 1 }
+}
+count = 1
+print("count is", count)
+
+// blocks can change other watched vars
+var a = 0
+var b = 0
+on a (old, new) { b = new * 2 }
+on b (old, new) { print("b is now", new) }
+a = 5
+
+// an error in a block reaches the code that made the change
+var guarded = 0
+on guarded (old, new) when new < 0 { throw "guarded cannot be negative" }
+guarded = 5
+try { guarded = -1 } catch e { print("caught:", e) }
+print("guarded is", guarded)
+
+// typed parameters, and a block that names its parameters freely
+var temperature = 20
+on temperature (before: Number, after: Number) when after - before > 5 { print("heating up fast:", before, "->", after) }
+temperature = 22
+temperature = 30
+
+// locals with the same name are not watched
+fn shadow() {
+  var score = 1
+  score = 2
+  return score
+}
+print(shadow(), score)

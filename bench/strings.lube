@@ -1,0 +1,6 @@
+var parts = str[]
+for i in 0..300000 { parts.push("item {i}") }
+let joined = parts.join(",")
+var count = 0
+for p in joined.split(",") { if p.ends_with("7") { count += 1 } }
+print(len(joined), count)

@@ -13,7 +13,7 @@
 
 #include <stdlib.h>
 
-size_t lube_live_objects = 0;
+LUBE_THREAD_LOCAL size_t lube_live_objects = 0;
 size_t lube_max_items = LUBE_DEFAULT_MAX_ITEMS;
 size_t lube_max_bytes = LUBE_DEFAULT_MAX_BYTES;
 
@@ -87,6 +87,12 @@ void obj_destroy(Obj *first) {
             free(c->field_names);
             free(c->field_defaults);
             free(c->field_types);
+        } else if (o->type == OBJ_CHANNEL) {  /* shared between isolates: counted apart */
+            channel_release(((ObjChannel *)o)->ch);
+        } else if (o->type == OBJ_ISOLATE) {
+            isolate_release(((ObjIsolate *)o)->iso);
+        } else if (o->type == OBJ_PACKAGE) {
+            drop(&fl, OBJ_VAL(((ObjPackage *)o)->name));
         }  /* strs, natives and ranges own nothing else */
         free(o);
         lube_live_objects--;

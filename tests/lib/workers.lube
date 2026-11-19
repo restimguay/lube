@@ -1,0 +1,3 @@
+// functions and a global for the isolates in tests/isolates.lube
+let FACTOR = 100
+fn scaled(n: Number): Number => n * FACTOR

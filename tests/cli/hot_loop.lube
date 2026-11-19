@@ -1,0 +1,11 @@
+// lube --hot: changes are applied while the program runs, with no call to hot_reload()
+write_file("step.lube", "fn step(): Number => 1")
+import "step"
+var total = 0
+var rounds = 0
+while step() == 1 and rounds < 20000000 {
+  rounds += 1
+  total += step()
+  if rounds == 1000 { write_file("step.lube", "fn step(): Number => 2") }
+}
+print("saw the change:", step() == 2, "kept the state:", total >= 1000)

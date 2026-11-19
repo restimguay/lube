@@ -1,0 +1,7 @@
+package shapes.extra
+import shapes.Point
+
+fn label(p: Point): str => "({p.x}, {p.y})"
+class Square extends Point {
+  fn side(): Number => this.x
+}

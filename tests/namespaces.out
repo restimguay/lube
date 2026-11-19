@@ -1,0 +1,12 @@
+Point {x: 3, y: 4} 12 (3, 4) Point {x: 0, y: 0} (1, 2)
+Point true true Point <package shapes> true
+2 true
+Package true false 12
+3 5
+0
+2 only inside shapes
+'_secret' is private to package shapes
+'_helper' is private to package shapes
+package shapes has no 'missing'
+'count' is not a function (it is a Number)
+30 [1, 6]

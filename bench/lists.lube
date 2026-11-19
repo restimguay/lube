@@ -1,0 +1,6 @@
+var xs = Number[]
+for i in 0..1000000 { xs.push(i * 2) }
+var s = 0
+for x in xs { s += x }
+let evens = xs.filter(fn(x) => x % 4 == 0).map(fn(x) => x / 2)
+print(s, len(evens))

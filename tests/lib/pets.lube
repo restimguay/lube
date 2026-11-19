@@ -1,0 +1,5 @@
+// imported by tests/isolates.lube only when a condition holds (so new isolates do not have it)
+class Cat {
+  var lives = 9
+}
+let PETS = 1

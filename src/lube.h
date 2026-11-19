@@ -45,7 +45,17 @@
 #define LUBE_DEFAULT_MAX_BYTES LUBE_MIN_SIZE((size_t)1 << 30, SIZE_MAX / 4)    /* string, source file */
 /* The environment variables LUBE_MAX_ITEMS and LUBE_MAX_BYTES can lower
  * these (never raise them), for example to sandbox a script. */
-extern size_t lube_max_items, lube_max_bytes;
+/* Storage each thread has its own copy of: every isolate runs on its own
+ * thread with its own heap, so per-thread counters and buffers need no locks. */
+#ifndef LUBE_THREAD_LOCAL
+#if defined(_MSC_VER)
+#define LUBE_THREAD_LOCAL __declspec(thread)
+#else
+#define LUBE_THREAD_LOCAL __thread
+#endif
+#endif
+
+extern size_t lube_max_items, lube_max_bytes;  /* set once, before any isolate starts */
 #define LUBE_MAX_ITEMS lube_max_items
 #define LUBE_MAX_BYTES lube_max_bytes
 #define LUBE_MAX_TREE_DEPTH 2500                /* nesting of the syntax tree */
@@ -126,6 +136,9 @@ typedef struct {
 #define IS_FUNCTION(v) (IS_OBJ(v) && OBJ_TYPE(v) == OBJ_FUNCTION)
 #define IS_NATIVE(v)   (IS_OBJ(v) && OBJ_TYPE(v) == OBJ_NATIVE)
 #define IS_RANGE(v)    (IS_OBJ(v) && OBJ_TYPE(v) == OBJ_RANGE)
+#define IS_CHANNEL(v)  (IS_OBJ(v) && OBJ_TYPE(v) == OBJ_CHANNEL)
+#define IS_ISOLATE(v)  (IS_OBJ(v) && OBJ_TYPE(v) == OBJ_ISOLATE)
+#define IS_PACKAGE(v)  (IS_OBJ(v) && OBJ_TYPE(v) == OBJ_PACKAGE)
 #define IS_STROBJ(v)   (IS_OBJ(v) && OBJ_TYPE(v) == OBJ_STROBJ)
 #define IS_CLASS(v)    (IS_OBJ(v) && OBJ_TYPE(v) == OBJ_CLASS)
 #define IS_INSTANCE(v) (IS_MAP(v) && AS_MAP(v)->klass != NULL)
@@ -138,6 +151,9 @@ typedef struct {
 #define AS_FUNCTION(v) ((ObjFunction *)(v).as.obj)
 #define AS_NATIVE(v)   ((ObjNative *)(v).as.obj)
 #define AS_RANGE(v)    ((ObjRange *)(v).as.obj)
+#define AS_CHANNEL(v)  ((ObjChannel *)(v).as.obj)
+#define AS_ISOLATE(v)  ((ObjIsolate *)(v).as.obj)
+#define AS_PACKAGE(v)  ((ObjPackage *)(v).as.obj)
 #define AS_STROBJ(v)   ((ObjStrObj *)(v).as.obj)
 #define AS_CLASS(v)    ((ObjClass *)(v).as.obj)
 
@@ -148,7 +164,8 @@ typedef struct {
  * ==================================================================== */
 
 typedef enum {
-    OBJ_STRING, OBJ_LIST, OBJ_MAP, OBJ_FUNCTION, OBJ_NATIVE, OBJ_RANGE, OBJ_STROBJ, OBJ_CLASS
+    OBJ_STRING, OBJ_LIST, OBJ_MAP, OBJ_FUNCTION, OBJ_NATIVE, OBJ_RANGE, OBJ_STROBJ, OBJ_CLASS,
+    OBJ_CHANNEL, OBJ_ISOLATE, OBJ_PACKAGE
 } ObjType;
 
 struct Obj {
@@ -168,6 +185,7 @@ struct ObjString {          /* a str: byte string, NUL terminated */
  * String is "", int32 is 0), Type(x) converts, and Type[] is a typed list. */
 typedef enum {
     TT_ANY, TT_STRING, TT_STROBJ, TT_NUMBER, TT_BOOL, TT_OBJECT, TT_MAP, TT_LIST, TT_FUNCTION, TT_RANGE,
+    TT_CHANNEL, TT_ISOLATE,
     TT_INT8, TT_INT16, TT_INT32, TT_INT64, TT_UINT8, TT_UINT16, TT_UINT32, TT_UINT64
 } TypeTag;
 #define TT_COUNT (TT_UINT64 + 1)
@@ -204,7 +222,12 @@ struct ObjMap {             /* insertion-ordered hash map */
 /* A declared type: what a var, a parameter or a class field may hold. A var
  * keeps the type it starts with; values of a subtype (a subclass, or any
  * object for Object) are accepted too. */
-enum { TD_NUM, TD_BOOL, TD_INT, TD_STR, TD_STROBJ, TD_LIST, TD_MAP, TD_OBJECT, TD_FUNCTION, TD_RANGE, TD_CLASS };
+enum {
+    TD_NUM, TD_BOOL, TD_INT, TD_STR, TD_STROBJ, TD_LIST, TD_MAP, TD_OBJECT, TD_FUNCTION, TD_RANGE,
+    TD_CHANNEL, TD_ISOLATE,
+    TD_CLASSVAL,  /* a class itself (from class_of or find_class) */
+    TD_CLASS      /* an instance of a class or its subclasses */
+};
 typedef struct {
     unsigned char kind;     /* TD_* */
     unsigned char a, b;     /* TD_INT: kind; TD_LIST: element tag; TD_MAP: key and value tags */
@@ -229,6 +252,23 @@ struct ObjFunction {
     Value captures[];       /* copies of the outer variables it uses */
 };
 
+/* A channel or an isolate lives outside any one isolate's heap (isolate.c);
+ * each isolate that holds one has its own wrapper object. */
+typedef struct ObjChannel {
+    Obj obj;
+    struct Channel *ch;
+} ObjChannel;
+
+typedef struct ObjIsolate {
+    Obj obj;
+    struct Isolate *iso;
+} ObjIsolate;
+
+typedef struct ObjPackage {  /* import a.b: the package, for b.Name */
+    Obj obj;
+    ObjString *name;
+} ObjPackage;
+
 struct ObjRange {
     Obj obj;
     double start, end, step;
@@ -240,7 +280,8 @@ struct ObjRange {
  * them). Every class extends Object; `parent` is NULL for a direct child. */
 struct ObjClass {
     Obj obj;
-    ObjString *name;
+    ObjString *name;        /* as written: Point */
+    ObjString *key;         /* the global it is in: Point, or lube.geometry::Point in a package */
     ObjClass *parent;
     int nfields;            /* all fields, the parent's first */
     ObjString **field_names;
@@ -264,7 +305,7 @@ static inline ObjString *text_of(Value v) {
 }
 
 /* memory.c */
-extern size_t lube_live_objects;
+extern LUBE_THREAD_LOCAL size_t lube_live_objects;  /* objects alive in this thread's isolate */
 Obj *alloc_object(size_t size, ObjType type);
 void obj_destroy(Obj *o);
 
@@ -286,6 +327,7 @@ struct Source {
     char *text;
     size_t length;
     int strict;             /* the file starts with #strict: every fn declares its types */
+    ObjString *package;     /* `package a.b`: the file's package (NULL: the main namespace) */
     Source *next;
 };
 
@@ -300,7 +342,7 @@ typedef enum {
     T_PIPE, T_ARROW,
     /* keywords: keep this block contiguous, from T_AND to T_WHILE */
     T_AND, T_BREAK, T_CATCH, T_CLASS, T_CONTINUE, T_ELSE, T_EXTENDS, T_FALSE, T_FN,
-    T_FOR, T_IF, T_IMPORT, T_IN, T_IS, T_LET, T_NIL, T_NOT, T_OR, T_RETURN,
+    T_FOR, T_IF, T_IMPORT, T_IN, T_IS, T_LET, T_NIL, T_NOT, T_ON, T_OR, T_PACKAGE, T_RETURN,
     T_SUPER, T_THIS, T_THROW, T_TRUE, T_TRY, T_VAR, T_WHILE
 } TokenType;
 
@@ -332,7 +374,8 @@ typedef enum {
     N_IS,          /* x is Type */
     /* statements */
     N_EXPR, N_LET, N_BLOCK, N_IF, N_WHILE, N_FOR, N_RETURN, N_BREAK,
-    N_CONTINUE, N_THROW, N_TRY, N_IMPORT, N_CLASS
+    N_CONTINUE, N_THROW, N_TRY, N_IMPORT, N_CLASS,
+    N_ON           /* on score (old, new) { ... }: runs when a global var changes */
 } NodeKind;
 
 typedef struct {
@@ -374,9 +417,118 @@ enum { PARAM_LET = 0, PARAM_VAR = 1, PARAM_REF = 2 };
  * up when the function is called. `set` is 0 where no type was written. */
 typedef struct {
     TypeDesc d;
-    Node *cls;              /* TD_CLASS: the class's name (an N_VAR) */
+    ObjString *cls;         /* TD_CLASS: the class's name */
     unsigned char set;
 } TypeAnn;
+
+/* ======================================================================
+ * Bytecode: compile.c turns a resolved syntax tree into it, interp.c runs
+ * it. An instruction is one 32-bit word, the opcode in the low 8 bits and
+ * an operand in the high 24; a few take more operands in the words after.
+ * ==================================================================== */
+
+typedef uint32_t Instr;
+#define INSTR(op, a) ((Instr)(op) | ((Instr)(a) << 8))
+#define OP_OF(i) ((int)((i) & 0xffu))
+#define ARG_OF(i) ((int)((i) >> 8))
+#define MAX_ARG 0xffffff
+#define MAX_PATH 16         /* the longest x.a[b].c path one assignment or & can change */
+
+typedef enum {
+    OP_CONST, OP_POP, OP_POPN, OP_LOCAL, OP_CAPTURE, OP_SELF, OP_GLOBAL, OP_GLOBAL_VALUE,
+    OP_DEF_LOCAL, OP_DEF_GLOBAL, OP_CLEAR, OP_NEED_VALUE, OP_INTERP, OP_LIST, OP_TYPED_LIST,
+    OP_CHECK_ELEM, OP_MAP, OP_CHECK_KEY, OP_TYPED_MAP, OP_BINARY, OP_NEG, OP_NOT, OP_JUMP,
+    OP_JUMP_IF_FALSE, OP_AND, OP_OR, OP_LOOP, OP_IS_TAG, OP_IS_CLASS, OP_RANGE_START, OP_RANGE,
+    OP_INDEX, OP_FIELD, OP_CLOSURE, OP_CHECK_CALLABLE, OP_CALL, OP_CALL_PREP, OP_METHOD_PREP,
+    OP_SUPER_PREP, OP_INVOKE, OP_RETURN, OP_RETURN_NIL, OP_THROW, OP_FOR_PREP, OP_FOR_NEXT,
+    OP_WATCH_BEFORE, OP_WATCH_AFTER, OP_ASSIGN, OP_IMPORT, OP_CLASS_BEGIN, OP_CLASS_FIELD,
+    OP_CLASS_FIELD_SET, OP_CLASS_END, OP_ON, OP_ARG_DEFAULT, OP_DEF_PARAM, OP_PRINT_REPL,
+    OP_HOT_KEEP, OP_IF_GLOBAL, OP_FAIL, OP_LAZY_GLOBAL, OP_IMPORT_PACKAGE,
+    OP_COUNT
+} OpCode;
+
+typedef struct {            /* x, x.a or x[i][j]: a variable, then keys taken from the stack */
+    VarRef var;
+    int nkeys;
+    unsigned char is_field[MAX_PATH];
+} PlaceDesc;
+
+typedef struct {            /* a call's arguments: each a value, or & a place */
+    int nargs;
+    int *place;             /* place[i]: an index into Code.places, or -1 for a value */
+} CallDesc;
+
+typedef struct {            /* x.name(args) */
+    ObjString *name;
+    int recv_place;         /* the receiver's place, or -1 when it is not a variable path */
+    VarRef fallback;        /* the variable `name`: x.f(a) can mean f(x, a) */
+} MethodDesc;
+
+typedef struct {            /* super.name(args), or super(args) when name is NULL */
+    ObjString *name;
+    VarRef self;            /* `this` */
+    int nargs;
+} SuperDesc;
+
+typedef struct {            /* place op value, where op is = or += and the like */
+    int place;
+    TokenType op;
+    int global;             /* for a global var: its name's constant (else -1) */
+} AssignDesc;
+
+typedef struct {            /* class Name extends Parent { fields, methods, constructor } */
+    ObjString *name;        /* as written */
+    ObjString *key;         /* the global it goes in (a.b::Name in package a.b) */
+    VarRef parent;          /* parent.name is NULL without extends */
+    int nfields;
+    ObjString **fields;
+    int nmethods;
+    FuncDecl **methods;
+    FuncDecl *ctor;         /* NULL without a constructor */
+    int hot;                /* compiled for a hot reload: update the class that exists */
+} ClassDesc;
+
+typedef struct {            /* on a, b (old, new) { ... } */
+    ObjString **names;
+    int count;
+    FuncDecl *func;
+} OnDesc;
+
+typedef struct {            /* try { body } catch e { ... } */
+    int start, end;         /* the body: code words [start, end) */
+    int target;             /* where the catch begins */
+    int sp;                 /* operand stack depth (above the slots) when the try began */
+    int catch_slot;         /* the caught error's slot, or -1 */
+    int clear_from;         /* the body's slots (and every slot above) are cleared first */
+} Handler;
+
+typedef struct {
+    Instr *code;
+    int *lines;             /* the source line of each code word */
+    int ncode;
+    Value *consts;          /* numbers, bools and interned strings */
+    int nconsts;
+    FuncDecl **protos;      /* functions made by OP_CLOSURE */
+    int nprotos;
+    PlaceDesc *places;
+    int nplaces;
+    CallDesc *calls;
+    int ncalls;
+    MethodDesc *methods;
+    int nmethods;
+    SuperDesc *supers;
+    int nsupers;
+    AssignDesc *assigns;
+    int nassigns;
+    ClassDesc *classes;
+    int nclasses;
+    OnDesc *ons;
+    int nons;
+    Handler *handlers;
+    int nhandlers;
+    int maxstack;           /* the most operand stack slots it needs */
+    int *gcache;            /* per constant: where that global was last found in I->globals (or -1) */
+} Code;
 
 struct FuncDecl {
     ObjString *name;        /* NULL for anonymous functions */
@@ -395,7 +547,11 @@ struct FuncDecl {
     int line;
     Source *src;
     int is_method;          /* its first parameter is the implicit `this` */
+    int is_ctor;            /* a class's constructor */
+    ObjString *key;         /* a top-level fn: the global it is in (its package's name for it) */
     ObjClass *owner;        /* the class a method belongs to (set when the class is made) */
+    unsigned char *has_default;  /* has_default[i]: param i has a default value */
+    Code code;              /* its bytecode (compile.c) */
 };
 
 struct Node {
@@ -408,7 +564,8 @@ struct Node {
         struct { int ktype, vtype; } tmap;                        /* N_TYPED_MAP */
         struct { ObjString *name; NodeList args; Node *self; } super_call;   /* N_SUPER (name NULL: constructor) */
         struct { Node *value; int tag; Node *cls; } is;           /* N_IS: tag >= 0, or a class name */
-        struct { VarRef var; Node *parent; NodeList fields, methods; Node *ctor; } klass;  /* N_CLASS */
+        struct { VarRef var; Node *parent; NodeList fields, methods; Node *ctor;
+                 ObjString *title; } klass;                       /* N_CLASS (title: its name as written) */
         struct { NodeList keys, values; } map;                    /* N_MAP */
         VarRef var;                                               /* N_VAR */
         struct { Node *target, *value; TokenType op; } assign;    /* N_ASSIGN */
@@ -431,7 +588,13 @@ struct Node {
                  int first_slot, nslots; } for_s;                 /* N_FOR */
         struct { Node *body, *handler; VarRef var; int has_var;
                  int first_slot, nslots; } try_s;                 /* N_TRY */
-        struct { ObjString *path; } import;                       /* N_IMPORT */
+        struct { ObjString *path;             /* import "file" (NULL for a package import) */
+                 ObjString *dotted;           /* import a.b.Name: as written */
+                 ObjString *alias;            /* ... as alias */
+                 int star;                    /* import a.b.* */
+                 ObjString *pkg;              /* (resolver) the package to load */
+                 ObjString *bind; } import;   /* (resolver) import a.b: the global its package object goes in */
+        struct { ObjString **names; int count; FuncDecl *func; } on;  /* N_ON */
     } as;
 };
 
@@ -441,17 +604,57 @@ struct Node {
 
 typedef struct { char *data; size_t len, cap; } StrBuf;
 
+/* An `on` block: runs fn when one of the global vars `names` changes. */
+typedef struct Watcher {
+    ObjString **names;              /* none once replaced by a hot reload */
+    int nnames;
+    Value fn;                       /* the block: a function of () or (old, new) */
+    const char *file;               /* the file it was declared in */
+    int running;                    /* its own changes do not run it again */
+} Watcher;
+
+/* A place being changed or lent: a variable and the keys of a path in it. */
+typedef struct {
+    const VarRef *root;
+    Value keys[MAX_PATH];
+    unsigned char is_field[MAX_PATH];
+    int nkeys;
+} Place;
+
+/* A call whose arguments are being evaluated: made by CALL_PREP,
+ * METHOD_PREP or SUPER_PREP, used by INVOKE. The callee is on the stack
+ * at `callee`; a method's receiver slot follows it (has_slot). */
+enum { SELF_NONE, SELF_VALUE, SELF_LOCKED, SELF_LEND };
+typedef struct {
+    int callee;                     /* stack index of the callee */
+    int has_slot;                   /* a receiver slot follows the callee (methods, super) */
+    int mode;                       /* SELF_*: how the receiver is passed */
+    Place place;                    /* SELF_LEND: the receiver's place */
+} PendingCall;
+
 typedef struct Frame {              /* one active call (or script) */
     struct Frame *prev;
     const char *name;
     Source *src;
-    int line;                       /* line currently executing */
+    int line;                       /* the line, for frames not running bytecode */
     int base;                       /* first stack slot of this frame */
     ObjFunction *fn;                /* NULL for top-level code */
     int this_locked;                /* a method called on a value that cannot change */
+    FuncDecl *proto;                /* the code it runs */
+    const Instr *pc;                /* the instruction running (or the call it waits for) */
+    int argc;                       /* arguments given (the rest take their defaults) */
+    int call_base;                  /* the caller's stack top before the callee was pushed */
+    int pending;                    /* pending calls below this frame */
+    unsigned char construct;        /* a constructor: the call's result is `this` */
+    unsigned char entry;            /* called from C: return there when done */
+    struct Loan *loans;             /* what the call lent with &, returned when it ends */
+    int nloans;
 } Frame;
 
 #define LUBE_STACK_MAX (1 << 20)
+#ifndef LUBE_STACK_SIZE
+#define LUBE_STACK_SIZE (8u * 1024u * 1024u)  /* the C stack each thread (the main one, each isolate) runs on */
+#endif
 
 struct Interp {
     Value stack[LUBE_STACK_MAX];    /* frames: parameters and locals */
@@ -459,6 +662,13 @@ struct Interp {
     int sp;
     Frame *frame;
     int this_locked_next;           /* passed from a method call to the new frame */
+    struct FrameChunk **chunks;     /* frames live here, in blocks that never move */
+    int nchunks;
+    int depth;                      /* frames in use */
+    PendingCall *pending;           /* calls whose arguments are being evaluated */
+    int npending, cap_pending;
+    struct Loan **loan_pool;        /* spare loan arrays (room for 4), to reuse */
+    int nloan_pool;
 
     ObjMap *strings;                /* interned names and literals */
     ObjMap *globals;
@@ -468,6 +678,25 @@ struct Interp {
     TypeDesc *global_types;         /* declared types of globals made with let/var */
     int nglobal_types, cap_global_types;
     ObjList *classes;               /* every class made: they live until shutdown */
+    ObjMap *bundle;                 /* a built program's files (path -> text), or NULL */
+    ObjMap *watch;                  /* files the program was loaded from (path -> text), for hot reload */
+    ObjList *hot_old;               /* functions and classes replaced by hot reload: kept until shutdown */
+    struct Watcher *watchers;       /* the `on` blocks, in the order they were made */
+    int nwatchers, cap_watchers;
+    struct Isolate *isolate;        /* in a spawned isolate: its handle (NULL in the main one) */
+    int starting;                   /* an isolate is running the program's declarations */
+    ObjMap *lazy;                   /* in an isolate: globals not used yet (name -> [initializer, kind]) */
+    char *root;                     /* the program's folder: packages are found from here (then LUBE_PATH) */
+    ObjMap *packages;               /* packages loaded */
+    ObjMap *pkg_names;              /* package -> the names it declares (for imports) */
+    ObjMap *main_aliases;           /* names the main namespace imported (kept from one REPL line to the next) */
+    struct ProgFile *program;       /* the top-level sources run, in order (for spawn) */
+    int nprogram, cap_program;
+    int hot;                        /* lube --hot: reload changed files while running */
+    int hot_busy;                   /* a reload is applying a file */
+    unsigned hot_ticks;             /* blocks run since the last look at the files */
+    long hot_last;                  /* clock() when the files were last looked at */
+    ObjList *imports_found;         /* while building: the import paths the resolver sees */
     ObjString *chars[256];          /* cached one-byte strings */
 
     Value ret_val;                  /* value carried by a `return` */
@@ -549,6 +778,7 @@ int is_subclass(ObjClass *c, ObjClass *ancestor);
 double range_length(ObjRange *r);
 int type_tag_from_name(const char *s, size_t n);
 const char *tag_name(int tag);
+const char *list_type_name(int tag);
 int value_has_type(Value v, int tag);
 const char *a_type(Value v);
 int is_truthy(Value v);
@@ -583,6 +813,10 @@ Node *parse_program(Interp *I, Source *src, Arena **arena);
 
 /* resolver.c */
 int resolve_program(Interp *I, Node *program, Source *src, Arena *arena);
+
+/* compile.c: the program's code; mode is RUN_FILE, RUN_REPL or RUN_HOT */
+enum { RUN_FILE, RUN_REPL, RUN_HOT, RUN_ISOLATE };
+FuncDecl *compile_program(Interp *I, Node *program, Source *src, Arena *arena, const char *name, int mode);
 void unchangeable_message(char *buf, size_t size, const char *name, Origin origin);
 
 /* interp.c -- functions returning Value return ERR_VAL when they raise */
@@ -590,6 +824,13 @@ Interp *lube_new(char *stack_base);
 size_t lube_free(Interp *I);
 Source *lube_add_source(Interp *I, const char *path, char *text, size_t length);
 int lube_check_source(Interp *I, Source *src);
+void lube_module_path(StrBuf *path, const char *importer, const char *rel);
+int lube_build(Interp *I, const char *self, const char *main_path, const char *out_path);
+int lube_run_bundle(Interp *I, const char *argv0, int argc, char **argv);
+ObjList *lube_hot_reload(Interp *I);
+Value lube_find_method(ObjClass *c, ObjString *name);
+Value lube_call_method(Interp *I, Value method, Value self, int argc, Value *argv);
+void register_reflection(Interp *I);
 int lube_run_source(Interp *I, Source *src, int repl);
 int lube_run_file(Interp *I, const char *path);
 Value lube_call(Interp *I, Value fn, int argc, Value *argv);
@@ -604,5 +845,33 @@ int lube_stack_ok(Interp *I);
 
 /* builtins.c */
 void register_builtins(Interp *I);
+
+/* thread.c: the operating system's threads, for isolates */
+typedef struct LubeLock LubeLock;   /* a mutex with a condition to wait on */
+LubeLock *lock_new(void);         /* lives as long as the process */
+void lock_acquire(LubeLock *l);
+void lock_release(LubeLock *l);
+void lock_wait(LubeLock *l);        /* releases the lock while waiting for lock_notify */
+void lock_notify(LubeLock *l);      /* wakes every waiter */
+int thread_start(void (*fn)(void *), void *arg, size_t stack_size);
+int lube_cores(void);
+char **os_lube_files(const char *dir, int *n);  /* sorted; free each and the array */
+
+/* isolate.c: isolates (each on its own thread) and the channels between them */
+void register_isolates(Interp *I);
+void channel_release(struct Channel *ch);
+void isolate_release(struct Isolate *iso);
+int channel_next(Interp *I, Value ch, Value *out);  /* for x in ch: 1 = a value, 0 = closed, -1 = error */
+void lube_note_program(Interp *I, const char *path, const char *text, size_t len);
+int lube_isolates_leaked(void);
+void lube_wait_isolates(void);
+Value lube_join_isolate(Interp *I, Value iso);
+int lube_run_declarations(Interp *I, const char *path, const char *text, size_t len);
+int lube_find_package(Interp *I, ObjString *pkg, StrBuf *folder);
+char **lube_package_files(Interp *I, const char *folder, int *n);
+ObjMap *lube_package_names(Interp *I, ObjString *pkg, int *bad);
+ObjString *lube_global_key(Interp *I, ObjString *pkg, ObjString *name);
+const char *lube_shown(ObjString *key);
+void lube_free_program(Interp *I);
 
 #endif

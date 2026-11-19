@@ -1,0 +1,126 @@
+// Reflection: a program looking at its own classes, functions and globals.
+
+class Animal {
+  var name = "animal"
+  var legs = 4
+  fn speak(): str => "{this.name} makes a sound"
+  fn rename(n: str) { this.name = n }
+}
+class Dog extends Animal {
+  var tricks = str[]
+  constructor(name: str = "dog") {
+    super()
+    this.name = name
+  }
+  fn speak(): str => super.speak() + ": woof"
+  fn learn(trick: str) { this.tricks.push(trick) }
+}
+class Puppy extends Dog {
+  fn speak(): str => "yip"
+}
+class Plain {
+  var v = 0
+}
+
+// classes are values: class_of, find_class, classes()
+var rex = Dog("rex")
+let C = class_of(rex)
+print(C, C.name, type(C), C is Object)
+print(C == class_of(Dog("other")), C == find_class("Dog"), C == find_class("Animal"))
+print(classes())
+try { class_of(5) } catch e { print(e) }
+try { find_class("Cat") } catch e { print(e) }
+try { find_class(5) } catch e { print(e) }
+try { print(C.size) } catch e { print(e) }
+
+// a class's own name alone makes an instance; a variable holding a class is the class
+print(Plain, type(Plain))
+let P = find_class("Plain")
+print(P, P())
+fn make(cls) => cls()
+print(make(find_class("Plain")), make(P))
+var some_class = C
+some_class = find_class("Animal")
+try { some_class = 5 } catch e { print(e) }
+print(some_class)
+var by_class = Map[Object, Number]
+by_class[C] = 1
+by_class[find_class("Animal")] = 2
+print(by_class[find_class("Dog")], len(by_class))
+
+// parents, fields and methods (of a class or an instance)
+print(parent_of(Dog), parent_of(rex), parent_of(find_class("Puppy")))
+try { parent_of(find_class("Animal")) } catch e { print(e) }
+try { parent_of("Dog") } catch e { print(e) }
+print(fields(rex))
+print(fields(find_class("Plain")))
+print(methods(rex))
+print(methods(find_class("Puppy")))
+print(methods(find_class("Plain")))
+try { fields(5) } catch e { print(e) }
+try { methods([1]) } catch e { print(e) }
+
+// signatures of functions, methods, constructors and built-ins
+fn scale(by: Number, &shape: Object, var times: int32 = 1): Bool => true
+fn untyped(a, b = 2) => a
+print(signature(scale))
+print(signature(untyped))
+print(signature(fn(x: str): Number => len(x)))
+print(signature(Dog, "learn"))
+print(signature(rex, "speak").returns)
+print(signature(find_class("Puppy"), "rename").params)
+print(signature(find_class("Dog")))
+print(signature(find_class("Puppy")))
+print(signature(find_class("Plain")))
+print(signature(print))
+try { signature(Dog, "fly") } catch e { print(e) }
+try { signature(5, "speak") } catch e { print(e) }
+try { signature(rex, 5) } catch e { print(e) }
+try { signature(5) } catch e { print(e) }
+
+// fields by name
+let field = "name"
+print(get_field(rex, field), get_field({a: 1}, "a"), get_field(rex, String("legs")))
+try { get_field(rex, "age") } catch e { print(e) }
+try { get_field([1], "a") } catch e { print(e) }
+try { get_field(rex, 1) } catch e { print(e) }
+set_field(&rex, field, "max")
+rex.set_field("legs", 3)
+print(rex.name, rex.legs)
+try { set_field(&rex, "name", 5) } catch e { print(e) }
+try { set_field(&rex, "age", 5) } catch e { print(e) }
+try { set_field(&rex, 1, 5) } catch e { print(e) }
+var config = {debug: false}
+config.set_field("debug", true)
+config.set_field("level", 2)
+print(config)
+var scores = Map[str, Number]
+try { set_field(&scores, "a", 1) } catch e { print(e) }
+var count = 5
+try { set_field(&count, "a", 1) } catch e { print(e) }
+var small = Plain()
+small.set_field("v", 7)
+print(small)
+
+// methods by name: a class's method, a function in a field, or any function
+print(call_method(rex, "speak"))
+print(call_method(rex, "type"))
+print(call_method([1, 2, 3], "len"), call_method([3, 1, 2], "sort"), call_method("ab", String("upper")))
+var greeter = {greet: fn(who) => "hi " + who}
+print(call_method(greeter, "greet", "bob"))
+try { call_method(rex, "rename", "z") } catch e { print(e) }
+try { call_method(rex, "fly") } catch e { print(e) }
+try { call_method(rex, 5) } catch e { print(e) }
+try { call_method([1], "push", 2) } catch e { print(e) }
+print(has_method(rex, "speak"), has_method(rex, "rename"), has_method(rex, "fly"))
+print(has_method(greeter, "greet"), has_method({n: 1}, "n"), has_method(5, "x"))
+try { has_method(rex, 1) } catch e { print(e) }
+
+// the program's globals, in the order they were made (built-ins left out)
+print(globals().slice(0, 8))
+print(globals().contains("scale"), globals().contains("print"))
+
+// an instance's fields are fixed: they cannot be deleted or cleared
+try { delete(&rex, "name") } catch e { print(e) }
+try { rex.clear() } catch e { print(e) }
+print(rex)

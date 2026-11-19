@@ -63,6 +63,11 @@ typedef struct {
     int depth;                 /* current nesting of the syntax tree */
     GlobalDecl *globals;       /* top-level declarations seen so far */
     int nglobals, cap_globals;
+    /* namespaces: a file with `package a.b` keeps its globals as a.b::name */
+    ObjString *ns;             /* the file's package, or NULL (the main namespace) */
+    ObjMap *pkg_names;         /* names the package's files declare (NULL if not found) */
+    ObjMap *own;               /* names this file declares at the top level */
+    ObjMap *aliases;           /* imported names -> the globals they are */
 } Resolver;
 
 static void resolve(Resolver *R, Node *n);
@@ -216,6 +221,69 @@ static int add_capture(Resolver *R, FnCtx *f, VarKind kind, int index) {
     return f->ncaps++;
 }
 
+/* ---------- namespaces ---------- */
+
+/* The global a top-level declaration of `name` makes in this file. */
+static ObjString *decl_key(Resolver *R, ObjString *name) {
+    return R->ns ? lube_global_key(R->I, R->ns, name) : name;
+}
+
+/* The global a name used in this file means: an imported name; in a package,
+ * a name the package declares, else a built-in, else the package's own
+ * (perhaps undefined) name; in the main namespace, the name itself. */
+static ObjString *ref_key(Resolver *R, ObjString *name) {
+    Value v;
+    if (map_get(R->aliases, OBJ_VAL(name), &v)) return AS_STRING(v);
+    if (!R->ns) return name;
+    if (!map_get(R->own, OBJ_VAL(name), NULL) && !(R->pkg_names && map_get(R->pkg_names, OBJ_VAL(name), NULL)) &&
+        map_get(R->I->constants, OBJ_VAL(name), &v) && (int)v.as.number == ORIGIN_BUILTIN)
+        return name;
+    return lube_global_key(R->I, R->ns, name);
+}
+
+static ObjMap *package_names(Resolver *R, ObjString *pkg, int line) {
+    int bad;
+    ObjMap *names = lube_package_names(R->I, pkg, &bad);
+    if (bad) rerror(R, line, "package %s has errors (see above)", pkg->chars);
+    return names;
+}
+
+/* A dotted import: what it brings in (see import_statement in parser.c). */
+static void resolve_import(Resolver *R, Node *n) {
+    ObjString *dotted = n->as.import.dotted;
+    ObjMap *names = package_names(R, dotted, n->line);
+    if (n->as.import.star) {  /* every public name of the package */
+        if (!names) rerror(R, n->line, "cannot find package %s (in the program's folder or LUBE_PATH)", dotted->chars);
+        for (size_t i = 0; i < names->used; i++) {
+            ObjString *name = AS_STRING(names->entries[i].key);
+            if (name->chars[0] != '_')
+                map_set(R->aliases, retain(OBJ_VAL(name)), retain(OBJ_VAL(lube_global_key(R->I, dotted, name))));
+        }
+        n->as.import.pkg = dotted;
+        return;
+    }
+    if (names) {  /* the package itself: import a.b gives b, a package object */
+        const char *dot = strrchr(dotted->chars, '.');
+        ObjString *name = n->as.import.alias ? n->as.import.alias
+                          : dot ? lube_intern(R->I, dot + 1, strlen(dot + 1)) : dotted;
+        n->as.import.pkg = dotted;
+        n->as.import.bind = decl_key(R, name);
+        map_set(R->own, retain(OBJ_VAL(name)), BOOL_VAL(1));
+        return;
+    }
+    const char *dot = strrchr(dotted->chars, '.');  /* else: a name in a package */
+    if (!dot) rerror(R, n->line, "cannot find package %s (in the program's folder or LUBE_PATH)", dotted->chars);
+    ObjString *pkg = lube_intern(R->I, dotted->chars, (size_t)(dot - dotted->chars));
+    ObjString *name = lube_intern(R->I, dot + 1, strlen(dot + 1));
+    names = package_names(R, pkg, n->line);
+    if (!names) rerror(R, n->line, "cannot find package %s (in the program's folder or LUBE_PATH)", pkg->chars);
+    if (name->chars[0] == '_') rerror(R, n->line, "'%s' is private to package %s", name->chars, pkg->chars);
+    if (!map_get(names, OBJ_VAL(name), NULL)) rerror(R, n->line, "package %s has no '%s'", pkg->chars, name->chars);
+    map_set(R->aliases, retain(OBJ_VAL(n->as.import.alias ? n->as.import.alias : name)),
+            retain(OBJ_VAL(lube_global_key(R->I, pkg, name))));
+    n->as.import.pkg = pkg;
+}
+
 static VarRef lookup(Resolver *R, FnCtx *f, ObjString *name, int allow_self) {
     VarRef r;
     r.name = name;
@@ -237,9 +305,15 @@ static VarRef lookup(Resolver *R, FnCtx *f, ObjString *name, int allow_self) {
         r.origin = ORIGIN_SELF;
         return r;
     }
-    if (!f->parent) return r;  /* global */
+    if (!f->parent) {  /* global */
+        r.name = ref_key(R, name);
+        return r;
+    }
     VarRef outer = lookup(R, f->parent, name, 1);
-    if (outer.kind == VAR_GLOBAL) return r;
+    if (outer.kind == VAR_GLOBAL) {
+        r.name = outer.name;
+        return r;
+    }
     r.kind = VAR_CAPTURE;
     r.index = add_capture(R, f, outer.kind, outer.index);
     r.origin = ORIGIN_CAPTURE;
@@ -266,7 +340,7 @@ static void resolve_target(Resolver *R, Node *t, int line) {
     Origin origin = r.origin;
     if (r.kind == VAR_GLOBAL ? global_is_frozen(R, r.name, &origin) : !r.changeable) {
         char msg[300];
-        unchangeable_message(msg, sizeof msg, r.name->chars, origin);
+        unchangeable_message(msg, sizeof msg, t->as.var.name->chars, origin);
         rerror(R, line, "%s", msg);
     }
     t->as.var = r;
@@ -291,6 +365,9 @@ static void resolve_function(Resolver *R, FuncDecl *d) {
     f.parent = R->fn;
     f.decl = d;
     R->fn = &f;
+    for (int i = 0; i < d->nparams && d->types; i++)  /* classes named in types: the globals they are */
+        if (d->types[i].set && d->types[i].d.kind == TD_CLASS) d->types[i].cls = ref_key(R, d->types[i].cls);
+    if (d->ret.set && d->ret.d.kind == TD_CLASS) d->ret.cls = ref_key(R, d->ret.cls);
 
     for (int i = 0; i < d->nparams; i++) {
         for (int j = 0; j < i; j++)
@@ -326,8 +403,23 @@ static void resolve(Resolver *R, Node *n) {
 
 static void resolve_node(Resolver *R, Node *n) {
     switch (n->kind) {
-    case N_LITERAL:
     case N_IMPORT:
+        if (n->as.import.dotted && (R->fn->decl || R->fn->depth > 0))
+            rerror(R, n->line, "package imports go at the top level of a file");
+        if (R->I->imports_found) {  /* building an executable: note every module and package to pack */
+            if (n->as.import.path) {
+                list_push(R->I->imports_found, retain(OBJ_VAL(n->as.import.path)));
+            } else {
+                StrBuf sb;
+                sb_init(&sb);
+                sb_putc(&sb, '\x01');  /* marks a package */
+                sb_puts(&sb, n->as.import.pkg->chars);
+                list_push(R->I->imports_found, OBJ_VAL(new_string(sb.data, sb.len)));
+                sb_free(&sb);
+            }
+        }
+        break;
+    case N_LITERAL:
     case N_TYPED_MAP:
         break;
     case N_INTERP:
@@ -341,11 +433,13 @@ static void resolve_node(Resolver *R, Node *n) {
         resolve_list(R, &n->as.map.keys);
         resolve_list(R, &n->as.map.values);
         break;
-    case N_VAR:
-        n->as.var = lookup(R, R->fn, n->as.var.name, 1);
-        if (n->as.var.kind == VAR_GLOBAL && !strcmp(n->as.var.name->chars, "this"))
+    case N_VAR: {
+        ObjString *name = n->as.var.name;
+        n->as.var = lookup(R, R->fn, name, 1);
+        if (n->as.var.kind == VAR_GLOBAL && !strcmp(name->chars, "this"))
             rerror(R, n->line, "'this' can only be used inside a class's methods and constructor");
         break;
+    }
     case N_SUPER:
         if (!R->fn->decl || !R->fn->decl->is_method)
             rerror(R, n->line, "'super' can only be used directly inside a class's methods and constructor");
@@ -358,11 +452,26 @@ static void resolve_node(Resolver *R, Node *n) {
         resolve(R, n->as.is.value);
         resolve(R, n->as.is.cls);
         break;
+    case N_ON:
+        if (R->fn->decl || R->fn->depth > 0) rerror(R, n->line, "'on' can only be used at the top level of a file");
+        for (int i = 0; i < n->as.on.count; i++) {
+            Origin origin;
+            ObjString *name = n->as.on.names[i];
+            n->as.on.names[i] = ref_key(R, name);  /* the global watched */
+            if (global_is_frozen(R, n->as.on.names[i], &origin)) {
+                char msg[256];
+                unchangeable_message(msg, sizeof msg, name->chars, origin);
+                rerror(R, n->line, "this 'on' block would never run: %s", msg);
+            }
+        }
+        resolve_function(R, n->as.on.func);
+        break;
     case N_CLASS: {
         if (R->fn->decl || R->fn->depth > 0)
             rerror(R, n->line, "classes can only be declared at the top level of a file");
         VarRef *v = &n->as.klass.var;
         bind(v, declare(R, v->name, n->line, 0, ORIGIN_CLASS), 0, ORIGIN_CLASS);
+        v->name = decl_key(R, v->name);
         note_global(R, v->name, ORIGIN_CLASS);
         resolve(R, n->as.klass.parent);
         NodeList *fields = &n->as.klass.fields, *methods = &n->as.klass.methods;
@@ -458,7 +567,11 @@ static void resolve_node(Resolver *R, Node *n) {
         if (n->as.let.is_fn) {
             /* declared first; inside its body the name means the function itself */
             bind(v, declare(R, v->name, n->line, 0, ORIGIN_FN), 0, ORIGIN_FN);
-            if (v->kind == VAR_GLOBAL) note_global(R, v->name, ORIGIN_FN);
+            if (v->kind == VAR_GLOBAL) {
+                v->name = decl_key(R, v->name);
+                n->as.let.value->as.func->key = v->name;  /* spawn() finds it by this */
+                note_global(R, v->name, ORIGIN_FN);
+            }
             resolve(R, n->as.let.value);
         } else {
             /* resolved first: in `let x = x + 1` the right side is the outer x */
@@ -466,7 +579,10 @@ static void resolve_node(Resolver *R, Node *n) {
             int var = n->as.let.is_var;
             Origin origin = var ? ORIGIN_VAR : ORIGIN_LET;
             bind(v, declare(R, v->name, n->line, var, origin), var, origin);
-            if (v->kind == VAR_GLOBAL) note_global(R, v->name, origin);
+            if (v->kind == VAR_GLOBAL) {
+                v->name = decl_key(R, v->name);
+                note_global(R, v->name, origin);
+            }
         }
         break;
     }
@@ -524,12 +640,37 @@ int resolve_program(Interp *I, Node *program, Source *src, Arena *tree) {
     R.depth = 0;
     R.globals = NULL;
     R.nglobals = R.cap_globals = 0;
+    R.ns = src->package;
+    R.pkg_names = NULL;
+    R.own = new_map();
+    R.aliases = new_map();
     if (setjmp(R.jb) != 0) {
+        release(OBJ_VAL(R.own));
+        release(OBJ_VAL(R.aliases));
         arena_free(R.tmp);
         return 0;
     }
-    resolve_list(&R, &program->as.block.stmts);
+    NodeList *stmts = &program->as.block.stmts;
+    if (!R.ns && I->main_aliases)  /* the main namespace keeps its imports (from one REPL line to the next) */
+        for (size_t i = 0; i < I->main_aliases->used; i++)
+            map_set(R.aliases, retain(I->main_aliases->entries[i].key), retain(I->main_aliases->entries[i].value));
+    for (int i = 0; i < stmts->count; i++) {  /* the names this file declares */
+        Node *s = stmts->items[i];
+        ObjString *name = s->kind == N_LET ? s->as.let.var.name : s->kind == N_CLASS ? s->as.klass.var.name : NULL;
+        if (name) map_set(R.own, retain(OBJ_VAL(name)), BOOL_VAL(1));
+    }
+    if (R.ns) R.pkg_names = package_names(&R, R.ns, 1);
+    for (int i = 0; i < stmts->count; i++)  /* imports first: they decide what names mean */
+        if (stmts->items[i]->kind == N_IMPORT && stmts->items[i]->as.import.dotted) resolve_import(&R, stmts->items[i]);
+    resolve_list(&R, stmts);
     program->as.block.frame_slots = top.max_slots;
+    if (!R.ns) {
+        if (!I->main_aliases) I->main_aliases = new_map();
+        for (size_t i = 0; i < R.aliases->used; i++)
+            map_set(I->main_aliases, retain(R.aliases->entries[i].key), retain(R.aliases->entries[i].value));
+    }
+    release(OBJ_VAL(R.own));
+    release(OBJ_VAL(R.aliases));
     arena_free(R.tmp);
     return 1;
 }

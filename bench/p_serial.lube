@@ -1,0 +1,10 @@
+fn work(n: Number): Number {
+  var total = 0
+  var i = 0
+  while i < 400000 {
+    total += (i * n) % 7
+    i += 1
+  }
+  return total
+}
+print(sum(list(1..=40).map(work)))

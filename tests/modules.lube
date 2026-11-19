@@ -1,4 +1,5 @@
 import "lib/shapes.lube"
 import "lib/geometry.lube"   # already loaded: runs only once
+import "./lib/../lib/geometry"   # the same file, spelled another way: still once
 print(describe({kind: "circle", r: 1}))
 print(describe({kind: "rect", w: 2, h: 3}))

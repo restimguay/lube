@@ -1,0 +1,178 @@
+// Isolates: functions running on other cores, each with its own heap,
+// talking through channels. Only the main isolate prints here (after its
+// joins), so the output never depends on timing.
+import "lib/workers"
+
+fn square(n: Number): Number => n * n
+fn add(a: Number, b: Number = 10): Number => a + b
+fn nothing_back() { }
+fn boom(n: Number): Number => 1 / n
+
+// spawn and join: results and errors come back
+print(spawn(add, 2, 3).join(), spawn(add, 1).join())
+let worker = spawn(square, 12)
+print(worker.join(), worker.join(), type(worker), worker)
+try { print(spawn(nothing_back).join() + 1) } catch e { print(e) }
+try { spawn(boom, 0).join() } catch e { print(e) }
+
+// a pool of workers fed through a channel
+fn worker_loop(jobs: Channel, results: Channel) {
+  for n in jobs { results.send(n * 10) }
+}
+let jobs = channel()
+let results = channel()
+let pool = [spawn(worker_loop, jobs, results), spawn(worker_loop, jobs, results), spawn(worker_loop, jobs, results)]
+for i in 0..30 { jobs.send(i) }
+jobs.close()
+for w in pool { w.join() }
+results.close()
+var total = 0
+var count = 0
+for k, v in results {
+  total += v
+  count = k + 1
+}
+print(total, count)
+
+// parallel_map uses every core; the results stay in order
+print(parallel_map(list(1..=12), square))
+print(parallel_map([], square), parallel_map([3], scaled))
+try { parallel_map([1, 0, 2], boom) } catch e { print(e) }
+try { parallel_map([1], nothing_back) } catch e { print(e) }
+try { parallel_map(5, square) } catch e { print(e) }
+print(cores() >= 1)
+
+// values are copied: numbers, text, typed lists and maps, instances, ranges
+class Point {
+  var x = 0
+  var y = 0
+}
+fn echo(v) => v
+fn change(v: List): List {
+  var copy = v
+  copy.push("changed in the isolate")
+  return copy
+}
+var p = Point()
+p.x = 3
+let sent = {pt: p, xs: int32[1, 2], s: String("hi"), r: 1..=3, m: Map[str, Number], n: uint8(7), flags: [true, false]}
+let back = spawn(echo, sent).join()
+print(back, back == sent, back.pt is Point, type(back.xs), type(back.n))
+var mine = ["original"]
+print(spawn(change, mine).join(), mine)
+
+// what cannot be sent
+try { spawn(echo, print) } catch e { print(e) }
+fn gives_function() => square
+try { spawn(gives_function).join() } catch e { print(e) }
+try { spawn(fn(x) => x, 1) } catch e { print(e) }
+fn changes(&x) { x = 1 }
+try { spawn(changes, 1) } catch e { print(e) }
+try { spawn(5) } catch e { print(e) }
+try { spawn(add) } catch e { print(e) }
+try { spawn(square, 1, 2) } catch e { print(e) }
+try { spawn(add, 1, 2, 3) } catch e { print(e) }
+
+// a class the new isolate does not have (also inside a map)
+if true { import "lib/pets" }
+fn keeps(v) => "received"
+try { spawn(keeps, Cat()).join() } catch e { print(e) }
+try { spawn(keeps, {pet: Cat()}).join() } catch e { print(e) }
+try { parallel_map([print], square) } catch e { print(e) }
+try { spawn(echo, {f: print}) } catch e { print(e) }
+var deep = []
+for i in 0..20000 { deep = [deep] }
+try { spawn(echo, deep) } catch e { print(e) }
+deep = []
+
+// isolates and channels as typed values
+fn is_isolate(i: Isolate): Bool => i is Isolate
+var handle = spawn(square, 2)
+print(is_isolate(handle), handle.join())
+handle = spawn(square, 3)
+try { handle = 5 } catch e { print(e) }
+var pipe = channel()
+try { pipe = 5 } catch e { print(e) }
+print(pipe, handle.join())
+pipe.send(pipe)
+pipe.send(pipe)
+let first = pipe.receive()
+print(first == pipe.receive(), first == pipe)
+
+// channels: room, try_receive, take, close, errors
+let small = channel(2)
+small.send("a")
+small.send("b")
+print(small.try_receive("none"), small.take(1), small.try_receive("none"))
+let room = Channel(1)
+var bare = Channel
+print(type(room), room is Channel, type(bare), Channel[] == [], room == room, room == bare)
+small.close()
+try { small.send("c") } catch e { print(e) }
+try { small.receive() } catch e { print(e) }
+try { channel(0) } catch e { print(e) }
+try { channel("big") } catch e { print(e) }
+try { send(5, 1) } catch e { print(e) }
+try { receive(5) } catch e { print(e) }
+try { try_receive(5, 1) } catch e { print(e) }
+try { close(5) } catch e { print(e) }
+try { take(5, 1) } catch e { print(e) }
+try { take(small, -1) } catch e { print(e) }
+try { take(small, 1) } catch e { print(e) }
+try { join(worker, ", ") } catch e { print(e) }
+
+// a channel sent through a channel; channels left with messages are freed
+fn reply(to: Channel, v) { to.send(v * 2) }
+fn relay(box: Channel) {
+  let inner = box.receive()
+  inner.send("through the relay")
+}
+let answers = channel()
+spawn(reply, answers, 21).join()
+print(answers.receive())
+try { answers.send(print) } catch e { print(e) }
+let box = channel()
+let inner = channel()
+box.send(inner)
+spawn(relay, box).join()
+print(inner.receive())
+let unread = channel()
+unread.send(channel())
+unread.send([channel(), "more"])
+
+// deadlocks are errors, not hangs
+let silent = channel()
+try { silent.receive() } catch e { print(e) }
+fn waits(c: Channel) => c.receive()
+try { spawn(waits, silent).join() } catch e { print("deadlock" in e) }
+let full = channel(1)
+full.send(1)
+try { full.send(2) } catch e { print(e) }
+
+// an isolate can spawn isolates; globals are made when first used
+fn fan_out(n: Number): Number => sum(parallel_map(list(0..n), square))
+print(spawn(fan_out, 5).join())
+fn uses_global(): Number => scaled(LIMIT)
+let LIMIT = 4
+print(spawn(uses_global).join())
+let BROKEN = PETS + 1  // PETS comes from lib/pets, which new isolates do not import
+fn uses_broken() => BROKEN
+try { spawn(uses_broken).join() } catch e { print(e) }
+fn maybe_nothing() {
+  if globals().contains("PETS") { return 1 }  // only the main isolate imported lib/pets
+}
+let MAYBE = maybe_nothing()
+fn uses_maybe() => MAYBE
+try { spawn(uses_maybe).join() } catch e { print(e) }
+fn starts_more(): Number => STARTED.join()
+let STARTED = spawn(square, 2)
+print(spawn(starts_more).join(), STARTED.join())
+
+// `on` blocks are made in each isolate too
+var level = 1
+on level { print("level changed") }
+fn bump(): Number {
+  level += 1
+  return level
+}
+print(spawn(bump).join(), level)

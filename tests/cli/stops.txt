@@ -310,3 +310,37 @@ fn f(x: Map[str, Dog]) {}
 fn f(x: 5) {}
 ### a missing return type after the colon
 fn f(): => 1
+### on inside a function
+var score = 0
+fn f() {
+  on score { print(score) }
+}
+### on a let
+let score = 0
+on score { print(score) }
+### on a built-in
+on print { }
+### on several variables with (old, new)
+var a = 0
+var b = 0
+on a, b (old, new) { }
+### on with one parameter
+var a = 0
+on a (value) { }
+### on with an & parameter
+var a = 0
+on a (&old, new) { }
+### on with a return type
+var a = 0
+on a (old, new): Number { }
+### on without a block
+var a = 0
+on a print(a)
+### on a variable that does not exist
+on missing_var { }
+### strict: on parameters need types
+#strict
+var a = 0
+on a (old, new) { }
+### an Isolate has no default value
+var i = Isolate
