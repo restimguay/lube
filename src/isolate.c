@@ -619,7 +619,7 @@ void isolate_release(Isolate *iso) {
     lock_release(world);
     if (!last) return;
     if (iso->error && !iso->error_seen)  /* nobody joined it to hear about this */
-        fprintf(stderr, "lube: an isolate running %s() failed: %s\n", shown(iso->fname), iso->error);
+        lube_print(1, "lube: an isolate running %s() failed: %s\n", shown(iso->fname), iso->error);
     if (iso->args) message_free(iso->args);
     if (iso->result) message_free(iso->result);
     free(iso->error);
@@ -708,13 +708,13 @@ static void isolate_main(void *arg) {
     }
     size_t alive = lube_free(I);
 #ifdef LUBE_CHECK_LEAKS
-    if (alive) fprintf(stderr, "lube: leak check failed in an isolate: %lu objects still alive\n", (unsigned long)alive);
+    if (alive) lube_print(1, "lube: leak check failed in an isolate: %lu objects still alive\n", (unsigned long)alive);
 #endif
     lock_acquire(world);
     int orphan = iso->refs == 1 && error;  /* nobody holds a handle to join it: report the error now */
     if (orphan) iso->error_seen = 1;
     lock_release(world);
-    if (orphan) fprintf(stderr, "lube: an isolate running %s() failed: %s\n", shown(iso->fname), error);
+    if (orphan) lube_print(1, "lube: an isolate running %s() failed: %s\n", shown(iso->fname), error);
     lock_acquire(world);
     if (alive) leaked = 1;
     iso->result = result;

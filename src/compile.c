@@ -29,6 +29,7 @@
 
 typedef struct Block {          /* a block whose slots are cleared when it is left */
     int first, count;
+    int locals_from;            /* the locals (debug info) declared in it start here */
     struct Block *prev;
 } Block;
 
@@ -60,9 +61,27 @@ typedef struct {
     SuperDesc *supers; int nsupers, capsupers;
     AssignDesc *assigns; int nassigns, capassigns;
     ClassDesc *classes; int nclasses, capclasses;
-    OnDesc *ons; int nons, capons;
+    OnDesc **ons; int nons, capons;
+    LocalWatch *lwatch; int nlwatch, caplwatch;
     Handler *handlers; int nhandlers, caphandlers;
+    LocalInfo *locals; int nlocals, caplocals;
 } Comp;
+
+/* Debug info: local `name` lives in `slot` from code word `start` (until closed). */
+static void note_local(Comp *C, ObjString *name, int slot, int start) {
+    GROW(C->locals, C->nlocals, C->caplocals);
+    C->locals[C->nlocals].name = name;
+    C->locals[C->nlocals].slot = slot;
+    C->locals[C->nlocals].start = start;
+    C->locals[C->nlocals].end = -1;
+    C->nlocals++;
+}
+
+/* ...and the locals noted since `from` end here (their scope is left). */
+static void close_locals(Comp *C, int from) {
+    for (int i = from; i < C->nlocals; i++)
+        if (C->locals[i].end < 0) C->locals[i].end = C->ncode;
+}
 
 static void compile_expr(Comp *C, Node *n, int want_value);
 static void compile_stmt(Comp *C, Node *n);
@@ -287,10 +306,24 @@ static void compile_super(Comp *C, Node *n) {
     patch_word(C, prep + 1, C->ncode);  /* nothing to call: SUPER_PREP pushes no value and jumps here */
 }
 
+/* A change to a local that `on` blocks watch: its LocalWatch + 1 (0: none). */
+static int local_watch(Comp *C, Node *root) {
+    VarRef *r = &root->as.var;
+    if (root->kind != N_VAR || r->kind != VAR_LOCAL || !r->watch || !r->watch->n) return 0;
+    for (int i = 0; i < C->nlwatch; i++)
+        if (C->lwatch[i].slot == r->index && C->lwatch[i].list == r->watch) return i + 1;
+    GROW(C->lwatch, C->nlwatch, C->caplwatch);
+    C->lwatch[C->nlwatch].slot = r->index;
+    C->lwatch[C->nlwatch].list = r->watch;
+    return ++C->nlwatch;
+}
+
 static void compile_assign(Comp *C, Node *n) {
     Node *root = place_root(n->as.assign.target);
     int global = root->kind == N_VAR && root->as.var.kind == VAR_GLOBAL;
+    int lw = local_watch(C, root);  /* (a change through & is watched where the loan ends) */
     if (global) emit(C, OP_WATCH_BEFORE, name_const(C, root->as.var.name), 1);
+    if (lw) emit(C, OP_LWATCH_BEFORE, lw - 1, 1);
     int before = C->depth;
     int place = compile_place(C, n->as.assign.target);
     int keys = C->depth - before;
@@ -309,6 +342,7 @@ static void compile_assign(Comp *C, Node *n) {
         emit(C, OP_ASSIGN, C->nassigns++, -keys);
     }
     if (global) emit(C, OP_WATCH_AFTER, name_const(C, root->as.var.name), -1);
+    if (lw) emit(C, OP_LWATCH_AFTER, lw - 1, -1);
 }
 
 static void compile_expr(Comp *C, Node *n, int want_value) {
@@ -439,12 +473,14 @@ static void compile_expr(Comp *C, Node *n, int want_value) {
 static void enter_block(Comp *C, Block *b, int first, int count) {
     b->first = first;
     b->count = count;
+    b->locals_from = C->nlocals;
     b->prev = C->blocks;
     C->blocks = b;
 }
 
 static void leave_block(Comp *C, Block *b) {
     if (b->count) emit2(C, OP_CLEAR, b->first, b->count, 0);
+    close_locals(C, b->locals_from);
     C->blocks = b->prev;
 }
 
@@ -514,7 +550,10 @@ static void compile_let(Comp *C, Node *n) {
     VarRef *r = &n->as.let.var;
     compile_expr(C, n->as.let.value, 1);
     C->line = n->line;
-    if (r->kind == VAR_LOCAL) emit(C, OP_DEF_LOCAL, r->index, -1);
+    if (r->kind == VAR_LOCAL) {
+        emit(C, OP_DEF_LOCAL, r->index, -1);
+        note_local(C, r->name, r->index, C->ncode);
+    }
     else emit2(C, OP_DEF_GLOBAL, name_const(C, r->name), n->as.let.is_fn ? 2 : n->as.let.is_var ? 0 : 1, -1);
 }
 
@@ -566,18 +605,21 @@ static void compile_stmt(Comp *C, Node *n) {
         emit(C, OP_FOR_PREP, 0, 2);  /* the iterable becomes the loop's state: it, position, count */
         Loop loop;
         begin_loop(C, &loop, 1);
-        int next = C->ncode;
+        int next = C->ncode, locals_from = C->nlocals;
         loop.continue_at = next;
         int two = n->as.for_s.two;
         emit(C, OP_FOR_NEXT, 0, 0);
         word(C, (Instr)n->as.for_s.first.index);
         word(C, (Instr)(two ? n->as.for_s.second.index : -1));
+        note_local(C, n->as.for_s.first.name, n->as.for_s.first.index, C->ncode);
+        if (two) note_local(C, n->as.for_s.second.name, n->as.for_s.second.index, C->ncode);
         compile_stmts(C, &n->as.for_s.body->as.block.stmts);  /* the body's slots are the loop's */
         C->line = n->line;
         emit(C, OP_LOOP, next, 0);
         int end = C->ncode;
         patch_to(C, next, end);
         end_loop(C, &loop, end);
+        close_locals(C, locals_from);
         if (n->as.for_s.nslots) emit2(C, OP_CLEAR, n->as.for_s.first_slot, n->as.for_s.nslots, 0);
         emit(C, OP_POPN, 3, -3);
     } break;
@@ -620,7 +662,10 @@ static void compile_stmt(Comp *C, Node *n) {
         GROW(C->handlers, C->nhandlers, C->caphandlers);
         C->handlers[C->nhandlers++] = h;
         if (n->as.try_s.has_var) {
+            int locals_from = C->nlocals;
+            note_local(C, n->as.try_s.var.name, n->as.try_s.var.index, C->ncode);
             compile_stmts(C, &n->as.try_s.handler->as.block.stmts);
+            close_locals(C, locals_from);
             if (n->as.try_s.nslots) emit2(C, OP_CLEAR, n->as.try_s.first_slot, n->as.try_s.nslots, 0);
         } else {
             compile_block(C, n->as.try_s.handler);
@@ -638,16 +683,12 @@ static void compile_stmt(Comp *C, Node *n) {
     case N_CLASS:
         compile_class(C, n);
         break;
-    case N_ON: {
-        OnDesc od;
-        od.names = n->as.on.names;
-        od.count = n->as.on.count;
-        od.func = compile_function(C, n->as.on.func);
+    case N_ON:
+        compile_function(C, n->as.on.func);
         GROW(C->ons, C->nons, C->capons);
-        C->ons[C->nons] = od;
+        C->ons[C->nons] = n->as.on.desc;
         emit(C, OP_ON, C->nons++, 0);
         break;
-    }
     default:  /* LCOV_EXCL_START: expression nodes are always wrapped in N_EXPR */
         break;
         /* LCOV_EXCL_STOP */
@@ -717,7 +758,10 @@ static void finish(Comp *C) {
     FINISH(assigns, nassigns);
     FINISH(classes, nclasses);
     FINISH(ons, nons);
+    FINISH(lwatch, nlwatch);
     FINISH(handlers, nhandlers);
+    close_locals(C, 0);
+    FINISH(locals, nlocals);
     d->code.maxstack = C->maxdepth;
     d->code.gcache = arena_alloc(C->arena, sizeof(int) * (size_t)(C->nconsts ? C->nconsts : 1));
     for (int i = 0; i < C->nconsts; i++) d->code.gcache[i] = -1;
@@ -736,6 +780,8 @@ static FuncDecl *compile_function(Comp *parent, FuncDecl *d) {
     Comp c, *C = &c;
     start(C, parent->I, parent->arena, d, RUN_FILE);
     d->has_default = arena_alloc(C->arena, (size_t)(d->nparams ? d->nparams : 1));
+    for (int i = 0; i < d->nparams; i++)  /* (debug info) an `on` block's (old, new) are in its function's frame */
+        note_local(C, d->params[i], d->on_block ? d->on_block->param_slot[i] : i, 0);
     for (int i = 0; i < d->nparams; i++) {  /* defaults run in the new frame, for arguments not given */
         if (!d->defaults[i]) continue;
         d->has_default[i] = 1;
@@ -757,6 +803,13 @@ static FuncDecl *compile_function(Comp *parent, FuncDecl *d) {
     }
     finish(C);
     return d;
+}
+
+/* A debugger expression (already wrapped in d and resolved). */
+FuncDecl *compile_debug(Interp *I, FuncDecl *d, Arena *arena) {
+    Comp c;
+    start(&c, I, arena, d, RUN_FILE);
+    return compile_function(&c, d);
 }
 
 FuncDecl *compile_program(Interp *I, Node *program, Source *src, Arena *arena, const char *name, int mode) {

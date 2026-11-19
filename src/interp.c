@@ -60,6 +60,8 @@ static int frame_line(Frame *f) {
     return f->proto && f->pc ? f->proto->code.lines[f->pc - f->proto->code.code] : f->line;
 }
 
+int lube_frame_line(Frame *f) { return frame_line(f); }
+
 /* Raises v (taking over the reference). Always returns ERR_VAL. */
 Value lube_throw(Interp *I, Value v) {
     release(I->error_val);
@@ -67,6 +69,7 @@ Value lube_throw(Interp *I, Value v) {
     I->error_line = I->frame ? frame_line(I->frame) : 0;
     I->error_src = I->frame ? I->frame->src : NULL;
     trace_reset(I);
+    if (I->dbg) debug_error(I);  /* break on errors: the frames are all still here */
     return ERR_VAL;
 }
 
@@ -929,40 +932,101 @@ typedef struct Loan {
     Value holder;
     int lent;
     ObjString *watched;             /* while lent: the global var an `on` block watches, or NULL */
+    const VarRef *lwatched;         /* ...or the local var */
     Value before;                   /* ...and its value before the call */
 } Loan;
 
 /* ======================================================================
- * Reactivity: `on score (old, new) { ... }` runs when the global var score
+ * Reactivity: `on score (old, new) { ... }` runs when the var score
  * changes, right after the assignment or call that changed it. A watched
  * var's value from before is kept while it changes (copy-on-write makes the
  * change copy it), and compared with the new one afterwards.
+ *
+ * Top-level blocks are functions in I->watchers, for globals. A block in a
+ * function (or a block of code) is in I->fwatch while it is in scope: it
+ * runs on that function's frame, as a frame of its own with the same base,
+ * and code that changes a local it watches checks for it (OP_LWATCH_*).
  * ==================================================================== */
+
+static Value run_frame_block(Interp *I, int i, Value old, Value now);
+
+/* The value of an `on` item's field path in v (borrowed), or NIL_VAL. */
+static Value item_value(const OnItem *it, Value v) {
+    for (int i = 0; i < it->npath && !IS_NIL(v); i++) {
+        Value next = NIL_VAL;
+        if (IS_MAP(v)) map_get(AS_MAP(v), OBJ_VAL(it->path[i]), &next);
+        v = next;
+    }
+    return v;
+}
+
+/* Does a change of a variable (a global by name, else a local by slot) from
+ * before to after concern these items? Sets the watched value's old and
+ * new (borrowed). A field that is missing before or after is no change. */
+static int items_hit(const OnItem *items, int n, ObjString *name, int slot, Value before, Value after, Value *old,
+                     Value *now) {
+    int hit = 0;
+    for (int j = 0; j < n; j++) {
+        const OnItem *it = &items[j];
+        if (name ? it->root.kind != VAR_GLOBAL || it->root.name != name
+                 : it->root.kind != VAR_LOCAL || it->root.index != slot)
+            continue;
+        Value o = item_value(it, before), w = item_value(it, after);
+        if (!IS_NIL(o) && !IS_NIL(w) && !values_equal(o, w)) {
+            *old = o;
+            *now = w;
+            hit = 1;
+        }
+    }
+    return hit;
+}
+
+/* Is a frame's `on` block still in scope (its hidden slot holds it)? */
+static int fw_live(Interp *I, const FrameWatcher *w) {
+    Value t = I->stack[w->base + w->od->token];
+    return t.type == VAL_OBJ && t.as.obj == w->token.as.obj;
+}
+
+static int listed(const OnList *l, const OnDesc *od) {
+    for (int i = 0; i < l->n; i++)
+        if (l->ons[i] == od) return 1;
+    return 0;
+}
 
 /* `name` when an `on` block watches the global var of that name; else NULL. */
 static ObjString *watched_name(Interp *I, ObjString *name) {
-    if (!I->nwatchers) return NULL;
     for (int i = 0; i < I->nwatchers; i++)
         for (int j = 0; j < I->watchers[i].nnames; j++)
-            if (I->watchers[i].names[j] == name) return name;
+            if (I->watchers[i].items[j].root.name == name) return name;
+    for (int i = 0; i < I->nfwatch; i++)
+        for (int j = 0; j < I->fwatch[i].od->count; j++)
+            if (I->fwatch[i].od->items[j].root.kind == VAR_GLOBAL && I->fwatch[i].od->items[j].root.name == name &&
+                fw_live(I, &I->fwatch[i]))
+                return name;
     return NULL;
 }
 
 /* Runs the `on` blocks for `name` (except one already running: its own
  * changes do not run it again). Returns NIL_VAL, or an error a block raised. */
 static Value run_watchers(Interp *I, ObjString *name, Value before, Value after) {
+    Value old, now;
     for (int i = 0; i < I->nwatchers; i++) {  /* by index: a block may add more */
-        int hit = 0;
-        for (int j = 0; j < I->watchers[i].nnames && !hit; j++) hit = I->watchers[i].names[j] == name;
-        if (!hit || I->watchers[i].running) continue;
+        if (I->watchers[i].running ||
+            !items_hit(I->watchers[i].items, I->watchers[i].nnames, name, 0, before, after, &old, &now))
+            continue;
         Value fn = retain(I->watchers[i].fn);
-        Value args[2] = {before, after};
+        Value args[2] = {old, now};
         I->watchers[i].running = 1;
         Value r = lube_call(I, fn, AS_FUNCTION(fn)->decl->nparams, args);
         I->watchers[i].running = 0;
         release(fn);
         if (IS_ERR(r)) return r;
         release(r);
+    }
+    for (int i = 0; i < I->nfwatch; i++) {  /* then those in functions, outermost first */
+        if (!items_hit(I->fwatch[i].od->items, I->fwatch[i].od->count, name, 0, before, after, &old, &now)) continue;
+        Value r = run_frame_block(I, i, old, now);
+        if (IS_ERR(r)) return r;
     }
     return NIL_VAL;
 }
@@ -978,6 +1042,37 @@ static Value after_change(Interp *I, ObjString *name, Value before, Value result
     if (!IS_ERR(e)) return result;
     release(result);
     return e;
+}
+
+/* A local var of the running frame that blocks in `list` watch: its value
+ * (a new reference) if one of them is in scope, to compare after a change;
+ * else NIL_VAL. */
+static Value local_before(Interp *I, int slot, const OnList *list) {
+    int base = I->frame->base;
+    for (int i = 0; i < I->nfwatch; i++)
+        if (I->fwatch[i].base == base && listed(list, I->fwatch[i].od) && fw_live(I, &I->fwatch[i]))
+            return retain(I->stack[base + slot]);
+    return NIL_VAL;
+}
+
+/* After a watched local may have changed (like after_change). */
+static Value after_local(Interp *I, int slot, const OnList *list, Value before, Value result) {
+    int base = I->frame->base;
+    if (values_equal(before, I->stack[base + slot])) return result;
+    Value after = retain(I->stack[base + slot]), old, now;
+    for (int i = 0; i < I->nfwatch; i++) {
+        if (I->fwatch[i].base != base || !listed(list, I->fwatch[i].od) ||
+            !items_hit(I->fwatch[i].od->items, I->fwatch[i].od->count, NULL, slot, before, after, &old, &now))
+            continue;
+        Value r = run_frame_block(I, i, old, now);
+        if (IS_ERR(r)) {
+            release(after);
+            release(result);
+            return r;
+        }
+    }
+    release(after);
+    return result;
 }
 
 /* The value of a watched global, kept to compare with after a change. */
@@ -1187,6 +1282,17 @@ static void keep_arena(Interp *I, Arena *a) {
     I->arenas[I->narenas++] = a;
 }
 
+void lube_keep_arena(Interp *I, Arena *a) { keep_arena(I, a); }
+
+/* A closure of d made as if in frame f (the debugger's expressions). */
+Value lube_closure_in(Interp *I, FuncDecl *d, Frame *f) {
+    Frame *top = I->frame;
+    I->frame = f;
+    Value c = make_closure(I, d);
+    I->frame = top;
+    return c;
+}
+
 #define FRAME_CHUNK 256
 typedef struct FrameChunk {
     Frame frames[FRAME_CHUNK];
@@ -1199,6 +1305,109 @@ static Frame *new_frame(Interp *I) {
         I->chunks[I->nchunks++] = xmalloc(sizeof(FrameChunk));
     }
     return &I->chunks[k / FRAME_CHUNK]->frames[k % FRAME_CHUNK];
+}
+
+static Value execute(Interp *I);
+static int check_items(Interp *I, OnDesc *od);
+
+/* on x { ... } in a function: registers the block for the running frame and
+ * puts it in its hidden slot (cleared, as every slot, when the code around
+ * it ends). Blocks of this frame already out of scope are dropped first. */
+static int add_frame_watcher(Interp *I, OnDesc *od) {
+    if (check_items(I, od) < 0) return -1;
+    int keep = 0, first = I->nfwatch;
+    while (first > 0 && I->fwatch[first - 1].depth == I->depth) first--;
+    for (int i = first; i < I->nfwatch; i++) {
+        if (fw_live(I, &I->fwatch[i])) I->fwatch[first + keep++] = I->fwatch[i];
+        else release(I->fwatch[i].token);
+    }
+    I->nfwatch = first + keep;
+    if (I->nfwatch == I->cap_fwatch) {
+        I->cap_fwatch = I->cap_fwatch ? I->cap_fwatch * 2 : 8;
+        I->fwatch = xrealloc(I->fwatch, sizeof(FrameWatcher) * (size_t)I->cap_fwatch);
+    }
+    FrameWatcher *w = &I->fwatch[I->nfwatch++];
+    w->od = od;
+    w->base = I->frame->base;
+    w->depth = I->depth;
+    w->token = OBJ_VAL(new_function(od->func, 0));
+    w->running = 0;
+    set_slot(I, od->token, retain(w->token));
+    return 0;
+}
+
+static Value run_block_frame(Interp *I, FrameWatcher *w, int i);
+
+static void set_slot_at(Interp *I, int at, Value v) {
+    Value prev = I->stack[at];
+    I->stack[at] = v;
+    release(prev);
+}
+
+/* Runs frame watcher i's block with (old, new): on the frame it belongs to,
+ * as a frame of its own with the same base, so it sees that frame's
+ * variables. Returns NIL_VAL or ERR_VAL (a result it returned is dropped). */
+static Value run_frame_block(Interp *I, int i, Value old, Value now) {
+    FrameWatcher *w = &I->fwatch[i];
+    OnDesc *od = w->od;
+    FuncDecl *d = od->func;
+    int base = w->base;
+    if (w->running || !fw_live(I, w)) return NIL_VAL;
+    for (int k = 0; k < od->nuses; k++)
+        if (IS_NIL(I->stack[base + od->uses[k].slot]))
+            return lube_error(I, "the '%s' block cannot run now: '%s' is lent out with & to a call that has not returned",
+                              d->name->chars, od->uses[k].name->chars);
+    if (I->depth >= LUBE_MAX_FRAMES || I->sp + d->code.maxstack > LUBE_STACK_MAX)
+        return lube_error(I, "stack overflow: too much recursion");
+    Value r = NIL_VAL;
+    for (int k = 0; k < d->nparams && !IS_ERR(r); k++) {
+        Value v = retain(k == 0 ? old : now);
+        int slot = base + od->param_slot[k];
+        if (check_param(I, d, d->name->chars, k, &v, slot)) set_slot_at(I, slot, v);
+        else r = ERR_VAL;
+        if (IS_ERR(r)) release(v);
+    }
+    if (!IS_ERR(r)) r = run_block_frame(I, w, i);
+    Value *own = &I->stack[base + od->first];
+    for (int k = 0; k < od->nslots; k++) {
+        Value v = own[k];
+        own[k] = NIL_VAL;
+        release(v);
+    }
+    if (IS_ERR(r)) return r;
+    release(r);
+    return NIL_VAL;
+}
+
+/* Pushes the block's frame and runs it. */
+static Value run_block_frame(Interp *I, FrameWatcher *w, int i) {
+    FuncDecl *d = w->od->func;
+    Frame *owner = &I->chunks[(w->depth - 1) / FRAME_CHUNK]->frames[(w->depth - 1) % FRAME_CHUNK];
+    Frame *f = new_frame(I);
+    f->prev = I->frame;
+    f->name = d->name->chars;
+    f->src = d->src;
+    f->line = d->line;
+    f->base = w->base;
+    f->fn = owner->fn;  /* for the function's captures */
+    f->this_locked = owner->this_locked;
+    f->proto = d;
+    f->pc = d->code.code;
+    f->argc = 0;
+    f->call_base = I->sp;
+    f->pending = I->npending;
+    f->construct = 0;
+    f->entry = 1;
+    f->block = 1;
+    f->opbase = I->sp;
+    f->loans = NULL;
+    f->nloans = 0;
+    f->dbg_line = -1;
+    I->frame = f;
+    w->running = 1;
+    Value r = execute(I);
+    I->fwatch[i].running = 0;  /* (the array may have moved) */
+    return r;
 }
 
 static PendingCall *new_pending(Interp *I) {
@@ -1264,8 +1473,11 @@ static Value return_loans(Interp *I, int args, Loan *loans, int n, Value result)
         place_free(&loans[j].place);
     }
     for (int j = 0; j < n; j++) {  /* `on` blocks run once everything lent is back */
-        if (!loans[j].lent || !loans[j].watched) continue;
-        if (!IS_ERR(result)) result = after_change(I, loans[j].watched, loans[j].before, result);
+        if (!loans[j].lent || IS_NIL(loans[j].before)) continue;
+        const VarRef *lw = loans[j].lwatched;
+        if (!IS_ERR(result))
+            result = lw ? after_local(I, lw->index, lw->watch, loans[j].before, result)
+                        : after_change(I, loans[j].watched, loans[j].before, result);
         release(loans[j].before);
     }
     free_loans(I, loans, n);
@@ -1313,8 +1525,11 @@ static Frame *enter(Interp *I, ObjFunction *fn, int base, int argc) {
     f->pending = I->npending;
     f->construct = 0;
     f->entry = 0;
+    f->block = 0;
+    f->opbase = base + d->nslots;
     f->loans = NULL;
     f->nloans = 0;
+    f->dbg_line = -1;
     I->frame = f;
     return f;
 }
@@ -1333,9 +1548,12 @@ static Value leave(Interp *I, Value r) {
         made = I->stack[base];
         I->stack[base] = NIL_VAL;
     }
-    pop_to(I, base + f->argc);
+    pop_to(I, f->block ? f->opbase : base + f->argc);  /* a block's slots are its function's */
     I->frame = f->prev;
     I->depth--;
+    while (I->nfwatch && I->fwatch[I->nfwatch - 1].depth > I->depth)  /* its `on` blocks end with it */
+        release(I->fwatch[--I->nfwatch].token);
+    if (I->dbg) debug_left_frame(I);
     if (construct) {
         if (IS_ERR(r)) {
             release(made);
@@ -1566,8 +1784,10 @@ LUBE_NOINLINE static int invoke(Interp *I, Code *code, CallDesc *cd, Value *out)
             }
         }
         if (check_changeable(I, &loans[j].place) < 0) goto fail;
-        ObjString *watched = loans[j].place.root->kind == VAR_GLOBAL ? watched_name(I, loans[j].place.root->name) : NULL;
-        Value before = value_before(I, watched);
+        const VarRef *root = loans[j].place.root;
+        ObjString *watched = root->kind == VAR_GLOBAL ? watched_name(I, root->name) : NULL;
+        const VarRef *lwatched = root->kind == VAR_LOCAL && root->watch && root->watch->n ? root : NULL;
+        Value before = lwatched ? local_before(I, root->index, root->watch) : value_before(I, watched);
         Value v;
         if (place_take(I, &loans[j].place, &loans[j].holder, &v) < 0) {
             release(before);
@@ -1575,6 +1795,7 @@ LUBE_NOINLINE static int invoke(Interp *I, Code *code, CallDesc *cd, Value *out)
         }
         loans[j].lent = 1;
         loans[j].watched = watched;
+        loans[j].lwatched = lwatched;
         loans[j].before = before;
         I->stack[ci + 1 + loans[j].pos] = v;
     }
@@ -1672,29 +1893,58 @@ static void class_end(Interp *I, ClassDesc *cd) {
     pop_to(I, I->sp - 2);
 }
 
-/* on a, b (old, new) { ... }: registers the block. */
-static int add_watcher(Interp *I, OnDesc *od) {
+/* Can the `on` items be watched: is each global a var, and is each field
+ * there? (A local was checked by the resolver.) */
+static int check_items(Interp *I, OnDesc *od) {
     for (int i = 0; i < od->count; i++) {
-        ObjString *name = od->names[i];
-        Origin origin;
-        int failed;
-        if (!lookup_global(I, name, &failed)) {
-            if (!failed) lube_error(I, "there is no global variable '%s' to watch (declare it with var first)", lube_shown(name));
-            return -1;
+        OnItem *it = &od->items[i];
+        Value v;
+        if (it->root.kind == VAR_GLOBAL) {
+            ObjString *name = it->root.name;
+            Origin origin;
+            int failed;
+            Value *g = lookup_global(I, name, &failed);
+            if (!g) {
+                if (!failed)
+                    lube_error(I, "there is no global variable '%s' to watch (declare it with var first)", lube_shown(name));
+                return -1;
+            }
+            if (global_origin(I, name, &origin)) {  /* a let, fn, class or built-in */
+                char msg[256];
+                unchangeable_message(msg, sizeof msg, lube_shown(name), origin);
+                lube_error(I, "this 'on' block would never run: %s", msg);
+                return -1;
+            }
+            v = *g;
+        } else {
+            v = SLOT(it->root.index);
         }
-        if (global_origin(I, name, &origin)) {  /* a let, fn, class or built-in */
-            char msg[256];
-            unchangeable_message(msg, sizeof msg, lube_shown(name), origin);
-            lube_error(I, "this 'on' block would never run: %s", msg);
-            return -1;
+        for (int j = 0; j < it->npath && v.type != VAL_LENT; j++) {  /* (a global lent out: checked when it changes) */
+            Value next;
+            if (!IS_MAP(v) || !map_get(AS_MAP(v), OBJ_VAL(it->path[j]), &next)) {
+                StrBuf sb;
+                sb_init(&sb);
+                sb_puts(&sb, it->name->chars);
+                for (int k = 0; k <= j; k++) sb_printf(&sb, ".%s", it->path[k]->chars);
+                lube_error(I, "cannot watch %s: %s has no field '%s'", sb.data, a_type(v), it->path[j]->chars);
+                sb_free(&sb);
+                return -1;
+            }
+            v = next;
         }
     }
+    return 0;
+}
+
+/* on a, b (old, new) { ... } at the top level: registers the block. */
+static int add_watcher(Interp *I, OnDesc *od) {
+    if (check_items(I, od) < 0) return -1;
     if (I->nwatchers == I->cap_watchers) {
         I->cap_watchers = I->cap_watchers ? I->cap_watchers * 2 : 8;
         I->watchers = xrealloc(I->watchers, sizeof(Watcher) * (size_t)I->cap_watchers);
     }
     Watcher *w = &I->watchers[I->nwatchers++];
-    w->names = od->names;
+    w->items = od->items;
     w->nnames = od->count;
     w->fn = make_closure(I, od->func);
     w->file = I->frame->src->path;
@@ -1732,6 +1982,10 @@ static Value execute(Interp *I) {
     const Instr *ip = f->pc;
     Value r;
     for (;;) {
+        if (I->dbg) {  /* the debugger looks before each instruction */
+            f->pc = ip;
+            debug_hook(I);
+        }
         Instr in = *ip;
         f->pc = ip++;
         switch ((OpCode)OP_OF(in)) {
@@ -2270,9 +2524,28 @@ static Value execute(Interp *I) {
         case OP_CLASS_END:
             class_end(I, &code->classes[ARG_OF(in)]);
             break;
-        case OP_ON:
-            if (add_watcher(I, &code->ons[ARG_OF(in)]) < 0) goto error;
+        case OP_ON: {
+            OnDesc *od = code->ons[ARG_OF(in)];
+            if ((od->frame ? add_frame_watcher(I, od) : add_watcher(I, od)) < 0) goto error;
             break;
+        }
+        case OP_LWATCH_BEFORE: {
+            LocalWatch *lw = &code->lwatch[ARG_OF(in)];
+            PUSH(local_before(I, lw->slot, lw->list));
+            break;
+        }
+        case OP_LWATCH_AFTER: {
+            LocalWatch *lw = &code->lwatch[ARG_OF(in)];
+            r = POP();
+            Value before = POP();
+            if (!IS_NIL(before)) {
+                r = after_local(I, lw->slot, lw->list, before, r);
+                release(before);
+                if (IS_ERR(r)) goto error;
+            }
+            PUSH(r);
+            break;
+        }
         case OP_ARG_DEFAULT: {  /* jumps over a default's code when the argument was given */
             int skip = (int)*ip++;
             if (f->argc > ARG_OF(in)) ip = code->code + skip;
@@ -2327,7 +2600,7 @@ static Value execute(Interp *I) {
                 if (at >= code->handlers[i].start && at < code->handlers[i].end) h = &code->handlers[i];
             if (h) {
                 pop_pending(I, f->pending);
-                pop_to(I, f->base + f->proto->nslots + h->sp);
+                pop_to(I, f->opbase + h->sp);
                 clear_slots(I, h->clear_from, f->proto->nslots - h->clear_from);
                 Value err = I->error_val;
                 I->error_val = NIL_VAL;
@@ -2384,8 +2657,11 @@ static Value run_top(Interp *I, FuncDecl *d) {
     f->pending = I->npending;
     f->construct = 0;
     f->entry = 1;
+    f->block = 0;
+    f->opbase = base + d->nslots;
     f->loans = NULL;
     f->nloans = 0;
+    f->dbg_line = -1;
     I->frame = f;
     return execute(I);
 }
@@ -2702,14 +2978,14 @@ LUBE_COLD static void report_uncaught(Interp *I) {
     I->error_val = NIL_VAL;
     ObjString *msg = IS_TEXT(e) ? (ObjString *)retain(OBJ_VAL(text_of(e))).as.obj : value_repr(e);
     Source *src = I->error_src;
-    fprintf(stderr, "%s:%d: error: %s\n", src ? src->path : "<input>", I->error_line, msg->chars);
+    lube_print(1, "%s:%d: error: %s\n", src ? src->path : "<input>", I->error_line, msg->chars);
     print_source_line(src, I->error_line, 0);
     trace_flush_repeats(I);
     if (I->trace_count > 1) {
-        fprintf(stderr, "traceback (innermost call first):\n%s", I->trace.data ? I->trace.data : "");
+        lube_print(1, "traceback (innermost call first):\n%s", I->trace.data ? I->trace.data : "");
         if (I->trace_hidden > 0) {
-            if (I->trace_hidden > 1) fprintf(stderr, "  ... %d more calls ...\n", I->trace_hidden - 1);
-            fputs(I->trace_last, stderr);
+            if (I->trace_hidden > 1) lube_print(1, "  ... %d more calls ...\n", I->trace_hidden - 1);
+            lube_print(1, "%s", I->trace_last);
         }
     }
     release(OBJ_VAL(msg));
@@ -2741,7 +3017,7 @@ static int hot_apply(Interp *I, Value path, ObjString *text) {
     }
     FuncDecl *d = compile_source(I, src, "<reload>", RUN_HOT);
     if (!d) {
-        fprintf(stderr, "lube: %s not reloaded: fix the error above\n", src->path);
+        lube_print(1, "lube: %s not reloaded: fix the error above\n", src->path);
         return 0;
     }
     for (int i = 0; i < I->nwatchers; i++) {  /* the file's `on` blocks are made again */
@@ -2757,11 +3033,11 @@ static int hot_apply(Interp *I, Value path, ObjString *text) {
     I->hot_busy = 0;
     if (IS_ERR(r)) {
         report_uncaught(I);
-        fprintf(stderr, "lube: %s reloaded only up to the error above\n", src->path);
+        lube_print(1, "lube: %s reloaded only up to the error above\n", src->path);
         return 0;
     }
     fflush(stdout);
-    fprintf(stderr, "lube: reloaded %s\n", src->path);
+    lube_print(1, "lube: reloaded %s\n", src->path);
     return 1;
 }
 
@@ -2842,6 +3118,7 @@ Source *lube_add_source(Interp *I, const char *path, char *text, size_t length) 
     s->length = length;
     s->strict = 0;
     s->package = NULL;
+    s->aliases = NULL;
     s->next = I->sources;
     I->sources = s;
     return s;
@@ -2933,6 +3210,7 @@ size_t lube_free(Interp *I) {
     Source *s = I->sources;
     while (s) {
         Source *next = s->next;
+        if (s->aliases) release(OBJ_VAL(s->aliases));
         free(s->path);
         free(s->text);
         free(s);

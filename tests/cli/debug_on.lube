@@ -1,0 +1,12 @@
+// An `on` block in a function: the debugger stops in it and sees the function's variables.
+fn game() {
+  var score = 0
+  var bonus = 2
+  on score (old, new) {
+    let gain = new - old
+    print("gained", gain * bonus)
+  }
+  score += 5
+  score += 1
+}
+game()

@@ -34,7 +34,7 @@
 #include <stdint.h>
 #include <limits.h>
 
-#define LUBE_VERSION "2.0.0"
+#define LUBE_VERSION "0.1.0"
 
 /* Hard limits, checked before any size arithmetic so that no size can ever
  * overflow, and so one expression cannot claim all of the machine's memory.
@@ -328,6 +328,7 @@ struct Source {
     size_t length;
     int strict;             /* the file starts with #strict: every fn declares its types */
     ObjString *package;     /* `package a.b`: the file's package (NULL: the main namespace) */
+    ObjMap *aliases;        /* the names it imported (for the debugger's expressions) */
     Source *next;
 };
 
@@ -375,7 +376,7 @@ typedef enum {
     /* statements */
     N_EXPR, N_LET, N_BLOCK, N_IF, N_WHILE, N_FOR, N_RETURN, N_BREAK,
     N_CONTINUE, N_THROW, N_TRY, N_IMPORT, N_CLASS,
-    N_ON           /* on score (old, new) { ... }: runs when a global var changes */
+    N_ON           /* on score (old, new) { ... }: runs when a variable changes */
 } NodeKind;
 
 typedef struct {
@@ -397,12 +398,15 @@ typedef enum {
  *   VAR_CAPTURE  the running closure's captured copy number `index`
  *   VAR_SELF     the running function itself (for recursion)
  *   VAR_GLOBAL   looked up by name at run time */
+typedef struct OnList OnList;
+
 typedef struct {
     ObjString *name;
     VarKind kind;
     int index;
     int changeable;         /* locals only; globals are checked at run time */
     Origin origin;
+    OnList *watch;          /* a changeable local: the `on` blocks that watch it (the list may be empty) */
 } VarRef;
 
 typedef struct {
@@ -442,7 +446,7 @@ typedef enum {
     OP_INDEX, OP_FIELD, OP_CLOSURE, OP_CHECK_CALLABLE, OP_CALL, OP_CALL_PREP, OP_METHOD_PREP,
     OP_SUPER_PREP, OP_INVOKE, OP_RETURN, OP_RETURN_NIL, OP_THROW, OP_FOR_PREP, OP_FOR_NEXT,
     OP_WATCH_BEFORE, OP_WATCH_AFTER, OP_ASSIGN, OP_IMPORT, OP_CLASS_BEGIN, OP_CLASS_FIELD,
-    OP_CLASS_FIELD_SET, OP_CLASS_END, OP_ON, OP_ARG_DEFAULT, OP_DEF_PARAM, OP_PRINT_REPL,
+    OP_CLASS_FIELD_SET, OP_CLASS_END, OP_ON, OP_LWATCH_BEFORE, OP_LWATCH_AFTER, OP_ARG_DEFAULT, OP_DEF_PARAM, OP_PRINT_REPL,
     OP_HOT_KEEP, OP_IF_GLOBAL, OP_FAIL, OP_LAZY_GLOBAL, OP_IMPORT_PACKAGE,
     OP_COUNT
 } OpCode;
@@ -488,11 +492,49 @@ typedef struct {            /* class Name extends Parent { fields, methods, cons
     int hot;                /* compiled for a hot reload: update the class that exists */
 } ClassDesc;
 
-typedef struct {            /* on a, b (old, new) { ... } */
-    ObjString **names;
+typedef struct {            /* what an `on` block watches: a variable, or a field path in one */
+    ObjString *name;        /* as written (the root variable) */
+    VarRef root;            /* (resolver) a local's slot, or a global's name */
+    ObjString **path;       /* on this.hp: the fields after the variable (npath of them) */
+    int npath;
+} OnItem;
+
+typedef struct {            /* a variable an `on` block's code uses from around it */
+    ObjString *name;
+    int slot;
+} OnUse;
+
+/* on a, b (old, new) { ... }. At the top level of a file the block is a
+ * function that lasts as long as the program. Anywhere else (in a function,
+ * a method or a block) it runs on the frame it was declared in, seeing that
+ * frame's variables live, and lasts until the block of code around it ends. */
+typedef struct OnDesc {
+    OnItem *items;
     int count;
-    FuncDecl *func;
+    FuncDecl *func;         /* the block (with (old, new) as its parameters) */
+    int frame;              /* runs on a frame (else: a top-level watcher) */
+    int token;              /* frame: the hidden slot that holds the block while it is in scope */
+    int param_slot[2];      /* frame: where (old, new) go */
+    int first, nslots;      /* frame: the block's own slots, cleared after each run */
+    OnUse *uses;            /* frame: the variables from around it that it reads */
+    int nuses, capuses;
 } OnDesc;
+
+struct OnList {             /* the `on` blocks watching one local variable */
+    OnDesc **ons;
+    int n, cap;
+};
+
+typedef struct {            /* a local variable the code changes, which `on` blocks watch */
+    int slot;
+    OnList *list;
+} LocalWatch;
+
+typedef struct {            /* a local variable, for the debugger */
+    ObjString *name;
+    int slot;
+    int start, end;         /* the code words while it holds its value */
+} LocalInfo;
 
 typedef struct {            /* try { body } catch e { ... } */
     int start, end;         /* the body: code words [start, end) */
@@ -522,11 +564,15 @@ typedef struct {
     int nassigns;
     ClassDesc *classes;
     int nclasses;
-    OnDesc *ons;
+    OnDesc **ons;
     int nons;
+    LocalWatch *lwatch;     /* for OP_LWATCH_BEFORE/AFTER */
+    int nlwatch;
     Handler *handlers;
     int nhandlers;
     int maxstack;           /* the most operand stack slots it needs */
+    LocalInfo *locals;      /* its locals' names (for the debugger) */
+    int nlocals;
     int *gcache;            /* per constant: where that global was last found in I->globals (or -1) */
 } Code;
 
@@ -543,6 +589,7 @@ struct FuncDecl {
     int is_arrow;
     int nslots;             /* frame size: parameters plus locals */
     CaptureSrc *captures;
+    ObjString **capnames;   /* the captured variables' names (for the debugger) */
     int ncaptures;
     int line;
     Source *src;
@@ -551,6 +598,7 @@ struct FuncDecl {
     ObjString *key;         /* a top-level fn: the global it is in (its package's name for it) */
     ObjClass *owner;        /* the class a method belongs to (set when the class is made) */
     unsigned char *has_default;  /* has_default[i]: param i has a default value */
+    struct OnDesc *on_block;     /* an `on` block that runs on its function's frame */
     Code code;              /* its bytecode (compile.c) */
 };
 
@@ -594,7 +642,7 @@ struct Node {
                  int star;                    /* import a.b.* */
                  ObjString *pkg;              /* (resolver) the package to load */
                  ObjString *bind; } import;   /* (resolver) import a.b: the global its package object goes in */
-        struct { ObjString **names; int count; FuncDecl *func; } on;  /* N_ON */
+        struct { OnItem *items; int count; FuncDecl *func; struct OnDesc *desc; } on;  /* N_ON */
     } as;
 };
 
@@ -604,14 +652,24 @@ struct Node {
 
 typedef struct { char *data; size_t len, cap; } StrBuf;
 
-/* An `on` block: runs fn when one of the global vars `names` changes. */
+/* A top-level `on` block: runs fn when one of the global vars it watches changes. */
 typedef struct Watcher {
-    ObjString **names;              /* none once replaced by a hot reload */
+    OnItem *items;                  /* none once replaced by a hot reload */
     int nnames;
     Value fn;                       /* the block: a function of () or (old, new) */
     const char *file;               /* the file it was declared in */
     int running;                    /* its own changes do not run it again */
 } Watcher;
+
+/* An `on` block declared in a function (or a block): it runs on that
+ * function's frame while the code around it is running. */
+typedef struct FrameWatcher {
+    struct OnDesc *od;
+    int base;                       /* the frame's first slot */
+    int depth;                      /* how many frames there were with it the innermost */
+    Value token;                    /* what its hidden slot holds while it is in scope */
+    int running;
+} FrameWatcher;
 
 /* A place being changed or lent: a variable and the keys of a path in it. */
 typedef struct {
@@ -647,6 +705,9 @@ typedef struct Frame {              /* one active call (or script) */
     int pending;                    /* pending calls below this frame */
     unsigned char construct;        /* a constructor: the call's result is `this` */
     unsigned char entry;            /* called from C: return there when done */
+    unsigned char block;            /* an `on` block running on its function's frame (same base) */
+    int opbase;                     /* where its operand stack starts */
+    int dbg_line;                   /* the line the debugger last saw this frame on (-1: none yet) */
     struct Loan *loans;             /* what the call lent with &, returned when it ends */
     int nloans;
 } Frame;
@@ -681,8 +742,11 @@ struct Interp {
     ObjMap *bundle;                 /* a built program's files (path -> text), or NULL */
     ObjMap *watch;                  /* files the program was loaded from (path -> text), for hot reload */
     ObjList *hot_old;               /* functions and classes replaced by hot reload: kept until shutdown */
-    struct Watcher *watchers;       /* the `on` blocks, in the order they were made */
+    struct Debugger *dbg;           /* while debugging (NULL otherwise) */
+    struct Watcher *watchers;       /* the top-level `on` blocks, in the order they were made */
     int nwatchers, cap_watchers;
+    struct FrameWatcher *fwatch;    /* the `on` blocks running on frames (innermost frame's last) */
+    int nfwatch, cap_fwatch;
     struct Isolate *isolate;        /* in a spawned isolate: its handle (NULL in the main one) */
     int starting;                   /* an isolate is running the program's declarations */
     ObjMap *lazy;                   /* in an isolate: globals not used yet (name -> [initializer, kind]) */
@@ -741,6 +805,8 @@ void *xrealloc(void *p, size_t n);
 char *xstrndup(const char *s, size_t n);
 char *read_file(const char *path, size_t *length);
 void report_error(Source *src, int line, int col, const char *kind, const char *msg);
+extern void (*lube_output)(const char *text, size_t len, int is_err);
+void lube_print(int err, const char *fmt, ...);
 void print_source_line(Source *src, int line, int col);
 
 /* value.c */
@@ -813,10 +879,27 @@ Node *parse_program(Interp *I, Source *src, Arena **arena);
 
 /* resolver.c */
 int resolve_program(Interp *I, Node *program, Source *src, Arena *arena);
+typedef struct {            /* a variable a debugger expression can see */
+    ObjString *name;
+    VarKind kind;           /* VAR_LOCAL (a slot of the paused frame) or VAR_CAPTURE */
+    int index;
+} DebugVar;
+int resolve_debug(Interp *I, FuncDecl *d, Source *src, Arena *arena, Source *home, DebugVar *vars, int nvars);
 
 /* compile.c: the program's code; mode is RUN_FILE, RUN_REPL or RUN_HOT */
 enum { RUN_FILE, RUN_REPL, RUN_HOT, RUN_ISOLATE };
 FuncDecl *compile_program(Interp *I, Node *program, Source *src, Arena *arena, const char *name, int mode);
+FuncDecl *compile_debug(Interp *I, FuncDecl *d, Arena *arena);
+
+/* debug.c: the debugger (lube --debug, and the core of lube --dap) */
+struct Debugger;
+void debug_hook(Interp *I);             /* before each instruction, while debugging */
+void debug_error(Interp *I);            /* an error was just raised (frames still there) */
+void debug_left_frame(Interp *I);       /* a frame returned */
+void lube_debug_terminal(Interp *I);    /* start debugging with the terminal prompt */
+int lube_frame_line(Frame *f);
+Value lube_closure_in(Interp *I, FuncDecl *d, Frame *f);
+void lube_keep_arena(Interp *I, Arena *a);
 void unchangeable_message(char *buf, size_t size, const char *name, Origin origin);
 
 /* interp.c -- functions returning Value return ERR_VAL when they raise */

@@ -17,6 +17,8 @@ static void usage(FILE *out) {
             "  lube -e CODE          run CODE and print the value of the last expression\n"
             "  lube -                read a script from standard input\n"
             "  lube --check FILE     report syntax errors without running anything (FILE may be -)\n"
+            "  lube --debug FILE [ARGS...]\n"
+            "                        run FILE in the debugger (h at its prompt lists the commands)\n"
             "  lube --hot FILE [ARGS...]\n"
             "                        run FILE, applying changes to its files while it runs\n"
             "  lube --build FILE [-o OUT]\n"
@@ -157,6 +159,15 @@ int main(int argc, char **argv) {
             } else {
                 status = lube_check_source(I, lube_add_source(I, from_stdin ? "<stdin>" : argv[2], text, len));
             }
+        }
+    } else if (!strcmp(argv[1], "--debug")) {
+        if (argc < 3) {
+            usage(stderr);
+            status = 64;
+        } else {
+            lube_debug_terminal(I);
+            set_args(I, argc, argv, 3);
+            status = lube_run_file(I, argv[2]);
         }
     } else if (!strcmp(argv[1], "--hot")) {
         if (argc < 3) {

@@ -310,11 +310,81 @@ fn f(x: Map[str, Dog]) {}
 fn f(x: 5) {}
 ### a missing return type after the colon
 fn f(): => 1
-### on inside a function
-var score = 0
+### on a captured variable
 fn f() {
-  on score { print(score) }
+  var x = 0
+  return fn() { on x { } }
 }
+### on a let in a function
+fn f() {
+  let x = 0
+  on x { }
+}
+### on this outside a method
+fn f() { on this { } }
+### on with a default
+var a = 0
+on a (old = 1, new) { }
+### on a field that does not exist
+class P {
+  var hp = 1
+  fn f() { on this.hpp { } }
+}
+var p = P()
+p.f()
+### on a field of a number
+var n = 5
+fn f() { on n.x { } }
+f()
+### on a missing global in a function
+fn f() {
+  on nothing_here { }
+}
+f()
+### break in an on block
+fn f() {
+  var x = 0
+  while true {
+    on x { break }
+  }
+}
+### strict: on parameters in a function need types
+#strict
+fn f() {
+  var x = 0
+  on x (a, b) { }
+}
+### an on block's parameter type
+fn f() {
+  var x = 0
+  on x (a: str, b: str) { }
+  x = 1
+}
+f()
+### an error in an on block in a function
+fn f() {
+  var x = 0
+  on x { throw "boom" }
+  x = 1
+}
+f()
+### on blocks in a recursion too deep
+fn r(k) {
+  var x = 0
+  on x { }
+  x = 1
+  r(k + 1)
+}
+r(0)
+### an on block that needs a variable lent out
+var score = 0
+fn main() {
+  var state = {n: 1}
+  on score { print(state.n) }
+  update(&state)
+}
+fn update(&s) { score += 1 }
+main()
 ### on a let
 let score = 0
 on score { print(score) }

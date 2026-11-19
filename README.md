@@ -474,7 +474,7 @@ print(globals())                   // the program's global names, in order: ["An
 
 ### Reactivity: `on`
 
-An `on` block runs whenever a global `var` changes, right after the change:
+An `on` block runs whenever a `var` changes, right after the change:
 
 ```lube
 var score = 0
@@ -496,16 +496,42 @@ on score (old, new) when new > old {   // only when the condition holds
   print("+", new - old)
 }
 
+on player.hp (old, new) {              // a field: runs only when hp itself changes
+  if new <= 0 { print("game over") }
+}
+
 score += 10      // + 10, score changed to 10, redraw()...
 score = 10       // the same value: nothing runs
 ```
+
+`on` also works inside functions, methods and constructors, where it can watch local variables and fields of `this` as well as globals:
+
+```lube
+class Player {
+  var hp = 10
+  var name = "ada"
+  fn fight(enemy) {
+    var hits = 0
+    on this.hp (old, new) when new <= 0 { print(this.name, "is down after", hits, "hits") }
+    on hits { print("hit", hits) }
+    while this.hp > 0 {
+      this.hp -= enemy.attack()
+      hits += 1
+    }
+  }
+}
+```
+
+A block inside a function runs on that function's own frame. It reads and changes the function's variables directly, not a copy as a closure would, so a block can keep a count or update other state. It lasts as long as the block of code it's declared in: until the function returns, or until the end of the `if`, loop body or `{ }` around it. Each call gets its own blocks.
 
 - Any change counts: an assignment (`score = 5`, `score += 1`), a change inside the value (`items.push(x)`, `player.hp -= 1`, `grid[r][c] = 1`), or a function changing it through `&` (`heal(&player)`, `player.heal()`). Assigning the value it already has is not a change.
 - Blocks run in the order they were declared, after everything a call lent with `&` is back.
 - A block's own changes don't run it again, so `on count { count = 0 }` can't loop. A block can change other watched vars, and their blocks run.
 - An error in a block reaches the code that made the change, like an error in a function it called. A change made by a call that then fails doesn't run the blocks.
-- `on` watches global `var`s, and goes at the top level of a file. Watching a `let`, a function or a variable that doesn't exist is an error. In a `#strict` file, `(old, new)` need types: `on score (old: Number, new: Number)`.
-- With hot reload, a changed file's `on` blocks replace the old ones.
+- `on` watches `var`s: globals, a function's own locals and `&` or `var` parameters, and `this` in a method. Watching a `let`, a function, a variable a closure captured (it can't change), or a variable that doesn't exist is an error. So is a field that isn't there when the block is declared. A field that's missing before or after a change is not a change.
+- A block inside a function that watches a global also runs when another function changes it. If the block uses a variable the function has lent out with `&` at that moment, running it is an error.
+- In a `#strict` file, `(old, new)` need types: `on score (old: Number, new: Number)`.
+- With hot reload, a changed file's top-level `on` blocks replace the old ones.
 
 ### Concurrency: isolates and channels
 
@@ -633,6 +659,24 @@ lube: reloaded game.lube
 - An edit with an error is reported, and the program goes on with the code it had. When you fix the file, the fix is applied.
 
 A program can also apply changes itself, at a moment it chooses: `hot_reload()` looks at every file the program was loaded from, applies the ones that changed, and returns their paths. `--hot` looks while the program runs code, so a program waiting in `input()` gets the changes when it continues.
+
+### Debugging
+
+`lube --debug app.lube` runs a program under the debugger. It stops before the first line and takes commands (`h` lists them):
+
+```text
+$ lube --debug app.lube
+(lube) b 13 if item.price > 3      # a breakpoint with a condition
+(lube) b shop.lube:40 hits >= 5    # in another file, from the 5th hit on
+(lube) log 28 mapping {i.name}     # print a message there without stopping
+(lube) c                           # run to the next breakpoint
+(lube) p sum + item.price          # evaluate any expression in the paused frame
+(lube) locals                      # also: globals, bt, up, down, l (the source)
+(lube) n                           # next line; s steps into calls, o steps out
+(lube) catch all                   # stop where any error is raised (default: uncaught ones)
+```
+
+Ctrl-C pauses a running program. Paused inside an `on` block, you see the block's variables and those of the function it runs on.
 
 ## Standard library
 

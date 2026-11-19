@@ -151,6 +151,28 @@ write_file(args[0], "package live\nfn version() => 2\nfn added() => \"new\"\n")
 hot_reload()
 print(live.version(), live.added())' "$TMP/pkgs/live/live.lube"
 
+# ---- the terminal debugger (lube --debug) ----
+D=tests/cli/debug_app.lube
+feed "debugger: breakpoints, values, frames, stepping" 'h\nbl\nb nope\nb 13 if item.price > 3\nc\np item\np sum + 1\np nothing_here\np 1 +\np 1; 2\np print("side effect")\nlocals\nglobals\nbt\nup\nlocals\nframe 9\nframe 0\ndown\nl\nn\nn\nbl\nd 7\nd 1\nlog 28 mapping {i.name}\ntb 28\nc\ns\nlocals\no\nb 22\nc\nlocals\ns\nlocals\nwhat\n\nd\ncatch bogus\ncatch all\nc\nbt\ncatch off\nc\n' "$LUBE" --debug "$D"
+feed "debugger: an uncaught error stops where it is raised" 'c\np n\nbt\nc\n' "$LUBE" --debug "$D"
+feed "debugger: hit counts, a broken condition, and quitting" 'b 13 hits 2\nb 13 if nope\nc\nc\np item.name\np sum = 5\nd\nb tests/cli/debug_app.lube:13 hits % 3\nc\np item.name\nq\n' "$LUBE" --debug "$D"
+printf 'import shapes.Point\nlet p = Point(1, 2)\nprint(p)\n' >"$TMP/uses_shapes.lube"
+feed "debugger: expressions see the file's imports" 'n\np Point(3, 4)\np p.x\nc\n' env LUBE_PATH="$SHAPES" "$LUBE" --debug "$TMP/uses_shapes.lube"
+feed "debugger: no more commands runs the program on" 'b 13\nc\n' "$LUBE" --debug "$D"
+feed "debugger: in an on block in a function" 'b 7\nc\nlocals\np gain * bonus + score\nbt\nup\nlocals\nn\nn\nn\nn\nc\n' "$LUBE" --debug tests/cli/debug_on.lube
+printf 'var i = 0\nwhile true {\n  i += 1\n}\n' >"$TMP/spin.lube"
+printf 'c\np i > 0\nq\n' >"$TMP/spin.cmds"
+echo "--- debugger: Ctrl-C pauses a running program"
+"$LUBE" --debug "$TMP/spin.lube" <"$TMP/spin.cmds" >"$TMP/out" 2>&1 &
+pid=$!
+sleep 1
+kill -INT "$pid"
+wait "$pid"
+code=$?
+sed "s|$TMP|TMP|g" "$TMP/out" | sed -E 's/spin\.lube:[0-9]+/spin.lube:N/; s/^    [0-9] \| .*/    N | (a line of the loop)/'
+echo "[exit $code]"
+run "debugger without a file" "$LUBE" --debug
+
 # ---- hot reload ----
 mkdir -p "$TMP/hot" "$TMP/hotloop"
 cp tests/cli/hot.lube "$TMP/hot/main.lube"

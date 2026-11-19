@@ -977,9 +977,10 @@ static Node *fn_statement(Parser *P) {
     return n;
 }
 
-/*  on score { ... }              runs when the global var `score` changes
+/*  on score { ... }              runs when the var `score` changes
  *  on score (old, new) { ... }   ...and gets its value before and after
  *  on score, lives { ... }       runs when any of them changes
+ *  on this.hp (old, new) { ... } a field of one
  *  on score (old, new) when new > old { ... }   only when the condition holds */
 static Node *on_statement(Parser *P) {
     Token *kw = advance(P);
@@ -989,16 +990,29 @@ static Node *on_statement(Parser *P) {
     sb_puts(&label, "on ");
     int cap = 0;
     do {
-        Token *t = expect(P, T_IDENT, "a variable name after 'on'");
+        Token *t = check(P, T_THIS) ? advance(P) : expect(P, T_IDENT, "a variable name after 'on'");
         if (n->as.on.count == cap) {
             int old = cap;
             cap = cap ? cap * 2 : 4;
-            n->as.on.names = arena_grow(tree, n->as.on.names, sizeof(ObjString *) * (size_t)old,
-                                        sizeof(ObjString *) * (size_t)cap);
+            n->as.on.items = arena_grow(tree, n->as.on.items, sizeof(OnItem) * (size_t)old, sizeof(OnItem) * (size_t)cap);
         }
-        n->as.on.names[n->as.on.count++] = name_of(P, t);
+        OnItem *it = &n->as.on.items[n->as.on.count++];
+        memset(it, 0, sizeof *it);
+        it->name = name_of(P, t);
         if (n->as.on.count > 1) sb_puts(&label, ", ");
         sb_putn(&label, t->start, (size_t)t->length);
+        int pcap = 0;
+        while (match(P, T_DOT)) {  /* on this.hp: a field */
+            Token *f = expect(P, T_IDENT, "a field name after '.'");
+            if (it->npath == pcap) {
+                int old = pcap;
+                pcap = pcap ? pcap * 2 : 2;
+                it->path = arena_grow(tree, it->path, sizeof(ObjString *) * (size_t)old, sizeof(ObjString *) * (size_t)pcap);
+            }
+            it->path[it->npath++] = name_of(P, f);
+            sb_putc(&label, '.');
+            sb_putn(&label, f->start, (size_t)f->length);
+        }
     } while (match(P, T_COMMA));
     FuncDecl *d = new_decl(P, lube_intern(P->I, label.data, label.len), kw->line);
     sb_free(&label);
@@ -1007,7 +1021,8 @@ static Node *on_statement(Parser *P) {
             error_at(P, peek(P), "an 'on' block for several variables has no (old, new): read the variables in the block");
         Token *open = peek(P);
         function_params(P, d);
-        if (d->nparams != 2 || d->modes[0] == PARAM_REF || d->modes[1] == PARAM_REF || d->ret.set)
+        if (d->nparams != 2 || d->modes[0] == PARAM_REF || d->modes[1] == PARAM_REF || d->ret.set || d->defaults[0] ||
+            d->defaults[1])
             error_at(P, open, "an 'on' block takes (old, new): the value before the change and after it");
     }
     Node *cond = NULL;

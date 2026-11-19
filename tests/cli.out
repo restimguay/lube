@@ -1,11 +1,11 @@
 --- version
-lube 2.0.0
+lube 0.1.0
 [exit 0]
 --- short version
-lube 2.0.0
+lube 0.1.0
 [exit 0]
 --- help
-Lube 2.0.0 - a small, smooth scripting language
+Lube 0.1.0 - a small, smooth scripting language
 
 usage:
   lube                  start the interactive REPL
@@ -13,6 +13,8 @@ usage:
   lube -e CODE          run CODE and print the value of the last expression
   lube -                read a script from standard input
   lube --check FILE     report syntax errors without running anything (FILE may be -)
+  lube --debug FILE [ARGS...]
+                        run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
   lube --build FILE [-o OUT]
@@ -21,7 +23,7 @@ usage:
   lube -h, --help       show this help
 [exit 0]
 --- short help
-Lube 2.0.0 - a small, smooth scripting language
+Lube 0.1.0 - a small, smooth scripting language
 
 usage:
   lube                  start the interactive REPL
@@ -29,6 +31,8 @@ usage:
   lube -e CODE          run CODE and print the value of the last expression
   lube -                read a script from standard input
   lube --check FILE     report syntax errors without running anything (FILE may be -)
+  lube --debug FILE [ARGS...]
+                        run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
   lube --build FILE [-o OUT]
@@ -39,7 +43,7 @@ usage:
 --- unknown option
 lube: unknown option '-x'
 
-Lube 2.0.0 - a small, smooth scripting language
+Lube 0.1.0 - a small, smooth scripting language
 
 usage:
   lube                  start the interactive REPL
@@ -47,6 +51,8 @@ usage:
   lube -e CODE          run CODE and print the value of the last expression
   lube -                read a script from standard input
   lube --check FILE     report syntax errors without running anything (FILE may be -)
+  lube --debug FILE [ARGS...]
+                        run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
   lube --build FILE [-o OUT]
@@ -55,7 +61,7 @@ usage:
   lube -h, --help       show this help
 [exit 64]
 --- -e without code
-Lube 2.0.0 - a small, smooth scripting language
+Lube 0.1.0 - a small, smooth scripting language
 
 usage:
   lube                  start the interactive REPL
@@ -63,6 +69,8 @@ usage:
   lube -e CODE          run CODE and print the value of the last expression
   lube -                read a script from standard input
   lube --check FILE     report syntax errors without running anything (FILE may be -)
+  lube --debug FILE [ARGS...]
+                        run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
   lube --build FILE [-o OUT]
@@ -103,7 +111,7 @@ tests/syntax_error.lube:2:16: syntax error: expected ')' to close the parameter 
 lube: cannot open file 'tests/does-not-exist.lube'
 [exit 66]
 --- check without a file
-Lube 2.0.0 - a small, smooth scripting language
+Lube 0.1.0 - a small, smooth scripting language
 
 usage:
   lube                  start the interactive REPL
@@ -111,6 +119,8 @@ usage:
   lube -e CODE          run CODE and print the value of the last expression
   lube -                read a script from standard input
   lube --check FILE     report syntax errors without running anything (FILE may be -)
+  lube --debug FILE [ARGS...]
+                        run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
   lube --build FILE [-o OUT]
@@ -154,7 +164,7 @@ lube: the executable would replace 'noext': name it with -o
 lube: cannot write 'TMP/no/such/dir/app'
 [exit 73]
 --- build with bad options
-Lube 2.0.0 - a small, smooth scripting language
+Lube 0.1.0 - a small, smooth scripting language
 
 usage:
   lube                  start the interactive REPL
@@ -162,6 +172,8 @@ usage:
   lube -e CODE          run CODE and print the value of the last expression
   lube -                read a script from standard input
   lube --check FILE     report syntax errors without running anything (FILE may be -)
+  lube --debug FILE [ARGS...]
+                        run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
   lube --build FILE [-o OUT]
@@ -190,7 +202,7 @@ lube: an isolate running sq() failed: spawn() cannot run while an isolate is sta
 [3, 5, 7] ["x", "y"]
 [exit 0]
 --- isolates from the REPL
-Lube 2.0.0  (type exit() or press Ctrl-D to quit)
+Lube 0.1.0  (type exit() or press Ctrl-D to quit)
 >>> >>> 81
 >>> 
 [exit 0]
@@ -260,7 +272,7 @@ TMP/pkgs/unresolved/u.lube:3: error: 'break' can only be used inside a loop
     2 | print(Point(1, 2))
 [exit 70]
 --- package imports in the REPL
-Lube 2.0.0  (type exit() or press Ctrl-D to quit)
+Lube 0.1.0  (type exit() or press Ctrl-D to quit)
 >>> >>> Point {x: 1, y: 2}
 >>> 
 [exit 0]
@@ -272,6 +284,246 @@ Lube 2.0.0  (type exit() or press Ctrl-D to quit)
 lube: reloaded TMP/pkgs/live/live.lube
 2 new
 [exit 0]
+--- debugger: breakpoints, values, frames, stepping
+Lube debugger: h lists the commands (Ctrl-C pauses the program)
+   at <script> (tests/cli/debug_app.lube:2)
+    2 | class Item {
+(lube)   c, continue        run to the next breakpoint
+  n, next            the next line, over calls
+  s, step            the next line, into calls
+  o, out             until this function returns
+  b [file:]line [if cond]   a breakpoint (tb: one that is removed when hit)
+  b [file:]line hits n      one that stops on the nth hit (or: >= n, % n)
+  log [file:]line msg       print msg (with {expressions}) there, without stopping
+  bl                 list the breakpoints;  d [n]: delete one, or all
+  catch all|uncaught|off    stop where errors are raised
+  p expr             evaluate an expression here
+  locals, globals    show variables
+  bt                 the calls that led here;  up, down, frame n: look at another
+  l                  the source around here
+  q                  quit the program
+(lube) no breakpoints
+(lube) usage: b [file:]line [if condition]
+(lube) breakpoint 1 at tests/cli/debug_app.lube:13 if item.price > 3
+(lube) breakpoint 1
+   at total (tests/cli/debug_app.lube:13)
+   13 |     sum += item.price
+(lube) Item {name: "book", price: 10}
+(lube) 3
+(lube) error: undefined variable 'nothing_here'
+(lube) <debugger>:1:4: syntax error: expected an expression but found end of file
+    1 | 1 +
+      |    ^
+error: the expression has errors (see above)
+(lube) <debugger>:1: error: the debugger evaluates one expression
+    1 | 1; 2
+error: the expression has errors (see above)
+(lube) side effect
+error: the expression gives no value
+(lube) items = [Item {name: "pen", price: 2}, Item {name: "book", price: 10}, Item {name: "ink", price: 5}]
+sum = 2
+item = Item {name: "book", price: 10}
+(lube) items = [Item {name: "pen", price: 2}, Item {name: "book", price: 10}, Item {name: "ink", price: 5}]
+Item = <class Item>
+total = <fn total>
+shadow = <fn shadow>
+factor = 2
+(lube) =>#0 total (tests/cli/debug_app.lube:13)
+  #1 <script> (tests/cli/debug_app.lube:27)
+(lube)    at <script> (tests/cli/debug_app.lube:27)
+   27 | let t = total(items)
+(lube) (lube) there is no frame 9 (bt lists them)
+(lube)    at total (tests/cli/debug_app.lube:13)
+   13 |     sum += item.price
+(lube) there is no frame -1 (bt lists them)
+(lube)      8 |   }
+     9 | }
+    10 | fn total(items: List): Number {
+    11 |   var sum = 0
+    12 |   for item in items {
+=>  13 |     sum += item.price
+    14 |   }
+    15 |   return sum
+    16 | }
+    17 | fn shadow(): Number {
+    18 |   let x = 1
+(lube)    at total (tests/cli/debug_app.lube:12)
+   12 |   for item in items {
+(lube) breakpoint 1
+   at total (tests/cli/debug_app.lube:13)
+   13 |     sum += item.price
+(lube) 1 tests/cli/debug_app.lube:13 if item.price > 3 (hit 2 times)
+(lube) there is no breakpoint 7 (bl lists them)
+(lube) (lube) logpoint 2 at tests/cli/debug_app.lube:28
+(lube) breakpoint 3 at tests/cli/debug_app.lube:28
+(lube) logpoint 2: undefined variable 'i'
+breakpoint 3
+   at <script> (tests/cli/debug_app.lube:28)
+   28 | let scaled = items.map(fn(i) => i.price * factor)
+(lube) mapping pen
+   at <lambda> (tests/cli/debug_app.lube:28)
+   28 | let scaled = items.map(fn(i) => i.price * factor)
+(lube) i = Item {name: "pen", price: 2}
+(lube) mapping book
+mapping ink
+logpoint 2: undefined variable 'i'
+   at <script> (tests/cli/debug_app.lube:28)
+   28 | let scaled = items.map(fn(i) => i.price * factor)
+(lube) breakpoint 4 at tests/cli/debug_app.lube:22
+(lube) breakpoint 4
+   at shadow (tests/cli/debug_app.lube:22)
+   22 |     return add(x)
+(lube) add = <fn add>
+x = 2
+(lube)    at add (tests/cli/debug_app.lube:19)
+   19 |   let add = fn(y) => x + y
+(lube) y = 2
+x = 1
+(lube) unknown command 'what' (h lists them)
+(lube) (lube) (lube) usage: catch all|uncaught|off
+(lube) (lube) total 17 [4, 20, 10] 3
+error raised: division by zero
+   at fails (tests/cli/debug_app.lube:30)
+   30 | fn fails(n: Number): Number => 10 / n
+(lube) =>#0 fails (tests/cli/debug_app.lube:30)
+  #1 <script> (tests/cli/debug_app.lube:31)
+(lube) (lube) caught: division by zero
+tests/cli/debug_app.lube:30: error: division by zero
+   30 | fn fails(n: Number): Number => 10 / n
+traceback (innermost call first):
+  at fails (tests/cli/debug_app.lube:30)
+  at <script> (tests/cli/debug_app.lube:32)
+[exit 70]
+--- debugger: an uncaught error stops where it is raised
+Lube debugger: h lists the commands (Ctrl-C pauses the program)
+   at <script> (tests/cli/debug_app.lube:2)
+    2 | class Item {
+(lube) total 17 [4, 20, 10] 3
+caught: division by zero
+error raised: division by zero
+   at fails (tests/cli/debug_app.lube:30)
+   30 | fn fails(n: Number): Number => 10 / n
+(lube) 0
+(lube) =>#0 fails (tests/cli/debug_app.lube:30)
+  #1 <script> (tests/cli/debug_app.lube:32)
+(lube) tests/cli/debug_app.lube:30: error: division by zero
+   30 | fn fails(n: Number): Number => 10 / n
+traceback (innermost call first):
+  at fails (tests/cli/debug_app.lube:30)
+  at <script> (tests/cli/debug_app.lube:32)
+[exit 70]
+--- debugger: hit counts, a broken condition, and quitting
+Lube debugger: h lists the commands (Ctrl-C pauses the program)
+   at <script> (tests/cli/debug_app.lube:2)
+    2 | class Item {
+(lube) breakpoint 1 at tests/cli/debug_app.lube:13
+(lube) breakpoint 2 at tests/cli/debug_app.lube:13 if nope
+(lube) breakpoint 2: the condition failed: undefined variable 'nope'
+breakpoint 2
+   at total (tests/cli/debug_app.lube:13)
+   13 |     sum += item.price
+(lube) breakpoint 1
+   at total (tests/cli/debug_app.lube:13)
+   13 |     sum += item.price
+(lube) "book"
+(lube) <debugger>:1: error: cannot change 'sum' here: it belongs to an enclosing function, and closures only get a read-only copy of it
+    1 | sum = 5
+error: the expression has errors (see above)
+(lube) (lube) breakpoint 3 at tests/cli/debug_app.lube:13
+(lube) total 17 [4, 20, 10] 3
+caught: division by zero
+error raised: division by zero
+   at fails (tests/cli/debug_app.lube:30)
+   30 | fn fails(n: Number): Number => 10 / n
+(lube) error: undefined variable 'item'
+(lube) [exit 0]
+--- debugger: expressions see the file's imports
+Lube debugger: h lists the commands (Ctrl-C pauses the program)
+   at <script> (TMP/uses_shapes.lube:1)
+    1 | import shapes.Point
+(lube)    at <script> (TMP/uses_shapes.lube:2)
+    2 | let p = Point(1, 2)
+(lube) Point {x: 3, y: 4}
+(lube) error: undefined variable 'p'
+(lube) Point {x: 1, y: 2}
+[exit 0]
+--- debugger: no more commands runs the program on
+Lube debugger: h lists the commands (Ctrl-C pauses the program)
+   at <script> (tests/cli/debug_app.lube:2)
+    2 | class Item {
+(lube) breakpoint 1 at tests/cli/debug_app.lube:13
+(lube) breakpoint 1
+   at total (tests/cli/debug_app.lube:13)
+   13 |     sum += item.price
+(lube) 
+total 17 [4, 20, 10] 3
+caught: division by zero
+tests/cli/debug_app.lube:30: error: division by zero
+   30 | fn fails(n: Number): Number => 10 / n
+traceback (innermost call first):
+  at fails (tests/cli/debug_app.lube:30)
+  at <script> (tests/cli/debug_app.lube:32)
+[exit 70]
+--- debugger: in an on block in a function
+Lube debugger: h lists the commands (Ctrl-C pauses the program)
+   at <script> (tests/cli/debug_on.lube:2)
+    2 | fn game() {
+(lube) breakpoint 1 at tests/cli/debug_on.lube:7
+(lube) breakpoint 1
+   at on score (tests/cli/debug_on.lube:7)
+    7 |     print("gained", gain * bonus)
+(lube) old = 0
+new = 5
+gain = 5
+score = 5
+bonus = 2
+(lube) 15
+(lube) =>#0 on score (tests/cli/debug_on.lube:7)
+  #1 game (tests/cli/debug_on.lube:9)
+  #2 <script> (tests/cli/debug_on.lube:12)
+(lube)    at game (tests/cli/debug_on.lube:9)
+    9 |   score += 5
+(lube) score = 5
+bonus = 2
+(lube) gained 10
+   at on score (tests/cli/debug_on.lube:5)
+    5 |   on score (old, new) {
+(lube)    at game (tests/cli/debug_on.lube:9)
+    9 |   score += 5
+(lube)    at game (tests/cli/debug_on.lube:10)
+   10 |   score += 1
+(lube) breakpoint 1
+   at on score (tests/cli/debug_on.lube:7)
+    7 |     print("gained", gain * bonus)
+(lube) gained 2
+[exit 0]
+--- debugger: Ctrl-C pauses a running program
+Lube debugger: h lists the commands (Ctrl-C pauses the program)
+   at <script> (TMP/spin.lube:N)
+    N | (a line of the loop)
+(lube) paused
+   at <script> (TMP/spin.lube:N)
+    N | (a line of the loop)
+(lube) true
+(lube) [exit 0]
+--- debugger without a file
+Lube 0.1.0 - a small, smooth scripting language
+
+usage:
+  lube                  start the interactive REPL
+  lube FILE [ARGS...]   run a Lube script (ARGS are available as `args`)
+  lube -e CODE          run CODE and print the value of the last expression
+  lube -                read a script from standard input
+  lube --check FILE     report syntax errors without running anything (FILE may be -)
+  lube --debug FILE [ARGS...]
+                        run FILE in the debugger (h at its prompt lists the commands)
+  lube --hot FILE [ARGS...]
+                        run FILE, applying changes to its files while it runs
+  lube --build FILE [-o OUT]
+                        build FILE and its imports into a standalone executable
+  lube -v, --version    print the version
+  lube -h, --help       show this help
+[exit 64]
 --- hot_reload()
 5 hello ada ... 3
 lube: reloaded game.lube
@@ -315,7 +567,7 @@ lube: reloaded step.lube
 saw the change: true kept the state: true
 [exit 0]
 --- lube --hot without a file
-Lube 2.0.0 - a small, smooth scripting language
+Lube 0.1.0 - a small, smooth scripting language
 
 usage:
   lube                  start the interactive REPL
@@ -323,6 +575,8 @@ usage:
   lube -e CODE          run CODE and print the value of the last expression
   lube -                read a script from standard input
   lube --check FILE     report syntax errors without running anything (FILE may be -)
+  lube --debug FILE [ARGS...]
+                        run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
   lube --build FILE [-o OUT]
@@ -331,7 +585,7 @@ usage:
   lube -h, --help       show this help
 [exit 64]
 --- repl
-Lube 2.0.0  (type exit() or press Ctrl-D to quit)
+Lube 0.1.0  (type exit() or press Ctrl-D to quit)
 >>> >>> 21
 >>> ... ... >>> 40
 >>> "text"
@@ -349,11 +603,11 @@ Lube 2.0.0  (type exit() or press Ctrl-D to quit)
 >>> >>> >>> >>> 
 [exit 0]
 --- repl empty input
-Lube 2.0.0  (type exit() or press Ctrl-D to quit)
+Lube 0.1.0  (type exit() or press Ctrl-D to quit)
 >>> 
 [exit 0]
 --- repl line without newline
-Lube 2.0.0  (type exit() or press Ctrl-D to quit)
+Lube 0.1.0  (type exit() or press Ctrl-D to quit)
 >>> 2
 >>> 
 [exit 0]
@@ -949,10 +1203,85 @@ program:1:9: syntax error: expected a type after ':' but found '=>'
     1 | fn f(): => 1
       |         ^
 [exit 65]
---- on inside a function
-program:3: error: 'on' can only be used at the top level of a file
-    3 |   on score { print(score) }
+--- on a captured variable
+program:3: error: this 'on' block would never run: cannot change 'x' here: it belongs to an enclosing function, and closures only get a read-only copy of it
+    3 |   return fn() { on x { } }
 [exit 65]
+--- on a let in a function
+program:3: error: this 'on' block would never run: cannot change 'x': it was declared with let (use var for a variable that changes)
+    3 |   on x { }
+[exit 65]
+--- on this outside a method
+program:1: error: 'this' can only be used inside a class's methods and constructor
+    1 | fn f() { on this { } }
+[exit 65]
+--- on with a default
+program:2:6: syntax error: an 'on' block takes (old, new): the value before the change and after it
+    2 | on a (old = 1, new) { }
+      |      ^
+[exit 65]
+--- on a field that does not exist
+program:3: error: cannot watch this.hpp: a P has no field 'hpp'
+    3 |   fn f() { on this.hpp { } }
+traceback (innermost call first):
+  at f (program:3)
+  at <script> (program:6)
+[exit 70]
+--- on a field of a number
+program:2: error: cannot watch n.x: a Number has no field 'x'
+    2 | fn f() { on n.x { } }
+traceback (innermost call first):
+  at f (program:2)
+  at <script> (program:3)
+[exit 70]
+--- on a missing global in a function
+program:2: error: there is no global variable 'nothing_here' to watch (declare it with var first)
+    2 |   on nothing_here { }
+traceback (innermost call first):
+  at f (program:2)
+  at <script> (program:4)
+[exit 70]
+--- break in an on block
+program:4: error: 'break' can only be used inside a loop
+    4 |     on x { break }
+[exit 65]
+--- strict: on parameters in a function need types
+program:4:10: syntax error: #strict: parameter 'a' needs a type, like a: Number
+    4 |   on x (a, b) { }
+      |          ^
+[exit 65]
+--- an on block's parameter type
+program:4: error: parameter 'a' of on x() is a str, so it cannot take a Number
+    4 |   x = 1
+traceback (innermost call first):
+  at f (program:4)
+  at <script> (program:6)
+[exit 70]
+--- an error in an on block in a function
+program:3: error: boom
+    3 |   on x { throw "boom" }
+traceback (innermost call first):
+  at on x (program:3)
+  at f (program:4)
+  at <script> (program:6)
+[exit 70]
+--- on blocks in a recursion too deep
+program:4: error: stack overflow: too much recursion
+    4 |   x = 1
+traceback (innermost call first):
+  at r (program:4)
+  at r (program:5)
+  ... repeated 99997 more times
+  at <script> (program:7)
+[exit 70]
+--- an on block that needs a variable lent out
+program:7: error: the 'on score' block cannot run now: 'state' is lent out with & to a call that has not returned
+    7 | fn update(&s) { score += 1 }
+traceback (innermost call first):
+  at update (program:7)
+  at main (program:5)
+  at <script> (program:8)
+[exit 70]
 --- on a let
 program:2: error: this 'on' block would never run: cannot change 'score': it was declared with let (use var for a variable that changes)
     2 | on score { print(score) }

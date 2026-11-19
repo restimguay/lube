@@ -137,7 +137,7 @@ static void write_values(int argc, Value *argv, int newline) {
         append_value(&sb, argv[i], 0);
     }
     if (newline) sb_putc(&sb, '\n');
-    if (sb.len) fwrite(sb.data, 1, sb.len, stdout);
+    if (sb.len) lube_output(sb.data, sb.len, 0);
     sb_free(&sb);
 }
 
