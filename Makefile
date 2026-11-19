@@ -5,12 +5,22 @@ CC      ?= cc
 CFLAGS  ?= -O2
 CFLAGS  += -std=c99 -Wall -Wextra -Wno-unused-parameter -pedantic
 LDLIBS  += -lm -lpthread
+UNAME   := $(shell uname -s 2>/dev/null)
+EXE     :=
 
-# Give the interpreter a 64 MB stack on macOS so deep recursion works.
-# (On Linux the main thread stack is set by `ulimit -s`, usually 8 MB.)
-ifeq ($(shell uname -s),Darwin)
-  STACK   := 0x3F00000
+# Give the interpreter a 64 MB stack on macOS and Windows so deep recursion
+# works. (On Linux the main thread's stack is set by `ulimit -s`, usually
+# 8 MB: raise it and pass STACK=... to use more.)
+ifeq ($(UNAME),Darwin)
+  STACK   ?= 0x3F00000
   LDFLAGS += -Wl,-stack_size,$(STACK)
+else ifneq (,$(filter MINGW% MSYS% CYGWIN%,$(UNAME)))
+  STACK   ?= 0x3F00000
+  LDFLAGS += -Wl,--stack,$(STACK)
+  LDLIBS  := -lm  # threads come from Win32 itself
+  EXE     := .exe
+endif
+ifdef STACK
   CFLAGS  += -DLUBE_STACK_SIZE=$(STACK)
 endif
 
@@ -18,8 +28,13 @@ SRC  := $(wildcard src/*.c)
 OBJ  := $(SRC:src/%.c=build/%.o)
 PREFIX ?= /usr/local
 
-lube: $(OBJ)
+lube$(EXE): $(OBJ)
 	$(CC) $(LDFLAGS) -o $@ $(OBJ) $(LDLIBS)
+
+ifneq ($(EXE),)
+lube: lube$(EXE)
+.PHONY: lube
+endif
 
 build/%.o: src/%.c src/lube.h | build
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -38,7 +53,7 @@ lube-check: $(SRC) src/lube.h
 lube-tsan: $(SRC) src/lube.h
 	$(CC) $(CFLAGS) -O1 -g -fsanitize=thread $(LDFLAGS) -o $@ $(SRC) $(LDLIBS)
 
-test: lube
+test: lube$(EXE)
 	@sh tests/run.sh ./lube
 
 check: lube-check
@@ -52,11 +67,11 @@ tsan: lube-tsan
 coverage:
 	@sh tests/coverage.sh
 
-install: lube
+install: lube$(EXE)
 	install -d $(PREFIX)/bin
-	install -m 755 lube $(PREFIX)/bin/lube
+	install -m 755 lube$(EXE) $(PREFIX)/bin/lube$(EXE)
 
 clean:
-	rm -rf build lube lube-check lube-check.dSYM lube-tsan lube-tsan.dSYM
+	rm -rf build lube lube.exe lube-check lube-check.dSYM lube-tsan lube-tsan.dSYM
 
 .PHONY: test check tsan coverage install clean

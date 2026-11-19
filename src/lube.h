@@ -939,6 +939,9 @@ void lock_notify(LubeLock *l);      /* wakes every waiter */
 int thread_start(void (*fn)(void *), void *arg, size_t stack_size);
 int lube_cores(void);
 char **os_lube_files(const char *dir, int *n);  /* sorted; free each and the array */
+#ifdef _WIN32
+char *os_self_path(void);  /* the running program (malloc'd), or NULL */
+#endif
 
 /* isolate.c: isolates (each on its own thread) and the channels between them */
 void register_isolates(Interp *I);

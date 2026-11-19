@@ -1,7 +1,8 @@
 /*
  * thread.c - the little of the operating system that plain C lacks: threads
  * and a lock with a condition to wait on (for isolates), and listing a
- * folder (for packages). POSIX on macOS, Linux, iOS and Android; Win32 on
+ * folder (for packages); on Windows, also the path of the running program
+ * (for lube --build). POSIX on macOS, Linux, iOS and Android; Win32 on
  * Windows. Both are part of the system's own C library.
  */
 #if !defined(_WIN32) && !defined(__APPLE__) && !defined(_GNU_SOURCE)
@@ -62,7 +63,7 @@ int thread_start(void (*fn)(void *), void *arg, size_t stack_size) {
     Start *s = xmalloc(sizeof(Start));
     s->fn = fn;
     s->arg = arg;
-    HANDLE h = CreateThread(NULL, stack_size, thread_main, s, 0, NULL);
+    HANDLE h = CreateThread(NULL, stack_size, thread_main, s, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
     if (!h) {
         free(s);
         return 0;
@@ -88,6 +89,13 @@ char **os_lube_files(const char *dir, int *n) {
     FindClose(h);
     if (*n) qsort(names, (size_t)*n, sizeof(char *), by_name);
     return names;
+}
+
+/* The running program's path (malloc'd), or NULL. */
+char *os_self_path(void) {
+    char buf[4096];
+    DWORD n = GetModuleFileNameA(NULL, buf, sizeof buf);
+    return n > 0 && n < sizeof buf ? xstrndup(buf, n) : NULL;
 }
 
 int lube_cores(void) {

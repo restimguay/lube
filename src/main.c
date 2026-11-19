@@ -6,6 +6,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
 
 static void usage(FILE *out) {
     fprintf(out,
@@ -121,6 +125,12 @@ static void lower_limit(const char *name, size_t *limit) {
 
 int main(int argc, char **argv) {
     char stack_marker;  /* the interpreter measures recursion depth from here */
+#ifdef _WIN32
+    /* bytes in and out as they are: "\n" stays "\n", as on every other system */
+    _setmode(_fileno(stdin), _O_BINARY);
+    _setmode(_fileno(stdout), _O_BINARY);
+    _setmode(_fileno(stderr), _O_BINARY);
+#endif
     lower_limit("LUBE_MAX_ITEMS", &lube_max_items);
     lower_limit("LUBE_MAX_BYTES", &lube_max_bytes);
     Interp *I = lube_new(&stack_marker);

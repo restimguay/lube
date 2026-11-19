@@ -17,6 +17,9 @@
  * for the trailer at the end of its own file and, when it is there, runs the
  * packed program with every command-line argument in `args`.
  */
+#if defined(__unix__) && !defined(__APPLE__) && !defined(_POSIX_C_SOURCE)
+#define _POSIX_C_SOURCE 200809L  /* chmod under -std=c99 */
+#endif
 #include "lube.h"
 
 #include <stdio.h>
@@ -40,8 +43,13 @@ static size_t get_uint(const unsigned char *p, int bytes) {
 }
 
 /* The path of the running executable: Linux's /proc/self/exe, or argv[0]
- * (as given, or found on PATH). NULL when it cannot be found. */
+ * (as given, or found on PATH); Windows says where it is. NULL when it
+ * cannot be found. */
 static char *find_self(const char *argv0) {
+#ifdef _WIN32
+    (void)argv0;
+    return os_self_path();
+#else
     FILE *f = fopen("/proc/self/exe", "rb");
     if (f) {
         fclose(f);                              /* LCOV_EXCL_START: Linux only */
@@ -66,6 +74,7 @@ static char *find_self(const char *argv0) {
     }
     sb_free(&path);
     return NULL;
+#endif
 }
 
 /* ---------- building ---------- */
