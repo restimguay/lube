@@ -24,3 +24,8 @@ Dog() takes 1 to 2 arguments but got 3
 Animal() takes 0 arguments but got 1
 Dog has no method 'fly'
 called a function stored in a field
+Bag {items: [9, 7], n: 2} Bag {items: [1, 7], n: 40}
+this Number[] can only hold Number values, not a str
+field 'n' of Bag is a Number, so it cannot hold a str
+[[0, 0], [7, 3]] [5, 2]
+5

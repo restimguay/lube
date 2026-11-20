@@ -1,0 +1,156 @@
+# Builds and tests Lube on Linux, macOS and Windows; packages a binary for
+# each. Pushing a tag like v0.1.0 also publishes them as a GitHub release.
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux (${{ matrix.cc }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [gcc, clang]
+    env:
+      CC: ${{ matrix.cc }}
+      CFLAGS: -O2 -Werror
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: make -k
+      - name: Test
+        run: make test
+      # The sanitizers' runtimes need a smaller address randomization than
+      # this kernel's default.
+      - name: Allow the sanitizers' memory layout
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      - name: Test with AddressSanitizer and UndefinedBehaviorSanitizer (and the leak check)
+        run: make check
+      - name: Test with ThreadSanitizer
+        run: make tsan
+      - name: Keep the output of failing tests
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failed-tests-${{ runner.os }}-${{ matrix.cc }}
+          path: build/failed/
+          if-no-files-found: ignore
+      - name: Package (a static binary, for any distribution)
+        if: matrix.cc == 'gcc'
+        run: |
+          make clean
+          LDFLAGS="-static -s" make
+          ./lube -e 'print("lube runs:", 1 + 2)'
+          tar czf lube-linux-x86_64.tar.gz lube README.md
+      - uses: actions/upload-artifact@v4
+        if: matrix.cc == 'gcc'
+        with:
+          name: lube-linux-x86_64
+          path: lube-linux-x86_64.tar.gz
+
+  macos:
+    name: macOS
+    runs-on: macos-latest
+    timeout-minutes: 20
+    env:
+      CFLAGS: -O2 -Werror
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: make -k
+      - name: Test
+        run: make test
+      - name: Test with AddressSanitizer and UndefinedBehaviorSanitizer (and the leak check)
+        run: make check
+      - name: Coverage (every line and function must run)
+        run: make coverage
+      - name: Keep the output of failing tests
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failed-tests-${{ runner.os }}
+          path: build/failed/
+          if-no-files-found: ignore
+      - name: Package (a universal binary, for Apple silicon and Intel)
+        run: |
+          make clean
+          CFLAGS="-O2 -arch arm64 -arch x86_64" LDFLAGS="-arch arm64 -arch x86_64" make
+          strip lube
+          lipo -info lube
+          ./lube -e 'print("lube runs:", 1 + 2)'
+          tar czf lube-macos-universal.tar.gz lube README.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lube-macos-universal
+          path: lube-macos-universal.tar.gz
+
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: msys2 {0}
+    env:
+      CFLAGS: -O2 -Werror
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: false
+          install: make diffutils mingw-w64-ucrt-x86_64-gcc zip
+      - name: Build
+        run: make -k
+      - name: Test
+        run: make test
+      - name: Keep the output of failing tests
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failed-tests-${{ runner.os }}
+          path: build/failed/
+          if-no-files-found: ignore
+      - name: Package (no DLLs needed)
+        run: |
+          make clean
+          LDFLAGS="-static -s" make
+          ./lube.exe -e 'print("lube runs:", 1 + 2)'
+          zip lube-windows-x86_64.zip lube.exe README.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lube-windows-x86_64
+          path: lube-windows-x86_64.zip
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, macos, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Publish the binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --title "Lube ${GITHUB_REF_NAME#v}" --generate-notes \
+            lube-linux-x86_64.tar.gz lube-macos-universal.tar.gz lube-windows-x86_64.zip

@@ -47,8 +47,21 @@ show(fn() => sum(["a"]))
 show(fn() => min([]))
 show(fn() => max(1, "a"))
 show(fn() => sort([2, num("nan")]))
+show(fn() => max([1, num("nan")]))
+show(fn() => sort([int32(1), num("nan")]))
 show(fn() => sort([2, 1], fn(a, b) => "neither"))
 print(min("b", "ab"), max(["x", "xy"]), sort(["b", "a", "ab"]), sort([3, 1, 2], fn(a, b) => b - a))
+print(round(9007199254740991), round(4503599627370497), round(0.49999999999999994), round(-2.5), round(2.5))  // halves up, exactly
+var many = Number[]  // many Numbers: sorted by their bits, the same as a merge sort
+for i in 0..300 { many.push((i * 7919) % 601 - 300 + i / 1000) }
+for v in [0 * -1, 0, 1e300, 0 * -1, -1e300, 5e-324, 0, -5e-324] { many.push(v) }
+let sorted = sort(many)
+var ordered = true
+for i in 1..len(sorted) { if sorted[i] < sorted[i - 1] { ordered = false } }
+var zeros = Number[]  // -0 and 0, in the order they came (pow(-0, -1) is -inf)
+for v in sorted { if v == 0 { zeros.push(pow(v, -1)) } }
+print(ordered, len(sorted), sorted[0], sorted[1], sorted[150], sorted[len(sorted) - 1], zeros)
+show(fn() => sort(many + [num("nan")]))
 print(reverse(0..3), reverse("abc"), index_of([1, 2], 3), index_of("hello", "z"), join(0..3, "-"))
 print(zip([1, 2, 3], "ab"), zip(0..2, [true, false]))
 show(fn() => zip([1], 5))

@@ -63,7 +63,7 @@ ObjString *string_append(ObjString *s, const char *chars, size_t n) {
         uintptr_t from = (uintptr_t)chars, lo = (uintptr_t)s->chars;
         int inside = from >= lo && from <= lo + s->length;  /* appending part of itself */
         size_t offset = (size_t)(from - lo);
-        s = xrealloc(s, sizeof(ObjString) + cap + 1);
+        s = (ObjString *)realloc_object(&s->obj, sizeof(ObjString) + s->capacity + 1, sizeof(ObjString) + cap + 1);
         s->capacity = cap;
         if (inside) chars = s->chars + offset;
     }
@@ -98,9 +98,11 @@ ObjString *lube_intern(Interp *I, const char *chars, size_t length) {
 
 long str_find(const char *hay, size_t hlen, const char *needle, size_t nlen, size_t from) {
     if (nlen == 0) return from <= hlen ? (long)from : -1;
-    if (nlen > hlen) return -1;
-    for (size_t i = from; i + nlen <= hlen; i++) {
-        if (hay[i] == needle[0] && memcmp(hay + i, needle, nlen) == 0) return (long)i;
+    if (nlen > hlen || from > hlen - nlen) return -1;
+    const char *p = hay + from, *end = hay + (hlen - nlen) + 1;  /* (the first byte by memchr: quick) */
+    while (p < end && (p = memchr(p, needle[0], (size_t)(end - p))) != NULL) {
+        if (memcmp(p, needle, nlen) == 0) return (long)(p - hay);
+        p++;
     }
     return -1;
 }
@@ -128,9 +130,9 @@ ObjList *new_list(void) {
 void list_reserve(ObjList *l, size_t n) {
     if (n <= l->capacity) return;
     if (n > LUBE_MAX_ITEMS) lube_out_of_memory();
-    size_t cap = l->capacity ? l->capacity : 8;
+    size_t cap = l->capacity ? l->capacity * 2 : n > 1 ? n : 4;  /* (a literal's items: just enough) */
     while (cap < n) cap *= 2;
-    l->items = xrealloc(l->items, cap * sizeof(Value));
+    l->items = lube_block_realloc(l->items, l->capacity * sizeof(Value), cap * sizeof(Value));
     l->capacity = cap;
 }
 
@@ -671,9 +673,19 @@ void format_number(char *buf, size_t size, double n) {
         snprintf(buf, size, "nan");
     } else if (isinf(n)) {
         snprintf(buf, size, n > 0 ? "inf" : "-inf");
-    } else if (n == floor(n) && fabs(n) < 1e16) {
-        if (n == 0) n = 0;  /* print -0 as 0 */
-        snprintf(buf, size, "%.0f", n);
+    } else if (n == floor(n) && fabs(n) < 1e16) {  /* a whole number: its digits (exact in an int64; -0 is 0) */
+        char digits[24];
+        int len = 0;
+        long long k = (long long)n;
+        unsigned long long u = k < 0 ? 0ull - (unsigned long long)k : (unsigned long long)k;
+        do {
+            digits[len++] = (char)('0' + u % 10);
+            u /= 10;
+        } while (u);
+        if (k < 0) digits[len++] = '-';
+        size_t i = 0;
+        while (len > 0 && i + 1 < size) buf[i++] = digits[--len];
+        buf[i] = '\0';
     } else {
         for (int prec = 15; prec <= 17; prec++) {
             snprintf(buf, size, "%.*g", prec, n);

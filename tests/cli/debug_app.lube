@@ -1,0 +1,32 @@
+// A program for the debugger tests in tests/cli.sh.
+class Item {
+  var name = ""
+  var price = 0
+  constructor(n: str, p: Number) {
+    this.name = n
+    this.price = p
+  }
+}
+fn total(items: List): Number {
+  var sum = 0
+  for item in items {
+    sum += item.price
+  }
+  return sum
+}
+fn shadow(): Number {
+  let x = 1
+  let add = fn(y) => x + y
+  if true {
+    let x = 2
+    return add(x)
+  }
+}
+let factor = 2
+let items = [Item("pen", 2), Item("book", 10), Item("ink", 5)]
+let t = total(items)
+let scaled = items.map(fn(i) => i.price * factor)
+print("total", t, scaled, shadow())
+fn fails(n: Number): Number => 10 / n
+try { fails(0) } catch e { print("caught:", e) }
+print(fails(0))

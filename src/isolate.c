@@ -619,7 +619,7 @@ void isolate_release(Isolate *iso) {
     lock_release(world);
     if (!last) return;
     if (iso->error && !iso->error_seen)  /* nobody joined it to hear about this */
-        fprintf(stderr, "lube: an isolate running %s() failed: %s\n", shown(iso->fname), iso->error);
+        lube_print(1, "lube: an isolate running %s() failed: %s\n", shown(iso->fname), iso->error);
     if (iso->args) message_free(iso->args);
     if (iso->result) message_free(iso->result);
     free(iso->error);
@@ -707,14 +707,15 @@ static void isolate_main(void *arg) {
         }
     }
     size_t alive = lube_free(I);
+    lube_pool_drain();  /* (its thread ends: the main one's goes with the process) */
 #ifdef LUBE_CHECK_LEAKS
-    if (alive) fprintf(stderr, "lube: leak check failed in an isolate: %lu objects still alive\n", (unsigned long)alive);
+    if (alive) lube_print(1, "lube: leak check failed in an isolate: %lu objects still alive\n", (unsigned long)alive);
 #endif
     lock_acquire(world);
     int orphan = iso->refs == 1 && error;  /* nobody holds a handle to join it: report the error now */
     if (orphan) iso->error_seen = 1;
     lock_release(world);
-    if (orphan) fprintf(stderr, "lube: an isolate running %s() failed: %s\n", shown(iso->fname), error);
+    if (orphan) lube_print(1, "lube: an isolate running %s() failed: %s\n", shown(iso->fname), error);
     lock_acquire(world);
     if (alive) leaked = 1;
     iso->result = result;
@@ -930,20 +931,21 @@ static const struct {
     NativeFn fn;
     int min, max;
 } ISOLATES[] = {
-    {"channel", n_channel, 0, 1},
-    {"Channel", n_channel, 0, 1},
-    {"send", n_send, 2, 2},
-    {"receive", n_receive, 1, 1},
-    {"try_receive", n_try_receive, 2, 2},
-    {"close", n_close, 1, 1},
-    {"take", n_take, 2, 2},
-    {"spawn", n_spawn, 1, -1},
-    {"cores", n_cores, 0, 0},
-    {"parallel_map", n_parallel_map, 2, 2},
+    LUBE_BUILTIN(channel, n_channel, 0, 1)
+    LUBE_BUILTIN(Channel, n_channel, 0, 1)
+    LUBE_BUILTIN(send, n_send, 2, 2)
+    LUBE_BUILTIN(receive, n_receive, 1, 1)
+    LUBE_BUILTIN(try_receive, n_try_receive, 2, 2)
+    LUBE_BUILTIN(close, n_close, 1, 1)
+    LUBE_BUILTIN(take, n_take, 2, 2)
+    LUBE_BUILTIN(spawn, n_spawn, 1, -1)
+    LUBE_BUILTIN(cores, n_cores, 0, 0)
+    LUBE_BUILTIN(parallel_map, n_parallel_map, 2, 2)
+    {NULL, NULL, 0, 0}  /* (the end) */
 };
 
 void register_isolates(Interp *I) {
-    for (size_t i = 0; i < sizeof ISOLATES / sizeof ISOLATES[0]; i++)
+    for (size_t i = 0; ISOLATES[i].name; i++)
         lube_define(I, ISOLATES[i].name,
                     OBJ_VAL(new_native(ISOLATES[i].name, ISOLATES[i].fn, ISOLATES[i].min, ISOLATES[i].max, 0)));
 }

@@ -1,0 +1,45 @@
+// A program for lube --build --small (tests/cli.sh builds it into an
+// executable with only the parts of Lube it uses): built or run as a
+// script, it prints what small.out says. It uses every kind of code.
+import shapes
+import shapes.Point
+
+class Animal {
+  var name = "animal"
+  var legs = 4
+  constructor(name: str) { this.name = name }
+  fn speak() => "..."
+}
+class Dog extends Animal {
+  fn speak() => "woof, not " + super.speak()
+}
+fn describe(a, loud = false) {
+  let s = "{a.name} says {a.speak()}"
+  if loud { return upper(s) }
+  return s
+}
+fn never_called() => tan(1)  // nothing reaches it (find_class below could: classes by name)
+var total = 0
+on total {
+  if total > 100 { print("over 100") }
+}
+var xs = [3, 1, 2]
+xs.push(4)
+push(&xs, 5)
+let ys = Number[1.5, 2.5]
+let m = {"a": 1, "b": 2}
+for k, v in m { total += v }
+for i in 0..len(xs) {
+  if i == 3 { continue }
+  total += xs[i] * 10
+  if total > 200 { break }
+}
+var n = 0
+while n < 3 { n += 1 }
+let twice = fn(x) => x * 2
+let d = Dog("rex")
+print(describe(d), describe(Animal("cat"), true), d is Animal, not (d is Point))
+print(sort(xs), ys, twice(21), -n, total, n > 2 and total > 0 or false)
+print(shapes.len(Point(3, 4)), shapes.count, find_class("Dog") == class_of(d))
+try { throw "oops" } catch e { print("caught", e) }
+print(join(map(xs, fn(x) => "{x}"), "-"))

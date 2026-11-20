@@ -80,3 +80,185 @@ fn shadow() {
   return score
 }
 print(shadow(), score)
+
+// ---- on inside functions, methods and blocks ----
+// The block runs on the function's frame: it sees and changes the function's
+// variables, and lasts until the code around it ends.
+fn game() {
+  var points = 0
+  var log = []
+  on points (old, new) { log.push("{old}->{new}") }
+  on points (old, new) when new > old { print("+", new - old) }
+  points += 10
+  points = 10            // the same value: nothing runs
+  points = 4
+  print(log)
+}
+game()
+
+// in a method, watching a field of this
+class Fighter {
+  var hp = 10
+  var name = "ada"
+  fn fight() {
+    on this.hp (old, new) when new <= 0 { print(this.name, "is down") }
+    on this.hp (old, new) { print("hp", old, "->", new) }
+    this.hp -= 3
+    this.name = "bob"    // another field: hp did not change
+    this.hp -= 8
+  }
+}
+var fighter = Fighter()
+fighter.fight()
+print("fighter hp", fighter.hp)
+
+// in a constructor
+class Counter {
+  var n = 0
+  var history = Number[]
+  constructor() {
+    on this.n (old, new) { this.history.push(new) }
+    this.n = 1
+    this.n = 2
+  }
+}
+print("history", Counter().history)
+
+// blocks can change the function's other watched variables
+fn chain() {
+  var x = 0
+  var y = 0
+  on x (old, new) { y = new * 2 }
+  on y (old, new) { print("y is", new) }
+  x = 5
+  print(x, y)
+}
+chain()
+
+// changes through & and methods count
+fn lend() {
+  var items = []
+  on items (old, new) { print("items", len(old), "->", len(new)) }
+  items.push(1)
+  push(&items, 2)
+  fn add(&xs) { xs.push(3) }
+  add(&items)
+  print("length", items.len())   // no change
+}
+lend()
+
+// a block in a function can watch a global while the function runs
+var tally = 0
+fn watch_tally() {
+  var seen = 0
+  on tally { seen += 1 }
+  tally += 1
+  bump()                 // changed in another function
+  print("seen", seen)
+}
+fn bump() { tally += 5 }
+watch_tally()
+tally += 1               // the function returned: its block is gone
+print("tally", tally)
+
+// a block lasts until the block of code around it ends
+fn scoped() {
+  var v = 0
+  if true {
+    on v { print("v is", v) }
+    v = 1
+  }
+  v = 2                  // out of scope: nothing runs
+  for i in 0..3 {
+    on v (old, new) { print("loop", i, old, new) }
+    v += 1
+  }
+  v = 100
+}
+scoped()
+
+// closures in a block, the function's captures, and return
+fn labelled() {
+  var n = 0
+  var label = "count"
+  on n (old, new) {
+    let show = fn() => "{label}: {new}"
+    print(show())
+    return
+  }
+  n = 1
+}
+labelled()
+fn outer() {
+  let unit = "pts"
+  return fn() {
+    var s = 0
+    on s (o, w) { print(w, unit) }
+    s = 7
+  }
+}
+outer()()
+
+// a block's own changes do not run it again
+fn own() {
+  var c = 0
+  on c (old, new) {
+    print("c", old, "->", new)
+    if new < 3 { c = new + 1 }
+  }
+  c = 1
+  print("c is", c)
+}
+own()
+
+// each call has its own blocks
+fn depth(k) {
+  var w = 0
+  on w (old, new) { print("depth", k, "w", new) }
+  if k < 2 { depth(k + 1) }
+  w = k
+}
+depth(0)
+
+// typed (old, new)
+fn typed() {
+  var t = 1
+  on t (a: Number, b: Number) { print("typed", a, b) }
+  t = 2
+}
+typed()
+
+// a field of a global, at the top level
+var hero = {name: "ada", hp: 10}
+on hero.hp (old, new) { print("hero hp", old, "->", new) }
+hero.name = "bob"
+hero.hp -= 1
+
+// a block inside a block lasts while the outer one runs
+fn nested() {
+  var p = 0
+  var q = 0
+  on p {
+    on q { print("q changed in p's block") }
+    q = 1
+  }
+  p = 1
+  q = 2
+}
+nested()
+
+// in a block of code at the top level
+{
+  var z = 0
+  on z (o, n) { print("z", o, n) }
+  z = 9
+}
+
+// an error in the block reaches the change
+fn guarded_local() {
+  var g = 0
+  on g (old, new) when new < 0 { throw "g cannot be negative" }
+  try { g = -1 } catch e { print("caught:", e) }
+  print("g is", g)
+}
+guarded_local()

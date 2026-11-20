@@ -1,12 +1,20 @@
 #!/bin/sh
 # Command-line tests: flags, the REPL, standard input, files, exit codes,
 # environment limits, and programs that stop with an error (each needs a run
-# of its own). run.sh compares the output with tests/cli.out.
+# of its own). run.sh compares the output with tests/cli.out, and the output
+# of `cli.sh LUBE os` (what differs from system to system) with
+# tests/cli.<system>.out.
 #
-#   sh tests/cli.sh [path-to-lube]
+#   sh tests/cli.sh [path-to-lube] [os]
 cd "$(dirname "$0")/.." || exit 1
 LUBE=${1:-./lube}
+SECTION=${2:-common}
+OS=$(uname -s)
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/lube-test.XXXXXX" | sed 's|//*|/|g')  # one slash: lube tidies paths
+TMP_IN_PATH=$TMP
+case "$OS" in  # Windows (MSYS2): the path as lube sees and prints it, C:/... (but not in PATH, split at :)
+    MINGW* | MSYS* | CYGWIN*) OS=Windows TMP=$(cygpath -m "$TMP") ;;
+esac
 trap 'rm -rf "$TMP"' EXIT
 
 # run LABEL COMMAND...: the label, the command's output, and its exit status.
@@ -36,6 +44,32 @@ status() {  # status LABEL COMMAND...: only the exit status (for exit codes)
     "$@" >/dev/null 2>&1
     echo "[exit $?]"
 }
+ABS="$(cd "$(dirname "$LUBE")" && pwd)/$(basename "$LUBE")"
+
+# ---- what differs from system to system ----
+if [ "$SECTION" = os ]; then
+    printf 'print("default name", args)\n' >"$TMP/tool.lube"
+    run "build named after the file" sh -c 'cd "$1" && "$2" --build tool.lube && ./tool x' sh "$TMP" "$ABS"
+    printf 'print(1)\n' >"$TMP/noext"  # (on Windows the executable is noext.exe)
+    run "build that would replace its source" sh -c 'cd "$1" && "$2" --build noext' sh "$TMP" "$ABS"
+    if [ "$OS" != Windows ]; then  # (Windows always says where lube is)
+        run "build when lube cannot find itself" perl -e 'exec {shift} "no-such-lube", @ARGV' "$ABS" --build "$TMP/tool.lube" -o "$TMP/x"
+    fi
+    if [ "$OS" != Windows ]; then  # (MSYS2's kill cannot send Ctrl-C to a Windows program)
+        printf 'var i = 0\nwhile true {\n  i += 1\n}\n' >"$TMP/spin.lube"
+        printf 'c\np i > 0\nq\n' >"$TMP/spin.cmds"
+        echo "--- debugger: Ctrl-C pauses a running program"
+        "$LUBE" --debug "$TMP/spin.lube" <"$TMP/spin.cmds" >"$TMP/out" 2>&1 &
+        pid=$!
+        sleep 1
+        kill -INT "$pid"
+        wait "$pid"
+        code=$?
+        sed "s|$TMP|TMP|g" "$TMP/out" | sed -E 's/spin\.lube:[0-9]+/spin.lube:N/; s/^    [0-9] \| .*/    N | (a line of the loop)/'
+        echo "[exit $code]"
+    fi
+    exit 0
+fi
 
 # ---- flags ----
 run "version" "$LUBE" --version
@@ -59,7 +93,6 @@ run "check a missing file" "$LUBE" --check tests/does-not-exist.lube
 run "check without a file" "$LUBE" --check
 
 # ---- standalone executables ----
-ABS="$(cd "$(dirname "$LUBE")" && pwd)/$(basename "$LUBE")"
 mkdir -p "$TMP/app/lib" "$TMP/shared" "$TMP/elsewhere"
 printf 'import "lib/greet"\nimport "../shared/util"\nprint(greeting("app"), shout("hi"), args)\nprint(read_file("data.txt"))\n' >"$TMP/app/main.lube"
 printf 'import "../../shared/util"\nfn greeting(who: str): str => "hello from " + who\n' >"$TMP/app/lib/greet.lube"
@@ -69,19 +102,36 @@ run "build with imports" "$LUBE" --build "$TMP/app/main.lube" -o "$TMP/elsewhere
 mv "$TMP/app" "$TMP/app-moved"  # the executable no longer needs the sources
 run "run the executable, with arguments" sh -c 'cd "$1/elsewhere" && ./app one --help -e' sh "$TMP"
 printf 'print("default name", args)\n' >"$TMP/tool.lube"
-run "build named after the file" sh -c 'cd "$1" && "$2" --build tool.lube && ./tool x' sh "$TMP" "$ABS"
 run "build found on PATH" env PATH="/no/such/dir:$(dirname "$ABS"):$PATH" "$(basename "$ABS")" --build "$TMP/tool.lube" -o "$TMP/tool2"
-run "run a build found on PATH" env PATH="$TMP:$PATH" tool2 y
+run "run a build found on PATH" env PATH="$TMP_IN_PATH:$PATH" tool2 y
 printf 'let x = (\n' >"$TMP/broken.lube"
 printf 'import "missing"\n' >"$TMP/needs.lube"
-printf 'print(1)\n' >"$TMP/noext"
 run "build a file with errors" "$LUBE" --build "$TMP/broken.lube" -o "$TMP/x"
 run "build with a missing import" "$LUBE" --build "$TMP/needs.lube" -o "$TMP/x"
 run "build a missing file" "$LUBE" --build "$TMP/none.lube" -o "$TMP/x"
-run "build that would replace its source" sh -c 'cd "$1" && "$2" --build noext' sh "$TMP" "$ABS"
 run "build to a folder that does not exist" "$LUBE" --build "$TMP/tool.lube" -o "$TMP/no/such/dir/app"
 run "build with bad options" "$LUBE" --build "$TMP/tool.lube" -x out
-run "build when lube cannot find itself" perl -e 'exec {shift} "no-such-lube", @ARGV' "$ABS" --build "$TMP/tool.lube" -o "$TMP/x"
+
+# ---- native code: lube --build --native (machine code for the fns on Numbers and Bools) ----
+# The same output as a script and built; then the ways it gives up.
+SRC="$PWD/src"
+run "native: the program as a script" "$LUBE" tests/cli/native.lube
+run "native: the program built" sh -c 'LUBE_SRC="$3" "$1" --build --native tests/cli/native.lube -o "$2/native_app" && "$2/native_app"' sh "$ABS" "$TMP" "$SRC"
+run "native: a limit on items, as a script" env LUBE_MAX_ITEMS=200 "$LUBE" tests/cli/native.lube
+run "native: a limit on items, built" env LUBE_MAX_ITEMS=200 "$TMP/native_app"
+run "small: only the parts of Lube it uses, built" sh -c 'LUBE_SRC="$3" "$1" --build --small tests/small.lube -o "$2/small_app" && "$2/small_app"' sh "$ABS" "$TMP" "$SRC"
+run "small: natives too, built" sh -c 'LUBE_SRC="$3" "$1" --build --small --native tests/cli/native_fast.lube -o "$2/small_native" && "$2/small_native"' sh "$ABS" "$TMP" "$SRC"
+run "build: --fast needs --native" "$LUBE" --build --fast tests/small.lube
+run "small: an output folder that does not exist" env LUBE_SRC="$SRC" "$LUBE" --build --small tests/small.lube -o "$TMP/no/such/dir/app"
+run "native: --fast (wrapping whole numbers), built" sh -c 'LUBE_SRC="$3" "$1" --build --native --fast tests/cli/native_fast.lube -o "$2/fast_app" && "$2/fast_app"' sh "$ABS" "$TMP" "$SRC"
+run "native: top-level loops, as a script" "$LUBE" tests/cli/native_loops.lube
+run "native: top-level loops, built" sh -c 'LUBE_SRC="$3" "$1" --build --native tests/cli/native_loops.lube -o "$2/loops_app" && "$2/loops_app"' sh "$ABS" "$TMP" "$SRC"
+run "native: nothing can be" env LUBE_SRC="$SRC" "$LUBE" --build --native tests/cli/args.lube -o "$TMP/args_native"
+run "native: without Lube's sources" env LUBE_SRC=/no/such/dir "$LUBE" --build --native tests/cli/native.lube -o "$TMP/x"
+mkdir -p "$TMP/bin" && cp "$ABS" "$TMP/bin/lube"
+run "native: no sources next to lube" env -u LUBE_SRC "$TMP/bin/lube" --build --native tests/cli/native.lube -o "$TMP/x"
+run "native: the C compiler fails" env LUBE_SRC="$SRC" CC=false "$LUBE" --build --native tests/cli/native.lube -o "$TMP/x"
+run "native: an output folder that does not exist" env LUBE_SRC="$SRC" "$LUBE" --build --native tests/cli/native.lube -o "$TMP/no/such/dir/app"
 
 # ---- isolates (several write at once, so their lines are sorted) ----
 run "isolates that fail with nobody joining, and one left waiting at the end" sh -c '"$1" -e "$2" 2>&1 | sort' sh "$ABS" 'fn boom(n) => 1 / n
@@ -151,6 +201,17 @@ write_file(args[0], "package live\nfn version() => 2\nfn added() => \"new\"\n")
 hot_reload()
 print(live.version(), live.added())' "$TMP/pkgs/live/live.lube"
 
+# ---- the terminal debugger (lube --debug) ----
+D=tests/cli/debug_app.lube
+feed "debugger: breakpoints, values, frames, stepping" 'h\nbl\nb nope\nb 13 if item.price > 3\nc\np item\np sum + 1\np nothing_here\np 1 +\np 1; 2\np print("side effect")\nlocals\nglobals\nbt\nup\nlocals\nframe 9\nframe 0\ndown\nl\nn\nn\nbl\nd 7\nd 1\nlog 28 mapping {i.name}\ntb 28\nc\ns\nlocals\no\nb 22\nc\nlocals\ns\nlocals\nwhat\n\nd\ncatch bogus\ncatch all\nc\nbt\ncatch off\nc\n' "$LUBE" --debug "$D"
+feed "debugger: an uncaught error stops where it is raised" 'c\np n\nbt\nc\n' "$LUBE" --debug "$D"
+feed "debugger: hit counts, a broken condition, and quitting" 'b 13 hits 2\nb 13 if nope\nc\nc\np item.name\np sum = 5\nd\nb tests/cli/debug_app.lube:13 hits % 3\nc\np item.name\nq\n' "$LUBE" --debug "$D"
+printf 'import shapes.Point\nlet p = Point(1, 2)\nprint(p)\n' >"$TMP/uses_shapes.lube"
+feed "debugger: expressions see the file's imports" 'n\np Point(3, 4)\np p.x\nc\n' env LUBE_PATH="$SHAPES" "$LUBE" --debug "$TMP/uses_shapes.lube"
+feed "debugger: no more commands runs the program on" 'b 13\nc\n' "$LUBE" --debug "$D"
+feed "debugger: in an on block in a function" 'b 7\nc\nlocals\np gain * bonus + score\nbt\nup\nlocals\nn\nn\nn\nn\nc\n' "$LUBE" --debug tests/cli/debug_on.lube
+run "debugger without a file" "$LUBE" --debug
+
 # ---- hot reload ----
 mkdir -p "$TMP/hot" "$TMP/hotloop"
 cp tests/cli/hot.lube "$TMP/hot/main.lube"
@@ -192,6 +253,9 @@ run "import that raises an error" "$LUBE" "$TMP/mods/main4.lube"
 printf 'let LIMIT = 5\n' >"$TMP/mods/consts.lube"
 printf 'import "consts"\non LIMIT { print(LIMIT) }\n' >"$TMP/mods/main5.lube"
 run "on a let from an import" "$LUBE" "$TMP/mods/main5.lube"
+printf 'fn helper() => 1\nfn use() => helper()\nprint(use())\nimport "replaces"\nprint(use())\n' >"$TMP/mods/main6.lube"
+printf 'let helper = 5\n' >"$TMP/mods/replaces.lube"
+run "a fn an import replaces" "$LUBE" "$TMP/mods/main6.lube"
 
 # ---- exit codes ----
 status "exit(3)" "$LUBE" -e 'exit(3)'

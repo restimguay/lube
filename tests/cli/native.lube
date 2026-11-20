@@ -1,0 +1,429 @@
+// lube --build --native compiles the functions here that compute only with
+// Numbers and Bools to machine code; run as a script and built, the output
+// is the same.
+fn fib(n: Number): Number {
+  if n < 2 { return n }
+  return fib(n - 1) + fib(n - 2)
+}
+
+fn sum_mod(n: Number): Number {  // whole numbers in a while loop
+  var total = 0
+  var i = 0
+  while i < n {
+    total += i % 7
+    i += 1
+  }
+  return total
+}
+
+fn mixed(x: Number): Number {  // whole and fractional Numbers together
+  var t = 0
+  for i in 0..5 { t += i * x }
+  for i, v in 1..=3 { t -= i + v / 2 }
+  for f in 0.5..3 { t += f }
+  return t
+}
+
+fn ops(a: Number, b: Number): Number => a * b - a / b + a ** 2 - a % b + -a
+
+fn compare(a: Number, b: Number): Bool => a < b and b <= 10 or a == b or not (a > 1) or a >= b and a != 2
+
+fn flags(start: Bool, n: Number): Number {
+  var count = 0
+  var keep = start
+  for i in 0..n {
+    if keep == true { count += 1 } else { count -= 1 }
+    keep = not keep
+    if count > 100 { break }
+    if i < 0 { continue }
+  }
+  return count
+}
+
+fn sums(xs, n: Number): Number {  // accumulators (total += x): checked once, after the loop
+  var total = 0
+  for i in 0..n {
+    total += i
+    var tmp = [i, 1]
+    var typed = Number[i]
+    total += len(tmp) + len(typed)
+    if xs[0].x > 0 { total -= 1 }
+  }
+  return total
+}
+fn past_2_53(n: Number): Number {  // an accumulator past 2^53: the whole-number version gives up
+  var t = 4503599627370496
+  var u = 0
+  for i in 0..n {
+    t += 4503599627370496
+    u -= 4503599627370496
+  }
+  return t - u
+}
+fn with_text(n: Number): Number {  // text: not native
+  var t = 0
+  for i in 0..n {
+    t += i
+    let s = "{i}"
+  }
+  return t
+}
+fn rounded(x: Number): Number => round(x)  // halves up; a whole number is itself
+// values (any Lube value): lists of lists, and lists given by the VM
+fn tree(d: Number) {  // a value back
+  if d == 0 { return [] }
+  return [tree(d - 1), tree(d - 1)]
+}
+fn nodes(t): Number {
+  if len(t) == 0 { return 1 }
+  return 1 + nodes(t[0]) + nodes(t[1])
+}
+fn sum_all(xs): Number {  // a list from the VM: its items unboxed
+  var t = 0
+  for i in 0..len(xs) { t += xs[i] }
+  return t
+}
+fn corner(m): Number => m[0][1] + m[-1][-1]
+fn depth(t): Number {  // values in variables (borrowed)
+  var d = 0
+  var at = t
+  while len(at) > 0 {
+    let left = at[0]
+    at = left
+    d += 1
+  }
+  return d
+}
+fn flags_on(fs): Number {
+  var n = 0
+  for i in 0..len(fs) {
+    if fs[i] { n += 1 }
+  }
+  return n
+}
+fn pair(a, b) => [a, b, [a], 1, true]  // borrowed values in it: one more owner each
+fn first(xs) => xs[0]
+fn same(x) => x
+fn negated(xs): Bool => not xs[0] and xs[1] == false
+fn boxed_back(n: Number) => n * 2
+fn nothing_back(n: Number) {  // falls off the end: the VM gives nothing
+  if n > 5 { return [n] }
+}
+fn deep_fail(d: Number) {  // gives up after making values: they are let go
+  if d == 0 { return [1 / (d - d)] }
+  return [deep_fail(d - 1), deep_fail(d - 1)]
+}
+fn constants(y: Number): Number {  // math on constants: the VM's bits, not what the C compiler works out
+  return 8 ** y + pow(4503599627370496, y) + sin(2.5) * cos(1.5) + exp(0.1) + log(10) + log(10, 3) + tan(y) + atan2(1, 3)
+}
+fn maths(x: Number): Number {
+  let a = sqrt(x) + sin(x) + cos(x) + tan(x) + exp(x / 10) + floor(x / 3) + ceil(x / 3)
+  let b = abs(-x) + log(x) + round(x / 4) + pow(x, 0.5) + atan2(x, 2) + log(x, 2)
+  return a + b + floor(7) + abs(-7) + round(3) + ceil(4) + abs(x)
+}
+
+fn nothing(n: Number) {  // returns nothing
+  var k = n
+  k *= 2
+  k /= 2
+  k -= 1
+  k %= 5
+  if k > 100 { return }
+}
+
+fn halves(n: Number): Number {  // a whole number's slot that also holds a fraction
+  var h = n
+  h = h / 2
+  h += 1
+  return h
+}
+
+fn neg(n: Number): Number => -n + -(n * 0)
+fn calls(n: Number): Number => fib(n) + halves(n) + sum_mod(n)
+fn is_even(n: Number): Bool => n % 2 == 0
+fn evens(n: Number): Number {
+  var count = 0
+  for i in 0..n { if is_even(i) { count += 1 } }
+  nothing(n)
+  return count
+}
+fn by_fraction(n: Number): Number => halves(n / 3) + fib(2.5)
+
+// lists the fn makes itself are native too: arrays that never leave it
+fn sieve(n: Number): Number {
+  var flags = [true] * (n + 1)
+  var count = 0
+  var i = 2
+  while i <= n {
+    if flags[i] {
+      count += 1
+      var j = i * i
+      while j <= n {
+        flags[j] = false
+        j += i
+      }
+    }
+    i += 1
+  }
+  return count
+}
+
+fn lists(n: Number): Number {
+  var xs = [1, 2.5, n]
+  xs.push(4)
+  push(&xs, 5)
+  xs[0] = 10
+  xs[1] += 1
+  xs[-1] *= 2
+  var bs = Bool[true]
+  bs.push(n > 2)
+  var total = 0
+  for i in 0..len(xs) { total += xs[i] }
+  if bs[1] { total += 100 }
+  var ys = Number[]
+  ys.push(7)
+  var zs = 3 * [0.5]
+  var bb = [false] * 2
+  bb[1] = true
+  xs = [1, 2]
+  xs = [xs[1], 3]
+  return total + ys[0] + zs[2] + xs[1] + len(bs) + xs[1.0] + len(bb)
+}
+fn bad_index(n: Number): Number {
+  let xs = [1, 2, 3]
+  return xs[n]
+}
+fn bad_repeat(n: Number): Number {
+  var xs = [0] * n
+  return len(xs)
+}
+fn many(n: Number): Number {
+  var xs = Number[]
+  for i in 0..n { xs.push(i) }
+  return len(xs)
+}
+
+// records: untyped parameters used as objects whose fields are Numbers
+class Ball {
+  var x = 0
+  var v = 1
+  var name = "ball"
+}
+fn step(&balls, dt: Number) {  // a list of records, changed through &
+  for i in 0..len(balls) {
+    balls[i].x += balls[i].v * dt
+    if balls[i].x > 10 { balls[i].v = -balls[i].v }
+  }
+}
+fn total_x(balls): Number {  // read only, with copies of records
+  var t = 0
+  for b in balls {
+    if b.x > 0 { t += b.x }
+    var w = 0
+    while w < 1 { w += 1 }
+    for k in 0..1 { t += k }
+  }
+  for i, b in balls { t += i * b.v }
+  let first = balls[0]
+  return t + first.x + balls[-1].v
+}
+fn push_one(&p, by: Number) {  // one record, through &
+  p.x += by
+}
+fn moved(var p, by: Number): Number {  // one record, a changeable copy: the caller's is not changed
+  p.x += by
+  return p.x
+}
+fn local_copy(balls): Number {
+  var b = balls[0]
+  b.x = 100
+  return b.x + balls[0].x
+}
+fn by_number(balls, i: Number): Number => balls[i].x
+fn halve(&balls) {
+  balls[0].x /= 2
+  balls[0].v %= 3
+}
+fn then_fails(&balls, n: Number) {  // changes, then an error: the VM's changes so far stay, as without native code
+  balls[0].x = 50
+  balls[1].x = 60 / n
+}
+
+// these give up, and the VM runs the call: its errors, its limits
+fn zero_div(n: Number): Number => n / (n - n)
+fn zero_mod(n: Number): Number => n % 0
+fn deep(n: Number): Number {  // deeper than machine code goes
+  if n == 0 { return 0 }
+  return deep(n - 1) + 1
+}
+fn no_return(n: Number): Number {
+  if n > 100 { return n }
+}
+fn big(n: Number): Number => n * n * n + n  // past 2^53: the double version
+fn neg_zero(n: Number): Number => n % 7  // -7 % 7 is -0 as a double
+
+// these are not native: lists that leave, text, closures, objects... (untyped
+// parameters and results are values: untyped, returns_any and calls_untyped are)
+fn uses_list(n: Number): Number => len([n])
+fn untyped(n) => n + 1
+fn text(n: Number): str => "{n}"
+fn returns_any(n: Number) { return n }
+fn calls_untyped(n: Number): Number => untyped(n)
+var counter = 0
+fn sets_global(n: Number): Number {
+  counter = n
+  return n
+}
+fn has_list(n: Number): Number {
+  let xs = [n]
+  return n
+}
+fn inner_fn(n: Number): Number {
+  fn twice(x) => x * 2
+  return twice(n)
+}
+fn num_cond(n: Number): Number {
+  if n { return 1 }
+  return 0
+}
+fn while_num(n: Number): Number {
+  while n { break }
+  return n
+}
+fn for_call(n: Number): Number {
+  var t = 0
+  for i in range(0, 3) { t += i }
+  return t + n
+}
+fn with_try(n: Number): Number {
+  try { return n } catch e { return 0 }
+}
+fn statement(n: Number): Number {
+  n + 1
+  return n
+}
+fn negate_bool(b: Bool): Number => -b
+fn record_passed(&balls) { step(&balls, 1) }
+fn bool_row(balls): Number => balls[true].x
+fn bad_field(&balls, b: Bool) { balls[0].x = b }
+fn loop_writes(&balls) {
+  for b in balls { balls[0].x = b.x }
+}
+fn many_fields(p): Number => p.a + p.b + p.c + p.d + p.e + p.f + p.g + p.h + p.i + p.j + p.k + p.l + p.m + p.n + p.o + p.q + p.r
+fn makes_closure(n: Number): Number {
+  let f = fn(x) => x
+  return f(n)
+}
+fn passes(xs) => xs  // native (a value), but a list of the caller's own is not one
+fn list_leaves(n: Number): Number {
+  let xs = [n]
+  return len(passes(xs))
+}
+fn empty_list(n: Number): Number {
+  var xs = []
+  return n
+}
+fn mixed_list(n: Number): Number {
+  var xs = [1, true]
+  return n
+}
+fn bool_add(n: Number): Number {
+  var bs = [true]
+  bs[0] = false
+  return n
+}
+fn list_retyped(n: Number): Number {  // a var keeps its kind of list: [1] is not a Number[]
+  var xs = [1]
+  xs = Number[2]
+  return n
+}
+fn index_bool(n: Number): Number {
+  let xs = [1]
+  return xs[true]
+}
+fn push_bool(n: Number): Number {
+  var xs = [1]
+  xs.push(true)
+  return len(xs)
+}
+fn text_list(n: Number): Number {
+  var xs = str[]
+  return n
+}
+fn bool_list_add(n: Number): Number {
+  var bs = [true]
+  bs[0] += 1
+  return n
+}
+fn repeat_bool(n: Number): Number {
+  var xs = [1] * true
+  return n
+}
+fn index_number(n: Number): Number => n[0]
+fn push_value(n: Number): Number {
+  var xs = [1]
+  return push(&xs, 2)
+}
+fn contains(n: Number): Bool => n in 5
+
+print(fib(20), sum_mod(1000), mixed(2), mixed(2.5), ops(7, 3), ops(7.5, 2), ops(-7, 3))
+print(compare(1, 2), compare(5, 5), compare(3, 2), compare(0, 20), flags(true, 7), flags(false, 300))
+nothing(9)
+print(maths(10), halves(7), neg(0), neg(3), calls(10), evens(10), by_fraction(9))
+print(constants(0.1), constants(0.0123), constants(-0.37), constants(1.0001))
+print(sums([{x: 1}], 10), sums([{x: -1}], 4), past_2_53(1), past_2_53(3), with_text(4))
+print(rounded(9007199254740991), rounded(4503599627370497), rounded(0.49999999999999994), rounded(-2.5), rounded(2.5))
+print(nodes(tree(5)), tree(2), sum_all([1, 2.5, 3]), corner([[1, 2], [3, 4]]), flags_on([true, false, true]), depth(tree(4)))
+print(pair([1], "x"), first([[7]]), same("text"), negated([false, false]), boxed_back(21), nothing_back(9))
+try { print(sum_all([1, "two"])) } catch e { print(e) }
+try { print(nodes([[], 5])) } catch e { print(e) }
+try { print(deep_fail(3)) } catch e { print(e) }
+try { print(nothing_back(1) + 1) } catch e { print(e) }
+print(big(300000), big(3000000), neg_zero(-7), neg_zero(-7) == 0, neg_zero(15), deep(30000))
+print([5, 6, 7].map(fib), uses_list(3), untyped(1), text(4), returns_any(5), calls_untyped(2))
+print(sieve(100), lists(3), lists(1), many(30))
+try { print(bad_index(1), bad_index(-3), bad_index(5)) } catch e { print(e) }
+try { print(bad_index(1.5)) } catch e { print(e) }
+try { print(bad_repeat(2), bad_repeat(-1)) } catch e { print(e) }
+try { print(bad_repeat(1.5)) } catch e { print(e) }
+print(list_leaves(1), empty_list(2), mixed_list(3), bool_add(4), push_bool(6), text_list(7))
+try { print(list_retyped(5)) } catch e { print(e) }
+try { print(index_bool(1)) } catch e { print(e) }
+try { print(bool_list_add(1)) } catch e { print(e) }
+try { print(repeat_bool(1)) } catch e { print(e) }
+try { print(index_number(1)) } catch e { print(e) }
+try { print(push_value(1)) } catch e { print(e) }
+var balls = [Ball(), Ball(), {x: 5, v: 2}]
+balls[1].x = 9
+let kept = balls[1]  // shares the record until one of them changes
+var dots = balls
+for t in 0..3 { step(&balls, 1) }
+print(balls, kept, dots[1].x)
+print(total_x(balls), local_copy(balls), balls[0].x)
+var one = Ball()
+push_one(&one, 4)
+print(one.x, moved(one, 3), one.x)
+try { then_fails(&balls, 0) } catch e { print(e) }
+print(balls[0].x, balls[1].x)
+try { print(total_x([])) } catch e { print(e) }
+try { print(total_x([{x: 1}])) } catch e { print(e) }
+try { print(total_x([{x: "a", v: 1}])) } catch e { print(e) }
+try { print(total_x(5)) } catch e { print(e) }
+record_passed(&balls)
+loop_writes(&balls)
+halve(&balls)
+print(by_number(balls, 1), by_number(balls, -1.0), balls[0])
+try { print(by_number(balls, 0.5)) } catch e { print(e) }
+try { print(bool_row(balls)) } catch e { print(e) }
+try { bad_field(&balls, true) } catch e { print(e) }
+print(balls[0].x, many_fields({a: 1, b: 1, c: 1, d: 1, e: 1, f: 1, g: 1, h: 1, i: 1, j: 1, k: 1, l: 1, m: 1, n: 1, o: 1, q: 1, r: 1}))
+print(sets_global(7), counter, has_list(2), inner_fn(3), num_cond(0), while_num(4), for_call(1), with_try(2), statement(5))
+try { print(negate_bool(true)) } catch e { print(e) }
+print(makes_closure(3))
+try { print(contains(1)) } catch e { print(e) }
+try { print(zero_div(3)) } catch e { print(e) }
+try { print(zero_mod(3)) } catch e { print(e) }
+try { print(no_return(5)) } catch e { print(e) }
+try { print(fib("x")) } catch e { print(e) }
+try { print(deep(200000)) } catch e { print(e) }
+print(many(300))  // (past LUBE_MAX_ITEMS=200: the VM says so, script or built)

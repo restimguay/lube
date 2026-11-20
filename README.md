@@ -28,6 +28,8 @@ make tsan       # runs the suite with ThreadSanitizer (data races between isolat
 make install    # copies lube to /usr/local/bin (PREFIX=... to change)
 ```
 
+It builds and passes the tests on Linux (gcc or clang), macOS and Windows. On Windows, build in an [MSYS2](https://www.msys2.org) UCRT64 shell: `pacman -S make diffutils mingw-w64-ucrt-x86_64-gcc`, then `make`. GitHub Actions runs everything above on each pull request, and each release (a `v*` tag) comes with ready-built binaries: a static Linux x86-64 binary, a universal macOS binary (Apple silicon and Intel) and a Windows `lube.exe`. A binary downloaded with a browser on macOS isn't signed: clear the quarantine flag with `xattr -d com.apple.quarantine lube` before running it.
+
 ```sh
 ./lube                       # interactive REPL
 ./lube examples/hello.lube   # run a file
@@ -50,6 +52,73 @@ A Lube program can be run as a script, or built into a single executable that ru
 ```
 
 The executable is a copy of the interpreter with the program appended, so it starts as fast as a script and behaves the same. Building checks every file first, so a program with a syntax error, or an import that can't be found, doesn't build. Imports are packed with the paths the program uses, so the sources aren't needed afterwards. Files the program reads with `read_file` are still read from disk, relative to the current folder. Every command-line argument goes to the program: a built executable has no options of its own.
+
+### Native code: `lube --build --native`
+
+```sh
+./lube --build --native app.lube -o app
+native: fib, collatz, mandel
+built app: 1 file, 339570 bytes
+```
+
+`--native` also compiles the program's functions that compute only with Numbers and Bools to machine code, through the system's C compiler. A function qualifies when its result is typed `Number` or `Bool` (or it returns nothing), each parameter is typed `Number` or `Bool` or is a record (below), and its body uses only:
+- arithmetic, comparisons, `and`, `or` and `not`;
+- `if`, `while`, and `for` over a range (`0..n`, `1..=n`);
+- local `var`s and `let`s;
+- lists of Numbers or of Bools that the function makes itself (`[0] * n`, `Number[]`, `[a, b]`), and indexes, changes, pushes to and measures with `len`, but never passes on or returns;
+- records: an untyped parameter that the function uses as an object or class instance (`p.x`), or as a list of them (`bodies[i].vx`, `for b in bodies`, `len(bodies)`), reading and changing their Number fields (up to 16 of them). Copies (`let b = bodies[i]`) work too. As on the VM, changes reach the caller only through a `&` parameter;
+- values: an untyped parameter that isn't a record holds any value, read with `len(t)` and `t[i]` (lists of lists, a list of Numbers from the VM...), passed on, and turned into a Number or Bool where one is needed; a list literal makes a new one (`[left, right]`), and a function without a written result type returns one;
+- calls to other such functions (passing records on, with `&` or without) and to the math built-ins (`sqrt`, `abs`, `floor`, `pow`, `log`...);
+- method calls on a record, when the method qualifies too and only one class has a method of that name.
+
+Methods qualify the same way, `this` being a record. So do loops at the top level of a file (`for` or `while`): the globals they use (Numbers, Bools, records, and lists of Numbers or of Bools) are their parameters, taken in when the loop starts and written back when it ends.
+
+The build lists what it compiled, and for each typed function it didn't, the line where it stopped (`not native: names (line 12)`). Everything else runs on the VM as usual.
+
+```lube
+fn fib(n: Number): Number {      // compiled
+  if n < 2 { return n }
+  return fib(n - 1) + fib(n - 2)
+}
+fn names(n: Number): str => "{n}"   // not compiled (text): runs on the VM
+```
+
+```lube
+class Body {
+  var x = 0
+  var vx = 1
+  fn move(dt: Number) { this.x += this.vx * dt }   // compiled: a method
+}
+fn advance(&bodies, dt: Number) {   // compiled: a list of records
+  for i in 0..len(bodies) { bodies[i].move(dt) }
+}
+var bodies = [Body(), Body()]
+for step in 0..1000 { advance(&bodies, 0.01) }   // compiled: a top-level loop
+```
+
+The machine code computes exactly what the VM would, down to the last bit of every Number. A function given only whole numbers runs on 64-bit integers wherever its numbers stay whole, and switches to doubles where they don't or past 2^53. The machine code never reports an error itself. When one would happen (division by zero, a function that ends without returning its value, recursion too deep, a record without the field used, a field that isn't a Number, an object of another class than its methods'), the VM runs that call or loop again from the start and reports it as usual, with the usual traceback. That's safe because nothing outside changes until the machine code is done: a function's changes to its `&` records, and a loop's to its globals, are written back only when it finishes. A loop changing a global that an `on` block watches runs on the VM, so the block runs on each change.
+
+`--native --fast` trades that exactness for speed, the way C and Rust's release builds do: whole numbers are 64-bit integers that wrap around past 2^63 instead of turning into doubles past 2^53, and the C compiler may reorder sums of doubles (so that it can use SIMD instructions), which can change their last digits. Errors still come from the VM as usual (division by zero, an index out of range, recursion too deep). Lube's own code stays exact: only the compiled functions change.
+
+```sh
+./lube --build --native --fast app.lube -o app
+```
+
+It needs a C compiler (`cc`, or `CC`; `gcc` on Windows) when building, not when running, and Lube's C sources: the `src` folder next to `lube`, or the folder `LUBE_SRC` names. On the benchmarks in `bench/vs_rust`, the native builds run `fib` 25 times faster than the VM, the arithmetic `loop` 11 times faster, the `sieve` (a list of Bools) 27 times faster in a twelfth of the memory, `nbody` (a list of class instances, stepped by a top-level loop) 58 times faster, `methods` (a method called five million times) 44 times faster, and `trees` (building and walking lists of lists) 6 times faster. That's 1.7, 2.2, 1.3, 1.3, 1.5 and 0.7 times the time of the same programs in Rust, and `sort` (a top-level loop filling a list of a million Numbers, then `sort()`) takes 1.2 times as long. Over all ten benchmarks, the geometric mean is 1.35 times Rust's time with `--native`, and 1.2 times with `--native --fast` (`python3 bench/vs_rust/run.py --native [--fast]`).
+
+### Small executables: `lube --build --small`
+
+```sh
+./lube --build --small app.lube -o app
+small: 12 of 117 built-ins
+built app: 3 files, 193321 bytes
+```
+
+For small machines such as a Raspberry Pi, `--small` builds an executable with only the parts of Lube the program uses. It leaves out what only the `lube` command needs (the REPL, the debugger, the tools that build programs and compile them to machine code) and every built-in function the program never names, and it optimizes the rest for size. On macOS (Apple silicon), the examples come out about half the size of a plain build: `hello.lube` is 191 KB instead of 371 KB.
+
+The build finds the built-ins a program needs by name, in the code that can run: its top-level statements and the functions and classes they reach. A program that calls `globals()` (which reaches any global by name) keeps them all. Lube's own code is compiled for size, so it runs a little slower; with `--native` too, the compiled functions keep their speed.
+
+Like `--native`, it needs a C compiler when building (Raspberry Pi OS comes with `gcc`) and Lube's C sources (the `src` folder next to `lube`, or `LUBE_SRC`).
 
 ## Memory: no garbage collector, no drama
 
@@ -474,7 +543,7 @@ print(globals())                   // the program's global names, in order: ["An
 
 ### Reactivity: `on`
 
-An `on` block runs whenever a global `var` changes, right after the change:
+An `on` block runs whenever a `var` changes, right after the change:
 
 ```lube
 var score = 0
@@ -496,16 +565,42 @@ on score (old, new) when new > old {   // only when the condition holds
   print("+", new - old)
 }
 
+on player.hp (old, new) {              // a field: runs only when hp itself changes
+  if new <= 0 { print("game over") }
+}
+
 score += 10      // + 10, score changed to 10, redraw()...
 score = 10       // the same value: nothing runs
 ```
+
+`on` also works inside functions, methods and constructors, where it can watch local variables and fields of `this` as well as globals:
+
+```lube
+class Player {
+  var hp = 10
+  var name = "ada"
+  fn fight(enemy) {
+    var hits = 0
+    on this.hp (old, new) when new <= 0 { print(this.name, "is down after", hits, "hits") }
+    on hits { print("hit", hits) }
+    while this.hp > 0 {
+      this.hp -= enemy.attack()
+      hits += 1
+    }
+  }
+}
+```
+
+A block inside a function runs on that function's own frame. It reads and changes the function's variables directly, not a copy as a closure would, so a block can keep a count or update other state. It lasts as long as the block of code it's declared in: until the function returns, or until the end of the `if`, loop body or `{ }` around it. Each call gets its own blocks.
 
 - Any change counts: an assignment (`score = 5`, `score += 1`), a change inside the value (`items.push(x)`, `player.hp -= 1`, `grid[r][c] = 1`), or a function changing it through `&` (`heal(&player)`, `player.heal()`). Assigning the value it already has is not a change.
 - Blocks run in the order they were declared, after everything a call lent with `&` is back.
 - A block's own changes don't run it again, so `on count { count = 0 }` can't loop. A block can change other watched vars, and their blocks run.
 - An error in a block reaches the code that made the change, like an error in a function it called. A change made by a call that then fails doesn't run the blocks.
-- `on` watches global `var`s, and goes at the top level of a file. Watching a `let`, a function or a variable that doesn't exist is an error. In a `#strict` file, `(old, new)` need types: `on score (old: Number, new: Number)`.
-- With hot reload, a changed file's `on` blocks replace the old ones.
+- `on` watches `var`s: globals, a function's own locals and `&` or `var` parameters, and `this` in a method. Watching a `let`, a function, a variable a closure captured (it can't change), or a variable that doesn't exist is an error. So is a field that isn't there when the block is declared. A field that's missing before or after a change is not a change.
+- A block inside a function that watches a global also runs when another function changes it. If the block uses a variable the function has lent out with `&` at that moment, running it is an error.
+- In a `#strict` file, `(old, new)` need types: `on score (old: Number, new: Number)`.
+- With hot reload, a changed file's top-level `on` blocks replace the old ones.
 
 ### Concurrency: isolates and channels
 
@@ -609,7 +704,7 @@ let p = Point(3, 4)
 print(size(p), geometry.area(p), p is geo.Point)
 ```
 
-- Packages are found from the main program's folder, then from the folders listed in `LUBE_PATH` (separated by `:`). Importing anything from a package loads its whole folder, once.
+- Packages are found from the main program's folder, then from the folders listed in `LUBE_PATH` (separated by `:`, or `;` on Windows). Importing anything from a package loads its whole folder, once.
 - Inside a package, a name means: an imported name, else one of the package's own, else a built-in. So a package can define its own `len` without affecting anyone else.
 - `import "file"` still works as before: a file without a package line shares the importer's names. A file that has one keeps its names to itself, however it is imported.
 - Package imports go at the top level of a file. A missing package or name, a private name, or a file in a package's folder whose package line disagrees, is an error before the program runs.
@@ -633,6 +728,76 @@ lube: reloaded game.lube
 - An edit with an error is reported, and the program goes on with the code it had. When you fix the file, the fix is applied.
 
 A program can also apply changes itself, at a moment it chooses: `hot_reload()` looks at every file the program was loaded from, applies the ones that changed, and returns their paths. `--hot` looks while the program runs code, so a program waiting in `input()` gets the changes when it continues.
+
+### Debugging
+
+`lube --debug` runs a program under the debugger. It stops before the first line and takes commands at a `(lube)` prompt (`h` lists them):
+
+```sh
+./lube --debug app.lube [args...]
+```
+
+For example, with this program in `shop.lube`:
+
+```lube
+fn total(items) {
+  var sum = 0
+  for item in items {
+    sum += item.price * item.qty
+  }
+  return sum
+}
+
+let cart = [{name: "pen", price: 2, qty: 3}, {name: "book", price: 12, qty: 1}]
+print("total:", total(cart))
+```
+
+```text
+$ lube --debug shop.lube
+(lube) b 4 if item.name == "book"      # stop at line 4, only for the book
+(lube) c                               # run until then
+   at total (shop.lube:4)
+    4 |     sum += item.price * item.qty
+(lube) locals                          # see the variables
+items = [{name: "pen", price: 2, qty: 3}, {name: "book", price: 12, qty: 1}]
+sum = 6
+item = {name: "book", price: 12, qty: 1}
+(lube) p item.price * item.qty         # evaluate any expression here
+12
+(lube) bt                              # how we got here
+=>#0 total (shop.lube:4)
+  #1 <script> (shop.lube:10)
+(lube) n                               # next line
+(lube) p sum
+18
+(lube) c                               # run to the end
+total: 18
+```
+
+| What you want | Command |
+|---|---|
+| Run to the next breakpoint | `c` |
+| Next line / step into a call / step out of the function | `n` / `s` / `o` |
+| A breakpoint | `b 12`, or in another file: `b lib/util.lube:30` |
+| ...only when a condition holds | `b 12 if total > 100` |
+| ...only on certain hits | `b 12 hits 5` (the 5th), `hits >= 5`, `hits % 10` (every 10th) |
+| A breakpoint that removes itself after one stop | `tb 12` |
+| Print a message there without stopping | `log 12 total is {total}` |
+| List or delete breakpoints | `bl`, `d 2`, `d` (all of them) |
+| Evaluate an expression | `p expr` |
+| See variables | `locals`, `globals` |
+| The calls that led here, and moving through them | `bt`, then `up`, `down`, `frame 2` |
+| The source around the current line | `l` |
+| Stop where errors are raised | `catch all` (the default stops only for uncaught errors), `catch off` |
+| Quit | `q` |
+
+- **Ctrl-C** pauses a running program, which is handy for finding where an endless loop is stuck.
+- An uncaught error stops the program where it's raised, with every frame still there to inspect.
+- After `up`, `p` and `locals` work in the frame you moved to.
+- Paused inside an `on` block, you see the block's variables and those of the function it runs on.
+- **Ctrl-D**, or the end of piped commands, leaves the debugger and lets the program run on to the end.
+
+Without the debugger, an uncaught error prints a traceback with the file and line of every call; `lube --check app.lube` reports syntax errors without running anything; and `print(repr(x))` shows a value exactly, quotes included.
 
 ## Standard library
 

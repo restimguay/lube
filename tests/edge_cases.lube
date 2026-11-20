@@ -180,3 +180,18 @@ print(l1, l5)
 
 // a built-in called back from C with the wrong number of arguments
 try { ["x"].map(pad_left) } catch e { print(e) }
+
+// assignment as an arrow function's value, and compound assignments the quick paths leave to the general one
+var counter = 0
+let set_counter = fn() => counter = 5
+set_counter()
+fn mods(): Number {
+  var m = 7
+  m %= -3
+  return m
+}
+var gm = 7
+gm %= 2.5
+var words = ["a"]
+words[0] += "!"
+print(counter, mods(), gm, words)

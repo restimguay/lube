@@ -1,0 +1,7 @@
+--- build named after the file
+built tool.exe: 1 file, N bytes
+default name ["x"]
+[exit 0]
+--- build that would replace its source
+built noext.exe: 1 file, N bytes
+[exit 0]

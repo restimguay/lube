@@ -1,11 +1,11 @@
 --- version
-lube 2.0.0
+lube 0.1.0
 [exit 0]
 --- short version
-lube 2.0.0
+lube 0.1.0
 [exit 0]
 --- help
-Lube 2.0.0 - a small, smooth scripting language
+Lube 0.1.0 - a small, smooth scripting language
 
 usage:
   lube                  start the interactive REPL
@@ -13,15 +13,22 @@ usage:
   lube -e CODE          run CODE and print the value of the last expression
   lube -                read a script from standard input
   lube --check FILE     report syntax errors without running anything (FILE may be -)
+  lube --debug FILE [ARGS...]
+                        run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build FILE [-o OUT]
-                        build FILE and its imports into a standalone executable
+  lube --build [--native [--fast]] [--small] FILE [-o OUT]
+                        build FILE and its imports into a standalone executable; --native also
+                        compiles its fns that compute only with Numbers and Bools to machine
+                        code (needs a C compiler, and Lube's sources: LUBE_SRC); --fast lets
+                        that code use 64-bit integers that wrap around and reorder sums;
+                        --small makes it as small as it can be: only the parts of Lube the
+                        program uses (needs a C compiler too)
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 0]
 --- short help
-Lube 2.0.0 - a small, smooth scripting language
+Lube 0.1.0 - a small, smooth scripting language
 
 usage:
   lube                  start the interactive REPL
@@ -29,17 +36,24 @@ usage:
   lube -e CODE          run CODE and print the value of the last expression
   lube -                read a script from standard input
   lube --check FILE     report syntax errors without running anything (FILE may be -)
+  lube --debug FILE [ARGS...]
+                        run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build FILE [-o OUT]
-                        build FILE and its imports into a standalone executable
+  lube --build [--native [--fast]] [--small] FILE [-o OUT]
+                        build FILE and its imports into a standalone executable; --native also
+                        compiles its fns that compute only with Numbers and Bools to machine
+                        code (needs a C compiler, and Lube's sources: LUBE_SRC); --fast lets
+                        that code use 64-bit integers that wrap around and reorder sums;
+                        --small makes it as small as it can be: only the parts of Lube the
+                        program uses (needs a C compiler too)
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 0]
 --- unknown option
 lube: unknown option '-x'
 
-Lube 2.0.0 - a small, smooth scripting language
+Lube 0.1.0 - a small, smooth scripting language
 
 usage:
   lube                  start the interactive REPL
@@ -47,15 +61,22 @@ usage:
   lube -e CODE          run CODE and print the value of the last expression
   lube -                read a script from standard input
   lube --check FILE     report syntax errors without running anything (FILE may be -)
+  lube --debug FILE [ARGS...]
+                        run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build FILE [-o OUT]
-                        build FILE and its imports into a standalone executable
+  lube --build [--native [--fast]] [--small] FILE [-o OUT]
+                        build FILE and its imports into a standalone executable; --native also
+                        compiles its fns that compute only with Numbers and Bools to machine
+                        code (needs a C compiler, and Lube's sources: LUBE_SRC); --fast lets
+                        that code use 64-bit integers that wrap around and reorder sums;
+                        --small makes it as small as it can be: only the parts of Lube the
+                        program uses (needs a C compiler too)
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 64]
 --- -e without code
-Lube 2.0.0 - a small, smooth scripting language
+Lube 0.1.0 - a small, smooth scripting language
 
 usage:
   lube                  start the interactive REPL
@@ -63,10 +84,17 @@ usage:
   lube -e CODE          run CODE and print the value of the last expression
   lube -                read a script from standard input
   lube --check FILE     report syntax errors without running anything (FILE may be -)
+  lube --debug FILE [ARGS...]
+                        run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build FILE [-o OUT]
-                        build FILE and its imports into a standalone executable
+  lube --build [--native [--fast]] [--small] FILE [-o OUT]
+                        build FILE and its imports into a standalone executable; --native also
+                        compiles its fns that compute only with Numbers and Bools to machine
+                        code (needs a C compiler, and Lube's sources: LUBE_SRC); --fast lets
+                        that code use 64-bit integers that wrap around and reorder sums;
+                        --small makes it as small as it can be: only the parts of Lube the
+                        program uses (needs a C compiler too)
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 64]
@@ -103,7 +131,7 @@ tests/syntax_error.lube:2:16: syntax error: expected ')' to close the parameter 
 lube: cannot open file 'tests/does-not-exist.lube'
 [exit 66]
 --- check without a file
-Lube 2.0.0 - a small, smooth scripting language
+Lube 0.1.0 - a small, smooth scripting language
 
 usage:
   lube                  start the interactive REPL
@@ -111,10 +139,17 @@ usage:
   lube -e CODE          run CODE and print the value of the last expression
   lube -                read a script from standard input
   lube --check FILE     report syntax errors without running anything (FILE may be -)
+  lube --debug FILE [ARGS...]
+                        run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build FILE [-o OUT]
-                        build FILE and its imports into a standalone executable
+  lube --build [--native [--fast]] [--small] FILE [-o OUT]
+                        build FILE and its imports into a standalone executable; --native also
+                        compiles its fns that compute only with Numbers and Bools to machine
+                        code (needs a C compiler, and Lube's sources: LUBE_SRC); --fast lets
+                        that code use 64-bit integers that wrap around and reorder sums;
+                        --small makes it as small as it can be: only the parts of Lube the
+                        program uses (needs a C compiler too)
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 64]
@@ -125,10 +160,6 @@ built TMP/elsewhere/app: 3 files, N bytes
 hello from app HI! ["one", "--help", "-e"]
 data next to the executable
 
-[exit 0]
---- build named after the file
-built tool: 1 file, N bytes
-default name ["x"]
 [exit 0]
 --- build found on PATH
 built TMP/tool2: 1 file, N bytes
@@ -147,14 +178,11 @@ lube: cannot build: 'missing' (imported by TMP/needs.lube) not found
 --- build a missing file
 lube: cannot open file 'TMP/none.lube'
 [exit 66]
---- build that would replace its source
-lube: the executable would replace 'noext': name it with -o
-[exit 64]
 --- build to a folder that does not exist
 lube: cannot write 'TMP/no/such/dir/app'
 [exit 73]
 --- build with bad options
-Lube 2.0.0 - a small, smooth scripting language
+Lube 0.1.0 - a small, smooth scripting language
 
 usage:
   lube                  start the interactive REPL
@@ -162,16 +190,351 @@ usage:
   lube -e CODE          run CODE and print the value of the last expression
   lube -                read a script from standard input
   lube --check FILE     report syntax errors without running anything (FILE may be -)
+  lube --debug FILE [ARGS...]
+                        run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build FILE [-o OUT]
-                        build FILE and its imports into a standalone executable
+  lube --build [--native [--fast]] [--small] FILE [-o OUT]
+                        build FILE and its imports into a standalone executable; --native also
+                        compiles its fns that compute only with Numbers and Bools to machine
+                        code (needs a C compiler, and Lube's sources: LUBE_SRC); --fast lets
+                        that code use 64-bit integers that wrap around and reorder sums;
+                        --small makes it as small as it can be: only the parts of Lube the
+                        program uses (needs a C compiler too)
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 64]
---- build when lube cannot find itself
-lube: cannot build: cannot read the lube executable itself (run lube with its full path)
+--- native: the program as a script
+6765 2997 18.5 23.5 59.66666666666667 58.5 35.33333333333333
+true true true true 1 0
+66.30601929111549 4.5 0 -3 85 5 4.5
+43.9575705298412 8.463848895874637 5.943176568833556 4519861535090529
+65 18 13510798882111488 3.152519739159347e+16 6
+9007199254740991 4503599627370497 0 -2 3
+63 [[[], []], [[], []]] 6.5 6 2 4
+[[1], "x", [[1]], 1, true] [7] text true 42 [9]
+'t' is a Number, so it cannot hold a str: a var keeps the type it starts with
+len() expects a str, List, Object or Range as argument 1, got Number
+division by zero
+nothing_back() does not return a value, so there is nothing to use here
+2.70000000003e+16 2.7000000000003e+19 0 true 1 30000
+[5, 8, 13] 1 2 4 5 3
+25 148 46 30
+list index 5 is out of range (length 3)
+list index must be a whole number, got 1.5
+can only repeat by a whole, non-negative number
+can only repeat by a whole, non-negative number
+1 2 3 4 2 7
+'xs' is a List, so it cannot hold a Number[]: a var keeps the type it starts with
+list index must be a Number, not a Bool
+unsupported operand types for '+': Bool and Number
+unsupported operand types for '*': List and Bool
+cannot index into a Number
+push_value() must return a Number, but it ended without returning a value
+[Ball {x: 3, v: 1, name: "ball"}, Ball {x: 10, v: -1, name: "ball"}, {x: 11, v: -2}] Ball {x: 9, v: 1, name: "ball"} 9
+20 103 3
+4 7 4
+division by zero
+50 10
+list index 0 is out of range (length 0)
+the object has no field 'v' (check with has() first, or use get(object, key, default))
+unsupported operand types for '>': str and Number
+cannot loop over a Number (expected a List, Range, str, Object or Channel)
+9 9 Ball {x: 4.5, v: 2, name: "ball"}
+list index must be a whole number, got 0.5
+list index must be a Number, not a Bool
+field 'x' of Ball is a Number, so it cannot hold a Bool
+4.5 17
+7 7 2 6 1 4 4 2 5
+cannot negate a Bool
+3
+cannot look inside a Number (expected a List, str, Object or Range)
+division by zero
+modulo by zero
+no_return() must return a Number, but it ended without returning a value
+parameter 'n' of fib() is a Number, so it cannot take a str
+stack overflow: too much recursion
+300
+[exit 0]
+--- native: the program built
+native: fib, sum_mod, mixed, ops, compare, flags, sums, past_2_53, rounded, tree, nodes, sum_all, corner, depth, flags_on, pair, first, same, negated, boxed_back, nothing_back, deep_fail, constants, maths, nothing, halves, neg, calls, is_even, evens, by_fraction, sieve, lists, bad_index, bad_repeat, many, step, total_x, push_one, moved, local_copy, by_number, halve, then_fails, zero_div, zero_mod, deep, no_return, big, neg_zero, untyped, returns_any, calls_untyped, has_list, statement, record_passed, passes, bool_add, the loop on line 400
+not native: with_text (line 67), uses_list (line 267), sets_global (line 274), inner_fn (line 282), num_cond (line 286), while_num (line 290), for_call (line 295), with_try (line 299), negate_bool (line 305), bool_row (line 307), bad_field (line 308), many_fields (line 312), makes_closure (line 314), list_leaves (line 320), empty_list (line 323), mixed_list (line 327), list_retyped (line 337), index_bool (line 342), push_bool (line 346), text_list (line 350), bool_list_add (line 355), repeat_bool (line 359), index_number (line 362), push_value (line 365), contains (line 367)
+built TMP/native_app: 1 file, N bytes
+6765 2997 18.5 23.5 59.66666666666667 58.5 35.33333333333333
+true true true true 1 0
+66.30601929111549 4.5 0 -3 85 5 4.5
+43.9575705298412 8.463848895874637 5.943176568833556 4519861535090529
+65 18 13510798882111488 3.152519739159347e+16 6
+9007199254740991 4503599627370497 0 -2 3
+63 [[[], []], [[], []]] 6.5 6 2 4
+[[1], "x", [[1]], 1, true] [7] text true 42 [9]
+'t' is a Number, so it cannot hold a str: a var keeps the type it starts with
+len() expects a str, List, Object or Range as argument 1, got Number
+division by zero
+nothing_back() does not return a value, so there is nothing to use here
+2.70000000003e+16 2.7000000000003e+19 0 true 1 30000
+[5, 8, 13] 1 2 4 5 3
+25 148 46 30
+list index 5 is out of range (length 3)
+list index must be a whole number, got 1.5
+can only repeat by a whole, non-negative number
+can only repeat by a whole, non-negative number
+1 2 3 4 2 7
+'xs' is a List, so it cannot hold a Number[]: a var keeps the type it starts with
+list index must be a Number, not a Bool
+unsupported operand types for '+': Bool and Number
+unsupported operand types for '*': List and Bool
+cannot index into a Number
+push_value() must return a Number, but it ended without returning a value
+[Ball {x: 3, v: 1, name: "ball"}, Ball {x: 10, v: -1, name: "ball"}, {x: 11, v: -2}] Ball {x: 9, v: 1, name: "ball"} 9
+20 103 3
+4 7 4
+division by zero
+50 10
+list index 0 is out of range (length 0)
+the object has no field 'v' (check with has() first, or use get(object, key, default))
+unsupported operand types for '>': str and Number
+cannot loop over a Number (expected a List, Range, str, Object or Channel)
+9 9 Ball {x: 4.5, v: 2, name: "ball"}
+list index must be a whole number, got 0.5
+list index must be a Number, not a Bool
+field 'x' of Ball is a Number, so it cannot hold a Bool
+4.5 17
+7 7 2 6 1 4 4 2 5
+cannot negate a Bool
+3
+cannot look inside a Number (expected a List, str, Object or Range)
+division by zero
+modulo by zero
+no_return() must return a Number, but it ended without returning a value
+parameter 'n' of fib() is a Number, so it cannot take a str
+stack overflow: too much recursion
+300
+[exit 0]
+--- native: a limit on items, as a script
+6765 2997 18.5 23.5 59.66666666666667 58.5 35.33333333333333
+true true true true 1 0
+66.30601929111549 4.5 0 -3 85 5 4.5
+43.9575705298412 8.463848895874637 5.943176568833556 4519861535090529
+65 18 13510798882111488 3.152519739159347e+16 6
+9007199254740991 4503599627370497 0 -2 3
+63 [[[], []], [[], []]] 6.5 6 2 4
+[[1], "x", [[1]], 1, true] [7] text true 42 [9]
+'t' is a Number, so it cannot hold a str: a var keeps the type it starts with
+len() expects a str, List, Object or Range as argument 1, got Number
+division by zero
+nothing_back() does not return a value, so there is nothing to use here
+2.70000000003e+16 2.7000000000003e+19 0 true 1 30000
+[5, 8, 13] 1 2 4 5 3
+25 148 46 30
+list index 5 is out of range (length 3)
+list index must be a whole number, got 1.5
+can only repeat by a whole, non-negative number
+can only repeat by a whole, non-negative number
+1 2 3 4 2 7
+'xs' is a List, so it cannot hold a Number[]: a var keeps the type it starts with
+list index must be a Number, not a Bool
+unsupported operand types for '+': Bool and Number
+unsupported operand types for '*': List and Bool
+cannot index into a Number
+push_value() must return a Number, but it ended without returning a value
+[Ball {x: 3, v: 1, name: "ball"}, Ball {x: 10, v: -1, name: "ball"}, {x: 11, v: -2}] Ball {x: 9, v: 1, name: "ball"} 9
+20 103 3
+4 7 4
+division by zero
+50 10
+list index 0 is out of range (length 0)
+the object has no field 'v' (check with has() first, or use get(object, key, default))
+unsupported operand types for '>': str and Number
+cannot loop over a Number (expected a List, Range, str, Object or Channel)
+9 9 Ball {x: 4.5, v: 2, name: "ball"}
+list index must be a whole number, got 0.5
+list index must be a Number, not a Bool
+field 'x' of Ball is a Number, so it cannot hold a Bool
+4.5 17
+7 7 2 6 1 4 4 2 5
+cannot negate a Bool
+3
+cannot look inside a Number (expected a List, str, Object or Range)
+division by zero
+modulo by zero
+no_return() must return a Number, but it ended without returning a value
+parameter 'n' of fib() is a Number, so it cannot take a str
+stack overflow: too much recursion
+lube: out of memory
 [exit 70]
+--- native: a limit on items, built
+6765 2997 18.5 23.5 59.66666666666667 58.5 35.33333333333333
+true true true true 1 0
+66.30601929111549 4.5 0 -3 85 5 4.5
+43.9575705298412 8.463848895874637 5.943176568833556 4519861535090529
+65 18 13510798882111488 3.152519739159347e+16 6
+9007199254740991 4503599627370497 0 -2 3
+63 [[[], []], [[], []]] 6.5 6 2 4
+[[1], "x", [[1]], 1, true] [7] text true 42 [9]
+'t' is a Number, so it cannot hold a str: a var keeps the type it starts with
+len() expects a str, List, Object or Range as argument 1, got Number
+division by zero
+nothing_back() does not return a value, so there is nothing to use here
+2.70000000003e+16 2.7000000000003e+19 0 true 1 30000
+[5, 8, 13] 1 2 4 5 3
+25 148 46 30
+list index 5 is out of range (length 3)
+list index must be a whole number, got 1.5
+can only repeat by a whole, non-negative number
+can only repeat by a whole, non-negative number
+1 2 3 4 2 7
+'xs' is a List, so it cannot hold a Number[]: a var keeps the type it starts with
+list index must be a Number, not a Bool
+unsupported operand types for '+': Bool and Number
+unsupported operand types for '*': List and Bool
+cannot index into a Number
+push_value() must return a Number, but it ended without returning a value
+[Ball {x: 3, v: 1, name: "ball"}, Ball {x: 10, v: -1, name: "ball"}, {x: 11, v: -2}] Ball {x: 9, v: 1, name: "ball"} 9
+20 103 3
+4 7 4
+division by zero
+50 10
+list index 0 is out of range (length 0)
+the object has no field 'v' (check with has() first, or use get(object, key, default))
+unsupported operand types for '>': str and Number
+cannot loop over a Number (expected a List, Range, str, Object or Channel)
+9 9 Ball {x: 4.5, v: 2, name: "ball"}
+list index must be a whole number, got 0.5
+list index must be a Number, not a Bool
+field 'x' of Ball is a Number, so it cannot hold a Bool
+4.5 17
+7 7 2 6 1 4 4 2 5
+cannot negate a Bool
+3
+cannot look inside a Number (expected a List, str, Object or Range)
+division by zero
+modulo by zero
+no_return() must return a Number, but it ended without returning a value
+parameter 'n' of fib() is a Number, so it cannot take a str
+stack overflow: too much recursion
+lube: out of memory
+[exit 70]
+--- small: only the parts of Lube it uses, built
+small: 12 of 117 built-ins
+built TMP/small_app: 3 files, N bytes
+over 100
+rex says woof, not ... CAT SAYS ... true true
+[1, 2, 3, 4, 5] [1.5, 2.5] 42 -3 113 true
+5 0 true
+caught oops
+3-1-2-4-5
+[exit 0]
+--- small: natives too, built
+native: cube, total, spin, mods, half, bad
+small: 1 of 117 built-ins
+built TMP/small_native: 1 file, N bytes
+1000000000 295 -1 -2 3.5
+2.7e+19 6.725369627399922e+29
+modulo by zero
+[exit 0]
+--- build: --fast needs --native
+Lube 0.1.0 - a small, smooth scripting language
+
+usage:
+  lube                  start the interactive REPL
+  lube FILE [ARGS...]   run a Lube script (ARGS are available as `args`)
+  lube -e CODE          run CODE and print the value of the last expression
+  lube -                read a script from standard input
+  lube --check FILE     report syntax errors without running anything (FILE may be -)
+  lube --debug FILE [ARGS...]
+                        run FILE in the debugger (h at its prompt lists the commands)
+  lube --hot FILE [ARGS...]
+                        run FILE, applying changes to its files while it runs
+  lube --build [--native [--fast]] [--small] FILE [-o OUT]
+                        build FILE and its imports into a standalone executable; --native also
+                        compiles its fns that compute only with Numbers and Bools to machine
+                        code (needs a C compiler, and Lube's sources: LUBE_SRC); --fast lets
+                        that code use 64-bit integers that wrap around and reorder sums;
+                        --small makes it as small as it can be: only the parts of Lube the
+                        program uses (needs a C compiler too)
+  lube -v, --version    print the version
+  lube -h, --help       show this help
+[exit 64]
+--- small: an output folder that does not exist
+lube: cannot write 'TMP/no/such/dir/app.native-tmp.keep.h'
+[exit 73]
+--- native: --fast (wrapping whole numbers), built
+native: cube, total, spin, mods, half, bad
+built TMP/fast_app: 1 file, N bytes
+1000000000 295 -1 -2 3.5
+8.553255926290448e+18 -4.588811930167108e+17
+modulo by zero
+[exit 0]
+--- native: top-level loops, as a script
+570 true 7.9792266297612e+16
+51
+Point {x: 6, y: 0, label: "p"} [Point {x: 4, y: 0, label: "p"}, Point {x: 8, y: 4, label: "p"}, {x: 5, y: 9}] [Point {x: 0, y: 0, label: "p"}, Point {x: 0, y: 0, label: "p"}, {x: 5, y: 1}] 50
+600
+0 5
+3
+6
+Body {x: 1, v: -1, name: "body"} 1 false body
+4 true false
+cannot change 'this' here: the method was called on something that cannot change (a let, or a value that is not in a variable)
+1
+Moon {x: 3, v: 1, name: "body"} 100 true
+[Body {x: -0.5, v: -1, name: "body"}, Body {x: 7.5, v: 5, name: "body"}, Body {x: 1.5, v: 1, name: "body"}] Body {x: 13, v: 4, name: "body"} 12.5
+Object has no method 'mass'
+cannot change 'this' here: the method was called on something that cannot change (a let, or a value that is not in a variable)
+2
+1 -0.5 0.5 0
+turn 0
+turn 1
+89 14 4
+[10, 21, 34, 19, 36, 55, 46, 69] [true, true, true, true, false, false] [9, 2, 1, 2, 3, 4, 5, 6, 7, 8] [] [2, 2, "three"] ["n", "n"]
+tests/cli/native_loops.lube:197: error: division by zero
+  197 | for i in 0..10 { n += 100 / (5 - i) }  // division by zero: the VM runs it again, from the start, and says so
+[exit 70]
+--- native: top-level loops, built
+native: nudge, spread, sum_x, move_all, total_mass, both, Body.move, Body.speed, Body.fast, Body.bounce, Body.absorb, Body.mass, Moon.speed, Rock.fast, the loop on line 24, the loop on line 32, the loop on line 43, the loop on line 51, the loop on line 59, the loop on line 64, the loop on line 72, the loop on line 139, the loop on line 164, the loop on line 187, the loop on line 193, the loop on line 197
+not native: named (line 107), twice_passed (line 114), texts (line 116), peek (line 120)
+built TMP/loops_app: 1 file, N bytes
+570 true 7.9792266297612e+16
+51
+Point {x: 6, y: 0, label: "p"} [Point {x: 4, y: 0, label: "p"}, Point {x: 8, y: 4, label: "p"}, {x: 5, y: 9}] [Point {x: 0, y: 0, label: "p"}, Point {x: 0, y: 0, label: "p"}, {x: 5, y: 1}] 50
+600
+0 5
+3
+6
+Body {x: 1, v: -1, name: "body"} 1 false body
+4 true false
+cannot change 'this' here: the method was called on something that cannot change (a let, or a value that is not in a variable)
+1
+Moon {x: 3, v: 1, name: "body"} 100 true
+[Body {x: -0.5, v: -1, name: "body"}, Body {x: 7.5, v: 5, name: "body"}, Body {x: 1.5, v: 1, name: "body"}] Body {x: 13, v: 4, name: "body"} 12.5
+Object has no method 'mass'
+cannot change 'this' here: the method was called on something that cannot change (a let, or a value that is not in a variable)
+2
+1 -0.5 0.5 0
+turn 0
+turn 1
+89 14 4
+[10, 21, 34, 19, 36, 55, 46, 69] [true, true, true, true, false, false] [9, 2, 1, 2, 3, 4, 5, 6, 7, 8] [] [2, 2, "three"] ["n", "n"]
+native_loops.lube:197: error: division by zero
+  197 | for i in 0..10 { n += 100 / (5 - i) }  // division by zero: the VM runs it again, from the start, and says so
+[exit 70]
+--- native: nothing can be
+native: none of its functions can be (a plain build)
+built TMP/args_native: 1 file, N bytes
+[exit 0]
+--- native: without Lube's sources
+lube: --native needs Lube's C sources: set LUBE_SRC to the folder that has lube.h
+[exit 69]
+--- native: no sources next to lube
+lube: --native needs Lube's C sources: set LUBE_SRC to the folder that has lube.h
+[exit 69]
+--- native: the C compiler fails
+lube: the C compiler (false) failed
+[exit 70]
+--- native: an output folder that does not exist
+lube: cannot write 'TMP/no/such/dir/app.native-tmp.c'
+[exit 73]
 --- isolates that fail with nobody joining, and one left waiting at the end
 lube: an isolate running boom() failed: division by zero
 lube: an isolate running boom() failed: division by zero
@@ -190,7 +553,7 @@ lube: an isolate running sq() failed: spawn() cannot run while an isolate is sta
 [3, 5, 7] ["x", "y"]
 [exit 0]
 --- isolates from the REPL
-Lube 2.0.0  (type exit() or press Ctrl-D to quit)
+Lube 0.1.0  (type exit() or press Ctrl-D to quit)
 >>> >>> 81
 >>> 
 [exit 0]
@@ -260,7 +623,7 @@ TMP/pkgs/unresolved/u.lube:3: error: 'break' can only be used inside a loop
     2 | print(Point(1, 2))
 [exit 70]
 --- package imports in the REPL
-Lube 2.0.0  (type exit() or press Ctrl-D to quit)
+Lube 0.1.0  (type exit() or press Ctrl-D to quit)
 >>> >>> Point {x: 1, y: 2}
 >>> 
 [exit 0]
@@ -272,6 +635,242 @@ Lube 2.0.0  (type exit() or press Ctrl-D to quit)
 lube: reloaded TMP/pkgs/live/live.lube
 2 new
 [exit 0]
+--- debugger: breakpoints, values, frames, stepping
+Lube debugger: h lists the commands (Ctrl-C pauses the program)
+   at <script> (tests/cli/debug_app.lube:2)
+    2 | class Item {
+(lube)   c, continue        run to the next breakpoint
+  n, next            the next line, over calls
+  s, step            the next line, into calls
+  o, out             until this function returns
+  b [file:]line [if cond]   a breakpoint (tb: one that is removed when hit)
+  b [file:]line hits n      one that stops on the nth hit (or: >= n, % n)
+  log [file:]line msg       print msg (with {expressions}) there, without stopping
+  bl                 list the breakpoints;  d [n]: delete one, or all
+  catch all|uncaught|off    stop where errors are raised
+  p expr             evaluate an expression here
+  locals, globals    show variables
+  bt                 the calls that led here;  up, down, frame n: look at another
+  l                  the source around here
+  q                  quit the program
+(lube) no breakpoints
+(lube) usage: b [file:]line [if condition]
+(lube) breakpoint 1 at tests/cli/debug_app.lube:13 if item.price > 3
+(lube) breakpoint 1
+   at total (tests/cli/debug_app.lube:13)
+   13 |     sum += item.price
+(lube) Item {name: "book", price: 10}
+(lube) 3
+(lube) error: undefined variable 'nothing_here'
+(lube) <debugger>:1:4: syntax error: expected an expression but found end of file
+    1 | 1 +
+      |    ^
+error: the expression has errors (see above)
+(lube) <debugger>:1: error: the debugger evaluates one expression
+    1 | 1; 2
+error: the expression has errors (see above)
+(lube) side effect
+error: the expression gives no value
+(lube) items = [Item {name: "pen", price: 2}, Item {name: "book", price: 10}, Item {name: "ink", price: 5}]
+sum = 2
+item = Item {name: "book", price: 10}
+(lube) items = [Item {name: "pen", price: 2}, Item {name: "book", price: 10}, Item {name: "ink", price: 5}]
+Item = <class Item>
+total = <fn total>
+shadow = <fn shadow>
+factor = 2
+(lube) =>#0 total (tests/cli/debug_app.lube:13)
+  #1 <script> (tests/cli/debug_app.lube:27)
+(lube)    at <script> (tests/cli/debug_app.lube:27)
+   27 | let t = total(items)
+(lube) (lube) there is no frame 9 (bt lists them)
+(lube)    at total (tests/cli/debug_app.lube:13)
+   13 |     sum += item.price
+(lube) there is no frame -1 (bt lists them)
+(lube)      8 |   }
+     9 | }
+    10 | fn total(items: List): Number {
+    11 |   var sum = 0
+    12 |   for item in items {
+=>  13 |     sum += item.price
+    14 |   }
+    15 |   return sum
+    16 | }
+    17 | fn shadow(): Number {
+    18 |   let x = 1
+(lube)    at total (tests/cli/debug_app.lube:12)
+   12 |   for item in items {
+(lube) breakpoint 1
+   at total (tests/cli/debug_app.lube:13)
+   13 |     sum += item.price
+(lube) 1 tests/cli/debug_app.lube:13 if item.price > 3 (hit 2 times)
+(lube) there is no breakpoint 7 (bl lists them)
+(lube) (lube) logpoint 2 at tests/cli/debug_app.lube:28
+(lube) breakpoint 3 at tests/cli/debug_app.lube:28
+(lube) logpoint 2: undefined variable 'i'
+breakpoint 3
+   at <script> (tests/cli/debug_app.lube:28)
+   28 | let scaled = items.map(fn(i) => i.price * factor)
+(lube) mapping pen
+   at <lambda> (tests/cli/debug_app.lube:28)
+   28 | let scaled = items.map(fn(i) => i.price * factor)
+(lube) i = Item {name: "pen", price: 2}
+(lube) mapping book
+mapping ink
+logpoint 2: undefined variable 'i'
+   at <script> (tests/cli/debug_app.lube:28)
+   28 | let scaled = items.map(fn(i) => i.price * factor)
+(lube) breakpoint 4 at tests/cli/debug_app.lube:22
+(lube) breakpoint 4
+   at shadow (tests/cli/debug_app.lube:22)
+   22 |     return add(x)
+(lube) add = <fn add>
+x = 2
+(lube)    at add (tests/cli/debug_app.lube:19)
+   19 |   let add = fn(y) => x + y
+(lube) y = 2
+x = 1
+(lube) unknown command 'what' (h lists them)
+(lube) (lube) (lube) usage: catch all|uncaught|off
+(lube) (lube) total 17 [4, 20, 10] 3
+error raised: division by zero
+   at fails (tests/cli/debug_app.lube:30)
+   30 | fn fails(n: Number): Number => 10 / n
+(lube) =>#0 fails (tests/cli/debug_app.lube:30)
+  #1 <script> (tests/cli/debug_app.lube:31)
+(lube) (lube) caught: division by zero
+tests/cli/debug_app.lube:30: error: division by zero
+   30 | fn fails(n: Number): Number => 10 / n
+traceback (innermost call first):
+  at fails (tests/cli/debug_app.lube:30)
+  at <script> (tests/cli/debug_app.lube:32)
+[exit 70]
+--- debugger: an uncaught error stops where it is raised
+Lube debugger: h lists the commands (Ctrl-C pauses the program)
+   at <script> (tests/cli/debug_app.lube:2)
+    2 | class Item {
+(lube) total 17 [4, 20, 10] 3
+caught: division by zero
+error raised: division by zero
+   at fails (tests/cli/debug_app.lube:30)
+   30 | fn fails(n: Number): Number => 10 / n
+(lube) 0
+(lube) =>#0 fails (tests/cli/debug_app.lube:30)
+  #1 <script> (tests/cli/debug_app.lube:32)
+(lube) tests/cli/debug_app.lube:30: error: division by zero
+   30 | fn fails(n: Number): Number => 10 / n
+traceback (innermost call first):
+  at fails (tests/cli/debug_app.lube:30)
+  at <script> (tests/cli/debug_app.lube:32)
+[exit 70]
+--- debugger: hit counts, a broken condition, and quitting
+Lube debugger: h lists the commands (Ctrl-C pauses the program)
+   at <script> (tests/cli/debug_app.lube:2)
+    2 | class Item {
+(lube) breakpoint 1 at tests/cli/debug_app.lube:13
+(lube) breakpoint 2 at tests/cli/debug_app.lube:13 if nope
+(lube) breakpoint 2: the condition failed: undefined variable 'nope'
+breakpoint 2
+   at total (tests/cli/debug_app.lube:13)
+   13 |     sum += item.price
+(lube) breakpoint 1
+   at total (tests/cli/debug_app.lube:13)
+   13 |     sum += item.price
+(lube) "book"
+(lube) <debugger>:1: error: cannot change 'sum' here: it belongs to an enclosing function, and closures only get a read-only copy of it
+    1 | sum = 5
+error: the expression has errors (see above)
+(lube) (lube) breakpoint 3 at tests/cli/debug_app.lube:13
+(lube) total 17 [4, 20, 10] 3
+caught: division by zero
+error raised: division by zero
+   at fails (tests/cli/debug_app.lube:30)
+   30 | fn fails(n: Number): Number => 10 / n
+(lube) error: undefined variable 'item'
+(lube) [exit 0]
+--- debugger: expressions see the file's imports
+Lube debugger: h lists the commands (Ctrl-C pauses the program)
+   at <script> (TMP/uses_shapes.lube:1)
+    1 | import shapes.Point
+(lube)    at <script> (TMP/uses_shapes.lube:2)
+    2 | let p = Point(1, 2)
+(lube) Point {x: 3, y: 4}
+(lube) error: undefined variable 'p'
+(lube) Point {x: 1, y: 2}
+[exit 0]
+--- debugger: no more commands runs the program on
+Lube debugger: h lists the commands (Ctrl-C pauses the program)
+   at <script> (tests/cli/debug_app.lube:2)
+    2 | class Item {
+(lube) breakpoint 1 at tests/cli/debug_app.lube:13
+(lube) breakpoint 1
+   at total (tests/cli/debug_app.lube:13)
+   13 |     sum += item.price
+(lube) 
+total 17 [4, 20, 10] 3
+caught: division by zero
+tests/cli/debug_app.lube:30: error: division by zero
+   30 | fn fails(n: Number): Number => 10 / n
+traceback (innermost call first):
+  at fails (tests/cli/debug_app.lube:30)
+  at <script> (tests/cli/debug_app.lube:32)
+[exit 70]
+--- debugger: in an on block in a function
+Lube debugger: h lists the commands (Ctrl-C pauses the program)
+   at <script> (tests/cli/debug_on.lube:2)
+    2 | fn game() {
+(lube) breakpoint 1 at tests/cli/debug_on.lube:7
+(lube) breakpoint 1
+   at on score (tests/cli/debug_on.lube:7)
+    7 |     print("gained", gain * bonus)
+(lube) old = 0
+new = 5
+gain = 5
+score = 5
+bonus = 2
+(lube) 15
+(lube) =>#0 on score (tests/cli/debug_on.lube:7)
+  #1 game (tests/cli/debug_on.lube:9)
+  #2 <script> (tests/cli/debug_on.lube:12)
+(lube)    at game (tests/cli/debug_on.lube:9)
+    9 |   score += 5
+(lube) score = 5
+bonus = 2
+(lube) gained 10
+   at on score (tests/cli/debug_on.lube:5)
+    5 |   on score (old, new) {
+(lube)    at game (tests/cli/debug_on.lube:9)
+    9 |   score += 5
+(lube)    at game (tests/cli/debug_on.lube:10)
+   10 |   score += 1
+(lube) breakpoint 1
+   at on score (tests/cli/debug_on.lube:7)
+    7 |     print("gained", gain * bonus)
+(lube) gained 2
+[exit 0]
+--- debugger without a file
+Lube 0.1.0 - a small, smooth scripting language
+
+usage:
+  lube                  start the interactive REPL
+  lube FILE [ARGS...]   run a Lube script (ARGS are available as `args`)
+  lube -e CODE          run CODE and print the value of the last expression
+  lube -                read a script from standard input
+  lube --check FILE     report syntax errors without running anything (FILE may be -)
+  lube --debug FILE [ARGS...]
+                        run FILE in the debugger (h at its prompt lists the commands)
+  lube --hot FILE [ARGS...]
+                        run FILE, applying changes to its files while it runs
+  lube --build [--native [--fast]] [--small] FILE [-o OUT]
+                        build FILE and its imports into a standalone executable; --native also
+                        compiles its fns that compute only with Numbers and Bools to machine
+                        code (needs a C compiler, and Lube's sources: LUBE_SRC); --fast lets
+                        that code use 64-bit integers that wrap around and reorder sums;
+                        --small makes it as small as it can be: only the parts of Lube the
+                        program uses (needs a C compiler too)
+  lube -v, --version    print the version
+  lube -h, --help       show this help
+[exit 64]
 --- hot_reload()
 5 hello ada ... 3
 lube: reloaded game.lube
@@ -315,7 +914,7 @@ lube: reloaded step.lube
 saw the change: true kept the state: true
 [exit 0]
 --- lube --hot without a file
-Lube 2.0.0 - a small, smooth scripting language
+Lube 0.1.0 - a small, smooth scripting language
 
 usage:
   lube                  start the interactive REPL
@@ -323,15 +922,22 @@ usage:
   lube -e CODE          run CODE and print the value of the last expression
   lube -                read a script from standard input
   lube --check FILE     report syntax errors without running anything (FILE may be -)
+  lube --debug FILE [ARGS...]
+                        run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build FILE [-o OUT]
-                        build FILE and its imports into a standalone executable
+  lube --build [--native [--fast]] [--small] FILE [-o OUT]
+                        build FILE and its imports into a standalone executable; --native also
+                        compiles its fns that compute only with Numbers and Bools to machine
+                        code (needs a C compiler, and Lube's sources: LUBE_SRC); --fast lets
+                        that code use 64-bit integers that wrap around and reorder sums;
+                        --small makes it as small as it can be: only the parts of Lube the
+                        program uses (needs a C compiler too)
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 64]
 --- repl
-Lube 2.0.0  (type exit() or press Ctrl-D to quit)
+Lube 0.1.0  (type exit() or press Ctrl-D to quit)
 >>> >>> 21
 >>> ... ... >>> 40
 >>> "text"
@@ -349,11 +955,11 @@ Lube 2.0.0  (type exit() or press Ctrl-D to quit)
 >>> >>> >>> >>> 
 [exit 0]
 --- repl empty input
-Lube 2.0.0  (type exit() or press Ctrl-D to quit)
+Lube 0.1.0  (type exit() or press Ctrl-D to quit)
 >>> 
 [exit 0]
 --- repl line without newline
-Lube 2.0.0  (type exit() or press Ctrl-D to quit)
+Lube 0.1.0  (type exit() or press Ctrl-D to quit)
 >>> 2
 >>> 
 [exit 0]
@@ -398,6 +1004,14 @@ traceback (innermost call first):
 --- on a let from an import
 TMP/mods/main5.lube:2: error: this 'on' block would never run: cannot change 'LIMIT': it was declared with let (use var for a variable that changes)
     2 | on LIMIT { print(LIMIT) }
+[exit 70]
+--- a fn an import replaces
+1
+TMP/mods/main6.lube:2: error: 'helper' is not a function (it is a Number)
+    2 | fn use() => helper()
+traceback (innermost call first):
+  at use (TMP/mods/main6.lube:2)
+  at <script> (TMP/mods/main6.lube:5)
 [exit 70]
 --- exit(3)
 [exit 3]
@@ -949,10 +1563,85 @@ program:1:9: syntax error: expected a type after ':' but found '=>'
     1 | fn f(): => 1
       |         ^
 [exit 65]
---- on inside a function
-program:3: error: 'on' can only be used at the top level of a file
-    3 |   on score { print(score) }
+--- on a captured variable
+program:3: error: this 'on' block would never run: cannot change 'x' here: it belongs to an enclosing function, and closures only get a read-only copy of it
+    3 |   return fn() { on x { } }
 [exit 65]
+--- on a let in a function
+program:3: error: this 'on' block would never run: cannot change 'x': it was declared with let (use var for a variable that changes)
+    3 |   on x { }
+[exit 65]
+--- on this outside a method
+program:1: error: 'this' can only be used inside a class's methods and constructor
+    1 | fn f() { on this { } }
+[exit 65]
+--- on with a default
+program:2:6: syntax error: an 'on' block takes (old, new): the value before the change and after it
+    2 | on a (old = 1, new) { }
+      |      ^
+[exit 65]
+--- on a field that does not exist
+program:3: error: cannot watch this.hpp: a P has no field 'hpp'
+    3 |   fn f() { on this.hpp { } }
+traceback (innermost call first):
+  at f (program:3)
+  at <script> (program:6)
+[exit 70]
+--- on a field of a number
+program:2: error: cannot watch n.x: a Number has no field 'x'
+    2 | fn f() { on n.x { } }
+traceback (innermost call first):
+  at f (program:2)
+  at <script> (program:3)
+[exit 70]
+--- on a missing global in a function
+program:2: error: there is no global variable 'nothing_here' to watch (declare it with var first)
+    2 |   on nothing_here { }
+traceback (innermost call first):
+  at f (program:2)
+  at <script> (program:4)
+[exit 70]
+--- break in an on block
+program:4: error: 'break' can only be used inside a loop
+    4 |     on x { break }
+[exit 65]
+--- strict: on parameters in a function need types
+program:4:10: syntax error: #strict: parameter 'a' needs a type, like a: Number
+    4 |   on x (a, b) { }
+      |          ^
+[exit 65]
+--- an on block's parameter type
+program:4: error: parameter 'a' of on x() is a str, so it cannot take a Number
+    4 |   x = 1
+traceback (innermost call first):
+  at f (program:4)
+  at <script> (program:6)
+[exit 70]
+--- an error in an on block in a function
+program:3: error: boom
+    3 |   on x { throw "boom" }
+traceback (innermost call first):
+  at on x (program:3)
+  at f (program:4)
+  at <script> (program:6)
+[exit 70]
+--- on blocks in a recursion too deep
+program:4: error: stack overflow: too much recursion
+    4 |   x = 1
+traceback (innermost call first):
+  at r (program:4)
+  at r (program:5)
+  ... repeated 99997 more times
+  at <script> (program:7)
+[exit 70]
+--- an on block that needs a variable lent out
+program:7: error: the 'on score' block cannot run now: 'state' is lent out with & to a call that has not returned
+    7 | fn update(&s) { score += 1 }
+traceback (innermost call first):
+  at update (program:7)
+  at main (program:5)
+  at <script> (program:8)
+[exit 70]
 --- on a let
 program:2: error: this 'on' block would never run: cannot change 'score': it was declared with let (use var for a variable that changes)
     2 | on score { print(score) }

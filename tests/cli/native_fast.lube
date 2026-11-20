@@ -1,0 +1,20 @@
+// lube --build --native --fast: whole numbers are 64-bit integers that
+// wrap around past 2^63 (unchecked), and sums may be reordered. (Run as
+// a script, or built without --fast, it gives the exact answers instead.)
+fn cube(n: Number): Number => n * n * n
+fn total(n: Number): Number {
+  var t = 0
+  for i in 0..n { t += i % 7 }
+  return t
+}
+fn spin(n: Number): Number {
+  var x = 1
+  for i in 0..n { x = x * 31 + i }
+  return x
+}
+fn mods(n: Number): Number => (n - 10) % 3 + n % -4
+fn half(n: Number): Number => n / 2  // a division is a double's, as always
+fn bad(n: Number): Number => n % 0  // errors are still the VM's
+print(cube(1000), total(100), mods(7), mods(-7), half(7))
+print(cube(3000000), spin(20))  // past 2^63: wrapped around
+try { print(bad(3)) } catch e { print(e) }

@@ -1,0 +1,9 @@
+// Sorting a million numbers.
+var xs = Number[]
+var x = 42
+for i in 0..1000000 {
+  x = x * 16807 % 2147483647
+  xs.push(x)
+}
+let s = sort(xs)
+print(s[0], s[500000], s[999999])

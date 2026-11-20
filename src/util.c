@@ -4,6 +4,8 @@
  */
 #include "lube.h"
 
+#include <math.h>
+
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -93,6 +95,14 @@ void arena_free(Arena *a) {
 
 /* ---------- string buffer ---------- */
 
+/* x to the nearest whole number, halves up (2.5 is 3, -2.5 is -2), -0 to 0.
+ * (floor(x + 0.5) is not it: x + 0.5 rounds when x is past 2^52, or is
+ * 0.49999999999999994.) x - floor(x) is exact. */
+double lube_round(double x) {
+    double f = floor(x);
+    return x - f >= 0.5 ? f + 1 : f + 0.0;
+}
+
 void sb_init(StrBuf *sb) {
     sb->data = NULL;
     sb->len = sb->cap = 0;
@@ -143,6 +153,17 @@ void sb_free(StrBuf *sb) {
 
 /* ---------- files ---------- */
 
+/* On Windows both \ and / separate folders; Lube's paths use / throughout,
+ * so a path from outside (an argument, LUBE_PATH) is tidied once. */
+void lube_slashes(char *path) {
+#ifdef _WIN32
+    for (; *path; path++)
+        if (*path == '\\') *path = '/';
+#else
+    (void)path;
+#endif
+}
+
 char *read_file(const char *path, size_t *length) {
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
@@ -164,6 +185,38 @@ char *read_file(const char *path, size_t *length) {
 
 /* ---------- diagnostics ---------- */
 
+static void std_output(const char *text, size_t len, int is_err) {
+    if (is_err) fflush(stdout);  /* messages come after the output before them */
+    fwrite(text, 1, len, is_err ? stderr : stdout);
+}
+
+/* Where a program's output and Lube's messages go: stdout and stderr, or
+ * (under lube --dap, whose stdout carries the protocol) somewhere else. Set
+ * once, before any isolate starts. */
+void (*lube_output)(const char *text, size_t len, int is_err) = std_output;
+
+/* Prints a message (err: an error message, for stderr). */
+void lube_print(int err, const char *fmt, ...) {
+    StrBuf sb;
+    sb_init(&sb);
+    va_list ap;
+    va_start(ap, fmt);
+    char small[512];
+    int n = vsnprintf(small, sizeof small, fmt, ap);
+    va_end(ap);
+    if (n >= (int)sizeof small) {  /* long: format again into the right size */
+        sb_reserve(&sb, (size_t)n + 1);
+        va_start(ap, fmt);
+        vsnprintf(sb.data, (size_t)n + 1, fmt, ap);
+        va_end(ap);
+        sb.len = (size_t)n;
+    } else {
+        sb_putn(&sb, small, (size_t)(n < 0 ? 0 : n));
+    }
+    lube_output(sb.data ? sb.data : "", sb.len, err);
+    sb_free(&sb);
+}
+
 /* Prints the source line `line` of `src`, with a caret under column `col`
  * (no caret when col <= 0). */
 void print_source_line(Source *src, int line, int col) {
@@ -178,18 +231,22 @@ void print_source_line(Source *src, int line, int col) {
     const char *e = p;
     while (e < end && *e != '\n') e++;
     if (e > p && e[-1] == '\r') e--;
-    fprintf(stderr, "%5d | %.*s\n", line, (int)(e - p), p);
+    StrBuf sb;
+    sb_init(&sb);
+    sb_printf(&sb, "%5d | %.*s\n", line, (int)(e - p), p);
     if (col > 0) {
-        fputs("      | ", stderr);
-        for (int i = 0; i < col - 1 && p + i < e; i++) fputc(p[i] == '\t' ? '\t' : ' ', stderr);
-        fputs("^\n", stderr);
+        sb_puts(&sb, "      | ");
+        for (int i = 0; i < col - 1 && p + i < e; i++) sb_putc(&sb, p[i] == '\t' ? '\t' : ' ');
+        sb_puts(&sb, "^\n");
     }
+    lube_print(1, "%s", sb.data);
+    sb_free(&sb);
 }
 
 void report_error(Source *src, int line, int col, const char *kind, const char *msg) {
     fflush(stdout);
     const char *path = src ? src->path : "<input>";
-    if (col > 0) fprintf(stderr, "%s:%d:%d: %s: %s\n", path, line, col, kind, msg);
-    else fprintf(stderr, "%s:%d: %s: %s\n", path, line, kind, msg);
+    if (col > 0) lube_print(1, "%s:%d:%d: %s: %s\n", path, line, col, kind, msg);
+    else lube_print(1, "%s:%d: %s: %s\n", path, line, kind, msg);
     print_source_line(src, line, col);
 }

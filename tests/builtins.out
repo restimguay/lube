@@ -28,8 +28,13 @@ error: sum() can only add numbers, found a str
 error: min() of an empty list
 error: max() cannot compare a str with a Number
 error: sort() cannot order nan
+error: max() cannot order nan
+error: sort() cannot order nan
 error: sort() comparator must return a Number or a Bool, not a str
 ab xy ["a", "ab", "b"] [3, 2, 1]
+9007199254740991 4503599627370497 0 -2 3
+true 308 -1e+300 -300 2.275 1e+300 [-inf, inf, -inf, inf]
+error: sort() cannot order nan
 [2, 1, 0] cba -1 -1 0-1-2
 [[1, "a"], [2, "b"]] [[0, true], [1, false]]
 error: zip() expects a List, Range, str or Object, got Number

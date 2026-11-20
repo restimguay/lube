@@ -137,7 +137,7 @@ static void write_values(int argc, Value *argv, int newline) {
         append_value(&sb, argv[i], 0);
     }
     if (newline) sb_putc(&sb, '\n');
-    if (sb.len) fwrite(sb.data, 1, sb.len, stdout);
+    if (sb.len) lube_output(sb.data, sb.len, 0);
     sb_free(&sb);
 }
 
@@ -440,12 +440,110 @@ static int sort_before(Interp *I, Value cmp, Value b, Value a) {
     return before;
 }
 
+/* sort() of plain Numbers: the same merge sort and the same comparisons
+ * (b < a, and nan cannot be ordered) on the doubles themselves. Fills out;
+ * 0, or -1 after an error. */
+/* The n Numbers in a, in order, by their bits (a stable radix sort: what
+ * the merge sort below makes, faster on many). Each one's key orders like
+ * the Number; -0 has 0's, and the zeros get back their signs in their first
+ * order (as a stable sort leaves them). 0 when there is a nan. */
+static int radix_numbers(double *a, double *tmp, size_t n) {
+    uint64_t *k = (uint64_t *)(void *)a, *t = (uint64_t *)(void *)tmp;
+    unsigned char *signs = NULL;
+    size_t zeros = 0, (*count)[256] = xmalloc(8 * sizeof *count);
+    memset(count, 0, 8 * sizeof *count);
+    for (size_t i = 0; i < n; i++) {
+        double x = a[i];
+        if (x != x) {
+            free(count);
+            return 0;
+        }
+        if (x == 0) {  /* (its sign, kept for later) */
+            if (!signs) signs = xmalloc(n - i);
+            signs[zeros++] = signbit(x) != 0;
+            x = 0;
+        }
+        uint64_t b;
+        memcpy(&b, &x, sizeof b);
+        k[i] = b >> 63 ? ~b : b | 0x8000000000000000ull;  /* (negatives: reversed) */
+        for (int d = 0; d < 8; d++) count[d][(k[i] >> (8 * d)) & 255]++;
+    }
+    for (int d = 0; d < 8; d++) {
+        if (count[d][(k[0] >> (8 * d)) & 255] == n) continue;  /* (every key has this byte) */
+        size_t at = 0;
+        for (int b = 0; b < 256; b++) {
+            size_t c = count[d][b];
+            count[d][b] = at;
+            at += c;
+        }
+        for (size_t i = 0; i < n; i++) t[count[d][(k[i] >> (8 * d)) & 255]++] = k[i];
+        uint64_t *swap = k;
+        k = t;
+        t = swap;
+    }
+    size_t z = 0;
+    for (size_t i = 0; i < n; i++) {
+        uint64_t b = k[i] >> 63 ? k[i] & 0x7fffffffffffffffull : ~k[i];
+        memcpy(&a[i], &b, sizeof b);  /* (a may be where k is: same place, same size) */
+        if (a[i] == 0 && signs[z++]) a[i] = -0.0;
+    }
+    free(signs);
+    free(count);
+    return 1;
+}
+
+static int sort_numbers(Interp *I, ObjList *src, ObjList *out) {
+    size_t n = src->count;
+    double *a = xmalloc(sizeof(double) * (n ? n : 1)), *tmp = xmalloc(sizeof(double) * (n ? n : 1));
+    for (size_t i = 0; i < n; i++) a[i] = src->items[i].as.number;
+    int failed = 0;
+    if (n < 64 || !radix_numbers(a, tmp, n)) {  /* few, or a nan (and its error): a merge sort */
+        for (size_t i = 0; i < n; i++) a[i] = src->items[i].as.number;
+        for (size_t width = 1; width < n && !failed; width *= 2) {
+            for (size_t lo = 0; lo < n && !failed; lo += 2 * width) {
+                size_t mid = lo + width < n ? lo + width : n;
+                size_t hi = lo + 2 * width < n ? lo + 2 * width : n;
+                size_t i = lo, j = mid, k = lo;
+                while (i < mid && j < hi) {
+                    if (a[j] != a[j] || a[i] != a[i]) {
+                        lube_error(I, "sort() cannot order nan");
+                        failed = 1;
+                        break;
+                    }
+                    tmp[k++] = a[j] < a[i] ? a[j++] : a[i++];
+                }
+                while (i < mid) tmp[k++] = a[i++];
+                while (j < hi) tmp[k++] = a[j++];
+            }
+            double *t = a;
+            a = tmp;
+            tmp = t;
+        }
+    }
+    if (!failed) {
+        list_reserve(out, n);
+        for (size_t i = 0; i < n; i++) out->items[out->count++] = NUM_VAL(a[i]);
+    }
+    free(a);
+    free(tmp);
+    return failed ? -1 : 0;
+}
+
 /* Stable bottom-up merge sort into a new list. */
 NATIVE(n_sort) {
     Value cmp = argc > 1 ? argv[1] : NIL_VAL;
     if (!IS_NIL(cmp)) NEED_FN(1);
     LIST_ARG(src, 0);
-    size_t n = src->count;
+    size_t n = src->count, numbers = IS_NIL(cmp);
+    for (size_t i = 0; i < n && numbers; i++) numbers = IS_NUM(src->items[i]);
+    if (numbers) {  /* the common case, without a comparison call for each pair */
+        ObjList *out = new_list();
+        out->elem = src->elem;
+        Value result = sort_numbers(I, src, out) < 0 ? ERR_VAL : OBJ_VAL(out);
+        if (IS_ERR(result)) release(OBJ_VAL(out));
+        release(OBJ_VAL(src));
+        return result;
+    }
     Value *a = xmalloc(sizeof(Value) * (n ? n : 1));
     Value *tmp = xmalloc(sizeof(Value) * (n ? n : 1));
     for (size_t i = 0; i < n; i++) a[i] = src->items[i];  /* borrowed from src */
@@ -510,9 +608,27 @@ NATIVE(n_join) {
     if (argc > 1) NEED_STR(1);
     LIST_ARG(l, 0);
     ObjString *sep = argc > 1 ? text_of(argv[1]) : NULL;
+    size_t total = 0, i = 0;
+    for (; i < l->count && IS_TEXT(l->items[i]) && total <= LUBE_MAX_BYTES; i++)  /* only text: its length first */
+        total += text_of(l->items[i])->length + (i && sep ? sep->length : 0);
+    if (i == l->count && total <= LUBE_MAX_BYTES) {
+        ObjString *out = alloc_string(total);
+        char *at = out->chars;
+        for (i = 0; i < l->count; i++) {
+            ObjString *t = text_of(l->items[i]);
+            if (i && sep) {
+                memcpy(at, sep->chars, sep->length);
+                at += sep->length;
+            }
+            memcpy(at, t->chars, t->length);
+            at += t->length;
+        }
+        release(OBJ_VAL(l));
+        return OBJ_VAL(out);
+    }
     StrBuf sb;
     sb_init(&sb);
-    for (size_t i = 0; i < l->count; i++) {
+    for (i = 0; i < l->count; i++) {
         if (i && sep) sb_putn(&sb, sep->chars, sep->length);
         append_value(&sb, l->items[i], 0);
     }
@@ -895,8 +1011,14 @@ NATIVE(n_split) {
         if (sep->length == 0) {
             push_chars(I, out, s);
         } else {
-            size_t start = 0;
+            size_t start = 0, pieces = 1;
             long pos;
+            while ((pos = str_find(s->chars, s->length, sep->chars, sep->length, start)) >= 0) {  /* (how many first) */
+                pieces++;
+                start = (size_t)pos + sep->length;
+            }
+            list_reserve(out, pieces);
+            start = 0;
             while ((pos = str_find(s->chars, s->length, sep->chars, sep->length, start)) >= 0) {
                 list_push(out, OBJ_VAL(new_string(s->chars + start, (size_t)pos - start)));
                 start = (size_t)pos + sep->length;
@@ -1086,7 +1208,7 @@ NATIVE(n_round) {
     NEED_NUM(0);
     if (IS_INT(argv[0])) return argv[0];
     double x = numeric_value(argv[0]);
-    if (argc < 2) return NUM_VAL(floor(x + 0.5));
+    if (argc < 2) return NUM_VAL(lube_round(x));
     NEED_INT(1);
     double m = pow(10, numeric_value(argv[1]));
     return NUM_VAL(floor(x * m + 0.5) / m);
@@ -1282,111 +1404,112 @@ static const struct {
     int changes_first;
 } BUILTINS[] = {
     /* input / output */
-    {"print", n_print, 0, -1, 0},
-    {"write", n_write, 0, -1, 0},
-    {"input", n_input, 0, 1, 0},
-    {"read_file", n_read_file, 1, 1, 0},
-    {"write_file", n_write_file, 2, 2, 0},
-    {"append_file", n_append_file, 2, 2, 0},
-    {"exit", n_exit, 0, 1, 0},
-    {"clock", n_clock, 0, 0, 0},
-    {"time", n_time, 0, 0, 0},
+    LUBE_BUILTIN(print, n_print, 0, -1, 0)
+    LUBE_BUILTIN(write, n_write, 0, -1, 0)
+    LUBE_BUILTIN(input, n_input, 0, 1, 0)
+    LUBE_BUILTIN(read_file, n_read_file, 1, 1, 0)
+    LUBE_BUILTIN(write_file, n_write_file, 2, 2, 0)
+    LUBE_BUILTIN(append_file, n_append_file, 2, 2, 0)
+    LUBE_BUILTIN(exit, n_exit, 0, 1, 0)
+    LUBE_BUILTIN(clock, n_clock, 0, 0, 0)
+    LUBE_BUILTIN(time, n_time, 0, 0, 0)
     /* types */
-    {"type", n_type, 1, 1, 0},
-    {"str", n_str, 1, 1, 0},
-    {"repr", n_repr, 1, 1, 0},
-    {"num", n_num, 1, 2, 0},
-    {"int", n_int, 1, 2, 0},
-    {"bool", n_bool, 1, 1, 0},
-    {"String", n_String, 0, 1, 0},
-    {"Number", n_Number, 0, 2, 0},
-    {"Bool", n_Bool, 0, 1, 0},
-    {"Object", n_Object, 0, 1, 0},
-    {"Map", n_Map, 0, 1, 0},
-    {"List", n_List, 0, 1, 0},
-    {"Function", n_Function, 1, 1, 0},
-    {"Range", n_range, 1, 3, 0},
-    {"int8", n_int8, 0, 1, 0},
-    {"int16", n_int16, 0, 1, 0},
-    {"int32", n_int32, 0, 1, 0},
-    {"int64", n_int64, 0, 1, 0},
-    {"uint8", n_uint8, 0, 1, 0},
-    {"uint16", n_uint16, 0, 1, 0},
-    {"uint32", n_uint32, 0, 1, 0},
-    {"uint64", n_uint64, 0, 1, 0},
+    LUBE_BUILTIN(type, n_type, 1, 1, 0)
+    LUBE_BUILTIN(str, n_str, 1, 1, 0)
+    LUBE_BUILTIN(repr, n_repr, 1, 1, 0)
+    LUBE_BUILTIN(num, n_num, 1, 2, 0)
+    LUBE_BUILTIN(int, n_int, 1, 2, 0)
+    LUBE_BUILTIN(bool, n_bool, 1, 1, 0)
+    LUBE_BUILTIN(String, n_String, 0, 1, 0)
+    LUBE_BUILTIN(Number, n_Number, 0, 2, 0)
+    LUBE_BUILTIN(Bool, n_Bool, 0, 1, 0)
+    LUBE_BUILTIN(Object, n_Object, 0, 1, 0)
+    LUBE_BUILTIN(Map, n_Map, 0, 1, 0)
+    LUBE_BUILTIN(List, n_List, 0, 1, 0)
+    LUBE_BUILTIN(Function, n_Function, 1, 1, 0)
+    LUBE_BUILTIN(Range, n_range, 1, 3, 0)
+    LUBE_BUILTIN(int8, n_int8, 0, 1, 0)
+    LUBE_BUILTIN(int16, n_int16, 0, 1, 0)
+    LUBE_BUILTIN(int32, n_int32, 0, 1, 0)
+    LUBE_BUILTIN(int64, n_int64, 0, 1, 0)
+    LUBE_BUILTIN(uint8, n_uint8, 0, 1, 0)
+    LUBE_BUILTIN(uint16, n_uint16, 0, 1, 0)
+    LUBE_BUILTIN(uint32, n_uint32, 0, 1, 0)
+    LUBE_BUILTIN(uint64, n_uint64, 0, 1, 0)
     /* changing collections in place (first argument taken with &) */
-    {"push", n_push, 2, -1, 1},
-    {"pop", n_pop, 1, 1, 1},
-    {"insert", n_insert, 3, 3, 1},
-    {"remove", n_remove, 2, 2, 1},
-    {"delete", n_delete, 2, 2, 1},
-    {"clear", n_clear, 1, 1, 1},
+    LUBE_BUILTIN(push, n_push, 2, -1, 1)
+    LUBE_BUILTIN(pop, n_pop, 1, 1, 1)
+    LUBE_BUILTIN(insert, n_insert, 3, 3, 1)
+    LUBE_BUILTIN(remove, n_remove, 2, 2, 1)
+    LUBE_BUILTIN(delete, n_delete, 2, 2, 1)
+    LUBE_BUILTIN(clear, n_clear, 1, 1, 1)
     /* collections */
-    {"len", n_len, 1, 1, 0},
-    {"slice", n_slice, 1, 3, 0},
-    {"reverse", n_reverse, 1, 1, 0},
-    {"sort", n_sort, 1, 2, 0},
-    {"contains", n_contains, 2, 2, 0},
-    {"index_of", n_index_of, 2, 2, 0},
-    {"join", n_join, 1, 2, 0},
-    {"keys", n_keys, 1, 1, 0},
-    {"values", n_values, 1, 1, 0},
-    {"items", n_items, 1, 1, 0},
-    {"has", n_has, 2, 2, 0},
-    {"get", n_get, 2, 3, 0},
-    {"list", n_list, 0, 1, 0},
-    {"range", n_range, 1, 3, 0},
-    {"map", n_map, 2, 2, 0},
-    {"filter", n_filter, 2, 2, 0},
-    {"each", n_each, 2, 2, 0},
-    {"reduce", n_reduce, 2, 3, 0},
-    {"find", n_find, 2, 3, 0},
-    {"find_index", n_find_index, 2, 2, 0},
-    {"any", n_any, 1, 2, 0},
-    {"all", n_all, 1, 2, 0},
-    {"sum", n_sum, 1, 1, 0},
-    {"min", n_min, 1, -1, 0},
-    {"max", n_max, 1, -1, 0},
-    {"zip", n_zip, 2, 2, 0},
+    LUBE_BUILTIN(len, n_len, 1, 1, 0)
+    LUBE_BUILTIN(slice, n_slice, 1, 3, 0)
+    LUBE_BUILTIN(reverse, n_reverse, 1, 1, 0)
+    LUBE_BUILTIN(sort, n_sort, 1, 2, 0)
+    LUBE_BUILTIN(contains, n_contains, 2, 2, 0)
+    LUBE_BUILTIN(index_of, n_index_of, 2, 2, 0)
+    LUBE_BUILTIN(join, n_join, 1, 2, 0)
+    LUBE_BUILTIN(keys, n_keys, 1, 1, 0)
+    LUBE_BUILTIN(values, n_values, 1, 1, 0)
+    LUBE_BUILTIN(items, n_items, 1, 1, 0)
+    LUBE_BUILTIN(has, n_has, 2, 2, 0)
+    LUBE_BUILTIN(get, n_get, 2, 3, 0)
+    LUBE_BUILTIN(list, n_list, 0, 1, 0)
+    LUBE_BUILTIN(range, n_range, 1, 3, 0)
+    LUBE_BUILTIN(map, n_map, 2, 2, 0)
+    LUBE_BUILTIN(filter, n_filter, 2, 2, 0)
+    LUBE_BUILTIN(each, n_each, 2, 2, 0)
+    LUBE_BUILTIN(reduce, n_reduce, 2, 3, 0)
+    LUBE_BUILTIN(find, n_find, 2, 3, 0)
+    LUBE_BUILTIN(find_index, n_find_index, 2, 2, 0)
+    LUBE_BUILTIN(any, n_any, 1, 2, 0)
+    LUBE_BUILTIN(all, n_all, 1, 2, 0)
+    LUBE_BUILTIN(sum, n_sum, 1, 1, 0)
+    LUBE_BUILTIN(min, n_min, 1, -1, 0)
+    LUBE_BUILTIN(max, n_max, 1, -1, 0)
+    LUBE_BUILTIN(zip, n_zip, 2, 2, 0)
     /* strings */
-    {"upper", n_upper, 1, 1, 0},
-    {"lower", n_lower, 1, 1, 0},
-    {"trim", n_trim, 1, 1, 0},
-    {"split", n_split, 1, 2, 0},
-    {"replace", n_replace, 3, 3, 0},
-    {"starts_with", n_starts_with, 2, 2, 0},
-    {"ends_with", n_ends_with, 2, 2, 0},
-    {"chars", n_chars, 1, 1, 0},
-    {"ord", n_ord, 1, 1, 0},
-    {"chr", n_chr, 1, 1, 0},
-    {"pad_left", n_pad_left, 2, 3, 0},
-    {"pad_right", n_pad_right, 2, 3, 0},
-    {"fixed", n_fixed, 1, 2, 0},
+    LUBE_BUILTIN(upper, n_upper, 1, 1, 0)
+    LUBE_BUILTIN(lower, n_lower, 1, 1, 0)
+    LUBE_BUILTIN(trim, n_trim, 1, 1, 0)
+    LUBE_BUILTIN(split, n_split, 1, 2, 0)
+    LUBE_BUILTIN(replace, n_replace, 3, 3, 0)
+    LUBE_BUILTIN(starts_with, n_starts_with, 2, 2, 0)
+    LUBE_BUILTIN(ends_with, n_ends_with, 2, 2, 0)
+    LUBE_BUILTIN(chars, n_chars, 1, 1, 0)
+    LUBE_BUILTIN(ord, n_ord, 1, 1, 0)
+    LUBE_BUILTIN(chr, n_chr, 1, 1, 0)
+    LUBE_BUILTIN(pad_left, n_pad_left, 2, 3, 0)
+    LUBE_BUILTIN(pad_right, n_pad_right, 2, 3, 0)
+    LUBE_BUILTIN(fixed, n_fixed, 1, 2, 0)
     /* math */
-    {"abs", n_abs, 1, 1, 0},
-    {"floor", n_floor, 1, 1, 0},
-    {"ceil", n_ceil, 1, 1, 0},
-    {"round", n_round, 1, 2, 0},
-    {"sqrt", n_sqrt, 1, 1, 0},
-    {"pow", n_pow, 2, 2, 0},
-    {"sin", n_sin, 1, 1, 0},
-    {"cos", n_cos, 1, 1, 0},
-    {"tan", n_tan, 1, 1, 0},
-    {"atan2", n_atan2, 2, 2, 0},
-    {"log", n_log, 1, 2, 0},
-    {"exp", n_exp, 1, 1, 0},
-    {"random", n_random, 0, 0, 0},
-    {"random_int", n_random_int, 2, 2, 0},
-    {"seed", n_seed, 1, 1, 0},
-    {"choice", n_choice, 1, 1, 0},
-    {"shuffle", n_shuffle, 1, 1, 0},
+    LUBE_BUILTIN(abs, n_abs, 1, 1, 0)
+    LUBE_BUILTIN(floor, n_floor, 1, 1, 0)
+    LUBE_BUILTIN(ceil, n_ceil, 1, 1, 0)
+    LUBE_BUILTIN(round, n_round, 1, 2, 0)
+    LUBE_BUILTIN(sqrt, n_sqrt, 1, 1, 0)
+    LUBE_BUILTIN(pow, n_pow, 2, 2, 0)
+    LUBE_BUILTIN(sin, n_sin, 1, 1, 0)
+    LUBE_BUILTIN(cos, n_cos, 1, 1, 0)
+    LUBE_BUILTIN(tan, n_tan, 1, 1, 0)
+    LUBE_BUILTIN(atan2, n_atan2, 2, 2, 0)
+    LUBE_BUILTIN(log, n_log, 1, 2, 0)
+    LUBE_BUILTIN(exp, n_exp, 1, 1, 0)
+    LUBE_BUILTIN(random, n_random, 0, 0, 0)
+    LUBE_BUILTIN(random_int, n_random_int, 2, 2, 0)
+    LUBE_BUILTIN(seed, n_seed, 1, 1, 0)
+    LUBE_BUILTIN(choice, n_choice, 1, 1, 0)
+    LUBE_BUILTIN(shuffle, n_shuffle, 1, 1, 0)
     /* misc */
-    {"assert", n_assert, 1, 2, 0},
-    {"hot_reload", n_hot_reload, 0, 0, 0},
+    LUBE_BUILTIN(assert, n_assert, 1, 2, 0)
+    LUBE_BUILTIN(hot_reload, n_hot_reload, 0, 0, 0)
+    {NULL, NULL, 0, 0, 0}  /* (the end) */
 };
 
 void register_builtins(Interp *I) {
-    for (size_t i = 0; i < sizeof BUILTINS / sizeof BUILTINS[0]; i++) {
+    for (size_t i = 0; BUILTINS[i].name; i++) {
         ObjNative *n = new_native(BUILTINS[i].name, BUILTINS[i].fn, BUILTINS[i].min, BUILTINS[i].max,
                                   BUILTINS[i].changes_first);
         lube_define(I, BUILTINS[i].name, OBJ_VAL(n));

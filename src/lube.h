@@ -34,7 +34,7 @@
 #include <stdint.h>
 #include <limits.h>
 
-#define LUBE_VERSION "2.0.0"
+#define LUBE_VERSION "0.1.0"
 
 /* Hard limits, checked before any size arithmetic so that no size can ever
  * overflow, and so one expression cannot claim all of the machine's memory.
@@ -171,6 +171,7 @@ typedef enum {
 struct Obj {
     size_t rc;              /* number of owners */
     ObjType type;
+    unsigned char pool;     /* memory.c: the free list its memory goes back to (0: malloc's) */
 };
 
 struct ObjString {          /* a str: byte string, NUL terminated */
@@ -307,7 +308,12 @@ static inline ObjString *text_of(Value v) {
 /* memory.c */
 extern LUBE_THREAD_LOCAL size_t lube_live_objects;  /* objects alive in this thread's isolate */
 Obj *alloc_object(size_t size, ObjType type);
+Obj *realloc_object(Obj *o, size_t old_size, size_t size);
 void obj_destroy(Obj *o);
+void lube_pool_drain(void);
+void *lube_block_alloc(size_t size);
+void lube_block_free(void *p, size_t size);
+void *lube_block_realloc(void *p, size_t old, size_t size);
 
 static inline Value retain(Value v) {
     if (v.type == VAL_OBJ) v.as.obj->rc++;
@@ -328,6 +334,7 @@ struct Source {
     size_t length;
     int strict;             /* the file starts with #strict: every fn declares its types */
     ObjString *package;     /* `package a.b`: the file's package (NULL: the main namespace) */
+    ObjMap *aliases;        /* the names it imported (for the debugger's expressions) */
     Source *next;
 };
 
@@ -375,7 +382,7 @@ typedef enum {
     /* statements */
     N_EXPR, N_LET, N_BLOCK, N_IF, N_WHILE, N_FOR, N_RETURN, N_BREAK,
     N_CONTINUE, N_THROW, N_TRY, N_IMPORT, N_CLASS,
-    N_ON           /* on score (old, new) { ... }: runs when a global var changes */
+    N_ON           /* on score (old, new) { ... }: runs when a variable changes */
 } NodeKind;
 
 typedef struct {
@@ -397,12 +404,74 @@ typedef enum {
  *   VAR_CAPTURE  the running closure's captured copy number `index`
  *   VAR_SELF     the running function itself (for recursion)
  *   VAR_GLOBAL   looked up by name at run time */
+typedef struct OnList OnList;
+
+/* lube --build --native: a function compiled to machine code (see native.c).
+ * fn returns 0 with the result in *out, or 1 to let the VM run the call
+ * itself (an error to report, or calls too deep). Bools are 0 or 1. */
+typedef int (*LubeNativeFn)(const double *args, double *out, int depth_left);
+typedef struct LubeNative {
+    const char *key;            /* the fn's global */
+    const char *sig;            /* its parameters' types, ':', its return type: N (Number), B (Bool), V (any
+                                   value: then fnval), or none; L, O, V: a list of records, a record, a value
+                                   (then fnv or fnval takes the arguments as they are) */
+    uint64_t src_hash;          /* of the source file it was compiled from (natives fit only that text) */
+    LubeNativeFn fn;
+    int (*fnv)(Interp *I, Value *args, double *out, int depth_left);
+    int (*fnval)(Interp *I, Value *args, Value *out, int depth_left);  /* (returns a value of its own: the VM's now) */
+} LubeNative;
+
+/* A built-in's entry in its table: LUBE_BUILTIN(name, fn, min, max...). A
+ * program built with lube --build --small has only the built-ins it uses:
+ * its build defines LUBE_SHAKE and, for each built-in, LUBE_KEEP_<name> as
+ * its arguments (kept) or as nothing (left out, with all only it uses). */
+#ifdef LUBE_SHAKE
+#define LUBE_BUILTIN(name, ...) LUBE_KEEP_##name({#name, __VA_ARGS__},)
+#else
+#define LUBE_BUILTIN(name, ...) {#name, __VA_ARGS__},
+#endif
+
+/* Records (native.c): the Number fields of an object, copied to and from an array. */
+#define LUBE_REC_MAX 16
+typedef struct {  /* per Interp, and per class: where the fields are */
+    Interp *I;
+    ObjString *names[LUBE_REC_MAX];
+    struct ObjClass *klass;
+    int pos[LUBE_REC_MAX];
+    struct ObjClass *exact;  /* the class they must be (methods are called on them), once found by its key */
+} LubeRecCache;
+int lube_rec_load(Interp *I, LubeRecCache *c, Value v, const char *const *fields, int nf, const char *cls, double *out);
+int lube_reclist_load(Interp *I, LubeRecCache *c, Value v, const char *const *fields, int nf, const char *cls, double **out, int64_t *n,
+                      double *buf, size_t bufsize);
+void lube_rec_store(Interp *I, LubeRecCache *c, Value *slot, int nf, const double *vals, const double *orig);
+void lube_reclist_store(Interp *I, LubeRecCache *c, Value *list, int nf, const double *vals, const double *orig);
+Value *lube_native_global(Interp *I, const char *name, int written);
+Value lube_nv_list(int n, const Value *items);
+double lube_round(double x);
+double lube_m_sin(double x);
+double lube_m_cos(double x);
+double lube_m_tan(double x);
+double lube_m_exp(double x);
+double lube_m_log(double x);
+double lube_m_pow(double x, double y);
+double lube_m_atan2(double y, double x);
+int lube_numlist_load(Value v, int bools, int typed, void **a, int64_t *n);
+void lube_numlist_store(Value *slot, int bools, void *a, int64_t n);
+extern const LubeNative lube_natives[];  /* (nativetab.c, or the native build's own) */
+extern const int lube_nnatives;
+
 typedef struct {
     ObjString *name;
     VarKind kind;
     int index;
     int changeable;         /* locals only; globals are checked at run time */
     Origin origin;
+    OnList *watch;          /* a changeable local: the `on` blocks that watch it (the list may be empty) */
+    /* (run time, a global) caches: where it is in I->globals (+1; 0: not yet), and its
+     * origin (-1: a var) as of I->epoch == cepoch */
+    int gslot;
+    unsigned cepoch;
+    int corigin;
 } VarRef;
 
 typedef struct {
@@ -442,10 +511,16 @@ typedef enum {
     OP_INDEX, OP_FIELD, OP_CLOSURE, OP_CHECK_CALLABLE, OP_CALL, OP_CALL_PREP, OP_METHOD_PREP,
     OP_SUPER_PREP, OP_INVOKE, OP_RETURN, OP_RETURN_NIL, OP_THROW, OP_FOR_PREP, OP_FOR_NEXT,
     OP_WATCH_BEFORE, OP_WATCH_AFTER, OP_ASSIGN, OP_IMPORT, OP_CLASS_BEGIN, OP_CLASS_FIELD,
-    OP_CLASS_FIELD_SET, OP_CLASS_END, OP_ON, OP_ARG_DEFAULT, OP_DEF_PARAM, OP_PRINT_REPL,
+    OP_CLASS_FIELD_SET, OP_CLASS_END, OP_ON, OP_LWATCH_BEFORE, OP_LWATCH_AFTER,
+    OP_ASSIGN_DROP, OP_BINARY2, OP_CMP_JUMP, OP_SET_LOCAL, OP_CALL_FN, OP_INDEX2, OP_FIELD_LOCAL, OP_ARG_DEFAULT, OP_DEF_PARAM, OP_PRINT_REPL,
     OP_HOT_KEEP, OP_IF_GLOBAL, OP_FAIL, OP_LAZY_GLOBAL, OP_IMPORT_PACKAGE,
+    OP_NATIVE_LOOP,  /* a top-level loop's machine code (lube --build --native): skips its bytecode when it ran */
     OP_COUNT
 } OpCode;
+
+/* Where an operand of OP_BINARY2 or OP_CMP_JUMP comes from: a local's slot
+ * or a Number constant, read in place, or else the stack. */
+enum { OPND_STACK, OPND_LOCAL, OPND_CONST };
 
 typedef struct {            /* x, x.a or x[i][j]: a variable, then keys taken from the stack */
     VarRef var;
@@ -456,12 +531,16 @@ typedef struct {            /* x, x.a or x[i][j]: a variable, then keys taken fr
 typedef struct {            /* a call's arguments: each a value, or & a place */
     int nargs;
     int *place;             /* place[i]: an index into Code.places, or -1 for a value */
+    int refs;               /* some argument is & a place */
 } CallDesc;
 
 typedef struct {            /* x.name(args) */
     ObjString *name;
     int recv_place;         /* the receiver's place, or -1 when it is not a variable path */
     VarRef fallback;        /* the variable `name`: x.f(a) can mean f(x, a) */
+    ObjClass *cache_class;  /* (run time) the method last found here, for instances of this class */
+    Value cache_method;     /* (borrowed: classes and their methods live until shutdown) */
+    unsigned cache_epoch;   /* ...as of this I->epoch */
 } MethodDesc;
 
 typedef struct {            /* super.name(args), or super(args) when name is NULL */
@@ -474,6 +553,7 @@ typedef struct {            /* place op value, where op is = or += and the like 
     int place;
     TokenType op;
     int global;             /* for a global var: its name's constant (else -1) */
+    int kconst;             /* OP_ASSIGN_DROP: the value is this Number constant (else -1: on the stack) */
 } AssignDesc;
 
 typedef struct {            /* class Name extends Parent { fields, methods, constructor } */
@@ -488,11 +568,49 @@ typedef struct {            /* class Name extends Parent { fields, methods, cons
     int hot;                /* compiled for a hot reload: update the class that exists */
 } ClassDesc;
 
-typedef struct {            /* on a, b (old, new) { ... } */
-    ObjString **names;
+typedef struct {            /* what an `on` block watches: a variable, or a field path in one */
+    ObjString *name;        /* as written (the root variable) */
+    VarRef root;            /* (resolver) a local's slot, or a global's name */
+    ObjString **path;       /* on this.hp: the fields after the variable (npath of them) */
+    int npath;
+} OnItem;
+
+typedef struct {            /* a variable an `on` block's code uses from around it */
+    ObjString *name;
+    int slot;
+} OnUse;
+
+/* on a, b (old, new) { ... }. At the top level of a file the block is a
+ * function that lasts as long as the program. Anywhere else (in a function,
+ * a method or a block) it runs on the frame it was declared in, seeing that
+ * frame's variables live, and lasts until the block of code around it ends. */
+typedef struct OnDesc {
+    OnItem *items;
     int count;
-    FuncDecl *func;
+    FuncDecl *func;         /* the block (with (old, new) as its parameters) */
+    int frame;              /* runs on a frame (else: a top-level watcher) */
+    int token;              /* frame: the hidden slot that holds the block while it is in scope */
+    int param_slot[2];      /* frame: where (old, new) go */
+    int first, nslots;      /* frame: the block's own slots, cleared after each run */
+    OnUse *uses;            /* frame: the variables from around it that it reads */
+    int nuses, capuses;
 } OnDesc;
+
+struct OnList {             /* the `on` blocks watching one local variable */
+    OnDesc **ons;
+    int n, cap;
+};
+
+typedef struct {            /* a local variable the code changes, which `on` blocks watch */
+    int slot;
+    OnList *list;
+} LocalWatch;
+
+typedef struct {            /* a local variable, for the debugger */
+    ObjString *name;
+    int slot;
+    int start, end;         /* the code words while it holds its value */
+} LocalInfo;
 
 typedef struct {            /* try { body } catch e { ... } */
     int start, end;         /* the body: code words [start, end) */
@@ -522,11 +640,15 @@ typedef struct {
     int nassigns;
     ClassDesc *classes;
     int nclasses;
-    OnDesc *ons;
+    OnDesc **ons;
     int nons;
+    LocalWatch *lwatch;     /* for OP_LWATCH_BEFORE/AFTER */
+    int nlwatch;
     Handler *handlers;
     int nhandlers;
     int maxstack;           /* the most operand stack slots it needs */
+    LocalInfo *locals;      /* its locals' names (for the debugger) */
+    int nlocals;
     int *gcache;            /* per constant: where that global was last found in I->globals (or -1) */
 } Code;
 
@@ -543,6 +665,7 @@ struct FuncDecl {
     int is_arrow;
     int nslots;             /* frame size: parameters plus locals */
     CaptureSrc *captures;
+    ObjString **capnames;   /* the captured variables' names (for the debugger) */
     int ncaptures;
     int line;
     Source *src;
@@ -551,6 +674,12 @@ struct FuncDecl {
     ObjString *key;         /* a top-level fn: the global it is in (its package's name for it) */
     ObjClass *owner;        /* the class a method belongs to (set when the class is made) */
     unsigned char *has_default;  /* has_default[i]: param i has a default value */
+    struct OnDesc *on_block;     /* an `on` block that runs on its function's frame */
+    unsigned char has_ref;       /* a parameter takes & (compile.c) */
+    unsigned char plain;         /* (compile.c) no & or var parameter, none with a default, each untyped or a
+                                    Number, not a constructor: OP_CALL starts it without enter() */
+    unsigned char plain_method;  /* a method whose other parameters are like that: OP_INVOKE's fast path */
+    const LubeNative *native;    /* compiled to machine code (lube --build --native), or NULL */
     Code code;              /* its bytecode (compile.c) */
 };
 
@@ -571,7 +700,7 @@ struct Node {
         struct { Node *target, *value; TokenType op; } assign;    /* N_ASSIGN */
         struct { TokenType op; Node *operand; } unary;            /* N_UNARY */
         struct { TokenType op; Node *left, *right; } binary;      /* N_BINARY, N_AND, N_OR */
-        struct { Node *callee; NodeList args; } call;             /* N_CALL */
+        struct { Node *callee; NodeList args; int known_fn; } call;  /* N_CALL (known_fn: a top-level fn is called) */
         struct { Node *object; ObjString *name; NodeList args;
                  VarRef fallback; } method;                       /* N_METHOD */
         struct { Node *object, *index; } index;                   /* N_INDEX */
@@ -594,7 +723,7 @@ struct Node {
                  int star;                    /* import a.b.* */
                  ObjString *pkg;              /* (resolver) the package to load */
                  ObjString *bind; } import;   /* (resolver) import a.b: the global its package object goes in */
-        struct { ObjString **names; int count; FuncDecl *func; } on;  /* N_ON */
+        struct { OnItem *items; int count; FuncDecl *func; struct OnDesc *desc; } on;  /* N_ON */
     } as;
 };
 
@@ -604,14 +733,24 @@ struct Node {
 
 typedef struct { char *data; size_t len, cap; } StrBuf;
 
-/* An `on` block: runs fn when one of the global vars `names` changes. */
+/* A top-level `on` block: runs fn when one of the global vars it watches changes. */
 typedef struct Watcher {
-    ObjString **names;              /* none once replaced by a hot reload */
+    OnItem *items;                  /* none once replaced by a hot reload */
     int nnames;
     Value fn;                       /* the block: a function of () or (old, new) */
     const char *file;               /* the file it was declared in */
     int running;                    /* its own changes do not run it again */
 } Watcher;
+
+/* An `on` block declared in a function (or a block): it runs on that
+ * function's frame while the code around it is running. */
+typedef struct FrameWatcher {
+    struct OnDesc *od;
+    int base;                       /* the frame's first slot */
+    int depth;                      /* how many frames there were with it the innermost */
+    Value token;                    /* what its hidden slot holds while it is in scope */
+    int running;
+} FrameWatcher;
 
 /* A place being changed or lent: a variable and the keys of a path in it. */
 typedef struct {
@@ -647,6 +786,9 @@ typedef struct Frame {              /* one active call (or script) */
     int pending;                    /* pending calls below this frame */
     unsigned char construct;        /* a constructor: the call's result is `this` */
     unsigned char entry;            /* called from C: return there when done */
+    unsigned char block;            /* an `on` block running on its function's frame (same base) */
+    int opbase;                     /* where its operand stack starts */
+    int dbg_line;                   /* the line the debugger last saw this frame on (-1: none yet) */
     struct Loan *loans;             /* what the call lent with &, returned when it ends */
     int nloans;
 } Frame;
@@ -657,7 +799,6 @@ typedef struct Frame {              /* one active call (or script) */
 #endif
 
 struct Interp {
-    Value stack[LUBE_STACK_MAX];    /* frames: parameters and locals */
     TypeDesc *decl;                 /* the declared type of each stack slot */
     int sp;
     Frame *frame;
@@ -681,8 +822,11 @@ struct Interp {
     ObjMap *bundle;                 /* a built program's files (path -> text), or NULL */
     ObjMap *watch;                  /* files the program was loaded from (path -> text), for hot reload */
     ObjList *hot_old;               /* functions and classes replaced by hot reload: kept until shutdown */
-    struct Watcher *watchers;       /* the `on` blocks, in the order they were made */
+    struct Debugger *dbg;           /* while debugging (NULL otherwise) */
+    struct Watcher *watchers;       /* the top-level `on` blocks, in the order they were made */
     int nwatchers, cap_watchers;
+    struct FrameWatcher *fwatch;    /* the `on` blocks running on frames (innermost frame's last) */
+    int nfwatch, cap_fwatch;
     struct Isolate *isolate;        /* in a spawned isolate: its handle (NULL in the main one) */
     int starting;                   /* an isolate is running the program's declarations */
     ObjMap *lazy;                   /* in an isolate: globals not used yet (name -> [initializer, kind]) */
@@ -695,6 +839,8 @@ struct Interp {
     int hot;                        /* lube --hot: reload changed files while running */
     int hot_busy;                   /* a reload is applying a file */
     unsigned hot_ticks;             /* blocks run since the last look at the files */
+    unsigned epoch;                 /* changes when a global becomes a constant (or stops being one) or a
+                                       class is made: VarRef and MethodDesc caches older than it are stale */
     long hot_last;                  /* clock() when the files were last looked at */
     ObjList *imports_found;         /* while building: the import paths the resolver sees */
     ObjString *chars[256];          /* cached one-byte strings */
@@ -704,6 +850,10 @@ struct Interp {
     int error_line;
     Source *error_src;
     StrBuf trace;                   /* traceback collected while unwinding */
+    StrBuf interp;                  /* OP_INTERP's text, kept between uses */
+    int native_off;                 /* a native call at depth native_off - 1 gave up: what the VM runs for it
+                                       (deeper) runs on the VM too (else recursion that never ends would retry
+                                       machine code at every level); 0: none */
     int trace_count;                /* frames the error passed through */
     int trace_shown;                /* distinct lines kept in `trace` */
     int trace_hidden;               /* frames left out after the first lines */
@@ -717,6 +867,8 @@ struct Interp {
     Source *sources;
     struct Arena **arenas;          /* syntax trees of every program run */
     int narenas, cap_arenas;
+    Value stack[LUBE_STACK_MAX];    /* frames: parameters and locals (last: the fields above stay
+                                       close to the struct's start, cheap to reach) */
 };
 
 /* ======================================================================
@@ -740,7 +892,15 @@ void *xmalloc(size_t n);
 void *xrealloc(void *p, size_t n);
 char *xstrndup(const char *s, size_t n);
 char *read_file(const char *path, size_t *length);
+void lube_slashes(char *path);  /* Windows: \ becomes / (Lube's paths use /) */
+#ifdef _WIN32
+#define LUBE_PATH_SEP ';'  /* between the folders of LUBE_PATH (C:/ has a colon) */
+#else
+#define LUBE_PATH_SEP ':'
+#endif
 void report_error(Source *src, int line, int col, const char *kind, const char *msg);
+extern void (*lube_output)(const char *text, size_t len, int is_err);
+void lube_print(int err, const char *fmt, ...);
 void print_source_line(Source *src, int line, int col);
 
 /* value.c */
@@ -813,10 +973,27 @@ Node *parse_program(Interp *I, Source *src, Arena **arena);
 
 /* resolver.c */
 int resolve_program(Interp *I, Node *program, Source *src, Arena *arena);
+typedef struct {            /* a variable a debugger expression can see */
+    ObjString *name;
+    VarKind kind;           /* VAR_LOCAL (a slot of the paused frame) or VAR_CAPTURE */
+    int index;
+} DebugVar;
+int resolve_debug(Interp *I, FuncDecl *d, Source *src, Arena *arena, Source *home, DebugVar *vars, int nvars);
 
 /* compile.c: the program's code; mode is RUN_FILE, RUN_REPL or RUN_HOT */
 enum { RUN_FILE, RUN_REPL, RUN_HOT, RUN_ISOLATE };
 FuncDecl *compile_program(Interp *I, Node *program, Source *src, Arena *arena, const char *name, int mode);
+FuncDecl *compile_debug(Interp *I, FuncDecl *d, Arena *arena);
+
+/* debug.c: the debugger (lube --debug, and the core of lube --dap) */
+struct Debugger;
+void debug_hook(Interp *I);             /* before each instruction, while debugging */
+void debug_error(Interp *I);            /* an error was just raised (frames still there) */
+void debug_left_frame(Interp *I);       /* a frame returned */
+void lube_debug_terminal(Interp *I);    /* start debugging with the terminal prompt */
+int lube_frame_line(Frame *f);
+Value lube_closure_in(Interp *I, FuncDecl *d, Frame *f);
+void lube_keep_arena(Interp *I, Arena *a);
 void unchangeable_message(char *buf, size_t size, const char *name, Origin origin);
 
 /* interp.c -- functions returning Value return ERR_VAL when they raise */
@@ -825,7 +1002,8 @@ size_t lube_free(Interp *I);
 Source *lube_add_source(Interp *I, const char *path, char *text, size_t length);
 int lube_check_source(Interp *I, Source *src);
 void lube_module_path(StrBuf *path, const char *importer, const char *rel);
-int lube_build(Interp *I, const char *self, const char *main_path, const char *out_path);
+enum { LUBE_BUILD_NATIVE = 1, LUBE_BUILD_FAST = 2, LUBE_BUILD_SMALL = 4 };  /* lube --build's options */
+int lube_build(Interp *I, const char *self, const char *main_path, const char *out_path, int flags);
 int lube_run_bundle(Interp *I, const char *argv0, int argc, char **argv);
 ObjList *lube_hot_reload(Interp *I);
 Value lube_find_method(ObjClass *c, ObjString *name);
@@ -855,7 +1033,19 @@ void lock_wait(LubeLock *l);        /* releases the lock while waiting for lock_
 void lock_notify(LubeLock *l);      /* wakes every waiter */
 int thread_start(void (*fn)(void *), void *arg, size_t stack_size);
 int lube_cores(void);
-char **os_lube_files(const char *dir, int *n);  /* sorted; free each and the array */
+char **os_files(const char *dir, const char *ext, int *n);  /* sorted; free each and the array */
+#define os_lube_files(dir, n) os_files(dir, ".lube", n)
+
+/* native.c */
+int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *lens, const char *argv0,
+                      const char *exe_out, int flags);
+void lube_native_attach(Interp *I, FuncDecl *program, Source *src);
+int lube_native_loop(Source *src, int index);
+int lube_global_watched(Interp *I, ObjString *name);
+uint64_t lube_hash_text(const char *text, size_t len);
+#ifdef _WIN32
+char *os_self_path(void);  /* the running program (malloc'd), or NULL */
+#endif
 
 /* isolate.c: isolates (each on its own thread) and the channels between them */
 void register_isolates(Interp *I);

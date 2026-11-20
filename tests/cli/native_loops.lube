@@ -1,0 +1,198 @@
+// lube --build --native: top-level loops and methods as machine code. Each
+// runs the same built and as a script; the globals a loop uses go in, and
+// come back out.
+class Point {
+  var x = 0
+  var y = 0
+  var label = "p"
+}
+
+fn nudge(&p, by: Number) { p.x += by }
+fn spread(&ps, by: Number) {
+  for i in 0..len(ps) { ps[i].y += by * i }
+}
+fn sum_x(ps): Number {
+  var t = 0
+  for p in ps { t += p.x }
+  return t
+}
+
+let K = 3
+var total = 0
+var flag = false
+var big = 1
+for i in 0..20 {  // Numbers and a Bool, written back
+  total += i * K
+  if i == 7 { flag = not flag }
+  big = big * 7
+}
+print(total, flag, big)
+
+var w = 0
+while w < 100 {  // break and continue
+  w += 3
+  if w % 2 == 0 { continue }
+  if w > 50 { break }
+}
+print(w)
+
+var pt = Point()
+var pts = [Point(), Point(), {x: 5, y: 1}]
+let before = pts  // shares the list until the loop changes it
+var seen = 0
+for k in 0..4 {  // records: a global one and a list of them, also through other fns
+  nudge(&pt, k)
+  pts[0].x += 1
+  nudge(&pts[1], 2)
+  spread(&pts, 1)
+  seen += sum_x(pts)
+}
+print(pt, pts, before, seen)
+for p in pts { total += p.x + p.y }
+print(total)
+
+var countdown = 5
+var hits = 0
+on countdown {  // watched: this loop runs on the VM, which runs the block on each change
+  hits += 1
+}
+while countdown > 0 { countdown -= 1 }
+print(countdown, hits)
+
+var odd = [{x: 1}, {x: 2}]
+var got = 0
+for i in 0..2 {  // a field it never reads (the machine code gives up: the VM runs it)
+  if i > 5 { got += odd[i].y }
+  got += odd[i].x
+}
+print(got)
+
+var word = "ab"
+var n = 0
+for i in 0..3 { n += len(word) }  // text: not native
+print(n)
+
+// methods: `this` is a record of exactly its class
+class Body {
+  var x = 0
+  var v = 1
+  var name = "body"
+  fn move(dt: Number) { this.x += this.v * dt }
+  fn speed(): Number => abs(this.v)
+  fn fast(): Bool => this.speed() > 2  // a method calling another
+  fn bounce() {
+    this.v = -this.v
+    this.move(1)
+  }
+  fn absorb(other) { this.v += other.v }  // another record
+  fn mass(): Number => abs(this.x) + 1
+  fn label(): str => this.name  // text: not native
+}
+class Moon extends Body {
+  fn speed(): Number => 100  // a subclass's: its instances run on the VM
+}
+class Rock {
+  var v = 0
+  fn fast(): Bool => false  // another class's fast(): fast() is called on the VM
+}
+fn move_all(&bs, dt: Number) {  // methods on a list's records
+  for i in 0..len(bs) { bs[i].move(dt) }
+}
+fn total_mass(bs): Number {  // mass(): only Body's (speed() is Moon's too: calls to it run on the VM)
+  var t = 0
+  for i in 0..len(bs) { t += bs[i].mass() }
+  return t
+}
+fn named(b): Number {  // label() is not native: nor is this
+  b.label()
+  return 1
+}
+fn both(&a, b): Number {
+  a[0].x += 1
+  return b[0].x
+}
+fn twice_passed(&ps): Number => both(&ps, ps)  // one record list both lent and not: not native
+fn texts(bs): Number {  // text: not native
+  for b in bs { let t = "{b.x}" }
+  return 0
+}
+fn peek(b): Number {  // a method that changes `this`, on a record this fn may not change: not native
+  b.move(1)
+  return b.x
+}
+
+var b1 = Body()
+b1.move(2)
+b1.bounce()
+print(b1, b1.speed(), b1.fast(), b1.label())
+var b2 = Body()
+b2.v = 5
+b1.absorb(b2)
+print(b1.v, b2.fast(), Rock().fast())
+let fixed = Body()
+try { fixed.move(1) } catch e { print(e) }  // the VM says why
+print(fixed.speed())
+var m = Moon()
+m.move(3)
+print(m, m.speed(), m.fast())
+var fleet = [Body(), b2, Body()]
+for s in 0..3 {  // a loop calling methods on a global and on a list's records
+  move_all(&fleet, 0.5)
+  b1.move(s)
+  fleet[0].bounce()
+}
+print(fleet, b1, total_mass(fleet))
+try { print(total_mass([Body(), {v: 1, x: 0}])) } catch e { print(e) }  // not a Body: the VM says why
+try { print(peek(b1)) } catch e { print(e) }
+var mixed = [Body(), Moon()]
+print(total_mass(mixed))  // a Moon: the VM runs it
+print(named(b1), twice_passed(&fleet), fleet[0].x, texts(fleet))
+
+// what keeps a loop on the VM, and what does not
+var g1 = 1
+var g2 = 2
+var g3 = 3
+var g4 = 4
+var g5 = 5
+var g6 = 6
+var g7 = 7
+var g8 = 8
+var g9 = 9
+for i in 0..2 { g1 += g2 + g3 + g4 + g5 + g6 + g7 + g8 + g9 }  // more globals than machine code takes
+let same = K >= 3
+let other = K != 2
+for i in 0..3 {  // its own lists and variables
+  var tmp = [i, i + 1]
+  var more = Number[]
+  more.push(tmp[1])
+  if same and other { g2 += more[0] + len(tmp) }
+}
+for i in 0..2 { let f = nudge }  // a fn as a value
+for i in 0..2 { print("turn {i}") }  // text
+for i in 0..1 {
+  fn inner() => 1  // a fn of its own
+  g3 += inner()
+}
+print(g1, g2, g3)
+
+// global lists of Numbers and Bools: their items go in and come back out
+var nums = Number[]
+var marks = [false] * 6
+var plain = [1, 2]
+let table = [10, 20, 30]
+var odd_one = [1, 2]
+odd_one.push("three")  // not only Numbers now: its loop runs on the VM
+var names = str[]
+let shared = nums
+for i in 0..8 {
+  nums.push(i * i + table[i % 3])
+  marks[i % 4] = true
+  push(&plain, len(nums))
+  plain[0] += 1
+}
+for i in 0..2 { odd_one[0] += i }
+for i in 0..2 { names.push("n") }
+print(nums, marks, plain, shared, odd_one, names)
+
+for i in 0..10 { n += 100 / (5 - i) }  // division by zero: the VM runs it again, from the start, and says so
+print(n)

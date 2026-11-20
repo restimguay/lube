@@ -1,0 +1,19 @@
+// The sieve of Eratosthenes: indexing into a large list.
+fn sieve(n: Number): Number {
+  var flags = [true] * (n + 1)
+  var count = 0
+  var i = 2
+  while i <= n {
+    if flags[i] {
+      count += 1
+      var j = i * i
+      while j <= n {
+        flags[j] = false
+        j += i
+      }
+    }
+    i += 1
+  }
+  return count
+}
+print(sieve(5000000))

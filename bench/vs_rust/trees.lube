@@ -1,0 +1,18 @@
+// Binary trees: building and walking many small structures.
+fn make(d: Number) {
+  if d == 0 { return [] }
+  return [make(d - 1), make(d - 1)]
+}
+fn check(t): Number {
+  if len(t) == 0 { return 1 }
+  return 1 + check(t[0]) + check(t[1])
+}
+let MAX = 14
+var depth = 4
+while depth <= MAX {
+  let iterations = 2 ** (MAX - depth + 4)
+  var nodes = 0
+  for i in 0..iterations { nodes += check(make(depth)) }
+  print(iterations, depth, nodes)
+  depth += 2
+}

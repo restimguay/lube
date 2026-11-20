@@ -17,6 +17,9 @@
  * for the trailer at the end of its own file and, when it is there, runs the
  * packed program with every command-line argument in `args`.
  */
+#if defined(__unix__) && !defined(__APPLE__) && !defined(_POSIX_C_SOURCE)
+#define _POSIX_C_SOURCE 200809L  /* chmod under -std=c99 */
+#endif
 #include "lube.h"
 
 #include <stdio.h>
@@ -29,9 +32,12 @@
 static const char MAGIC[8] = {'L', 'U', 'B', 'E', 'P', 'A', 'C', 'K'};
 #define TRAILER 16
 
+#ifndef LUBE_RUNTIME  /* (building: not in a program built with --small) */
 static void put_u32(StrBuf *sb, size_t n) {
     for (int i = 0; i < 4; i++) sb_putc(sb, (char)((n >> (8 * i)) & 0xff));
 }
+
+#endif
 
 static size_t get_uint(const unsigned char *p, int bytes) {
     size_t n = 0;
@@ -40,8 +46,13 @@ static size_t get_uint(const unsigned char *p, int bytes) {
 }
 
 /* The path of the running executable: Linux's /proc/self/exe, or argv[0]
- * (as given, or found on PATH). NULL when it cannot be found. */
+ * (as given, or found on PATH); Windows says where it is. NULL when it
+ * cannot be found. */
 static char *find_self(const char *argv0) {
+#ifdef _WIN32
+    (void)argv0;
+    return os_self_path();
+#else
     FILE *f = fopen("/proc/self/exe", "rb");
     if (f) {
         fclose(f);                              /* LCOV_EXCL_START: Linux only */
@@ -66,9 +77,11 @@ static char *find_self(const char *argv0) {
     }
     sb_free(&path);
     return NULL;
+#endif
 }
 
 /* ---------- building ---------- */
+#ifndef LUBE_RUNTIME
 
 typedef struct {
     char **keys;     /* each file's name in the bundle, as the program's imports compute it */
@@ -160,14 +173,28 @@ static int add_file(Interp *I, Files *fs, const char *key, const char *real, con
     return status;
 }
 
-int lube_build(Interp *I, const char *argv0, const char *main_path, const char *out_path) {
+/* lube --build: the program, packed after a copy of this lube; native: after
+ * a lube compiled for it, with machine code for the functions that can have
+ * it (native.c). */
+int lube_build(Interp *I, const char *argv0, const char *main_path, const char *out_path, int flags) {
+    int native = flags != 0;  /* (compiled from Lube's sources, for this program: native, small, or both) */
     Files fs = {0};
     const char *slash = strrchr(main_path, '/');
     fs.dir = main_path;
     fs.dirlen = slash ? (size_t)(slash - main_path + 1) : 0;
     if (!I->root) I->root = slash ? xstrndup(main_path, (size_t)(slash - main_path)) : xstrndup(".", 1);
     int status = add_file(I, &fs, main_path + fs.dirlen, NULL, NULL, NULL);
-    char *self = status ? NULL : find_self(argv0);
+    StrBuf compiled;  /* native: the lube made for this program */
+    sb_init(&compiled);
+    sb_printf(&compiled, "%s.native-tmp", out_path);
+#ifdef _WIN32
+    sb_puts(&compiled, ".exe");
+#endif
+    if (native && !status) {
+        status = lube_native_build(I, fs.count, fs.keys, fs.texts, fs.lens, argv0, compiled.data, flags);
+        if (status < 0) native = status = 0;  /* nothing could be native: this lube as it is */
+    }
+    char *self = status ? NULL : native ? xstrndup(compiled.data, compiled.len) : find_self(argv0);
     size_t exe_len = 0;
     char *exe = self ? read_file(self, &exe_len) : NULL;
     if (!status && !exe) {
@@ -210,10 +237,13 @@ int lube_build(Interp *I, const char *argv0, const char *main_path, const char *
     free(fs.keys);
     free(fs.texts);
     free(fs.lens);
+    if (native) remove(compiled.data);
+    sb_free(&compiled);
     free(self);
     free(exe);
     return status;
 }
+#endif
 
 /* ---------- running a built program ---------- */
 

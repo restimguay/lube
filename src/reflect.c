@@ -249,22 +249,23 @@ static const struct {
     int min, max;
     int changes_first;
 } REFLECTION[] = {
-    {"class_of", n_class_of, 1, 1, 0},
-    {"parent_of", n_parent_of, 1, 1, 0},
-    {"fields", n_fields, 1, 1, 0},
-    {"methods", n_methods, 1, 1, 0},
-    {"signature", n_signature, 1, 2, 0},
-    {"get_field", n_get_field, 2, 2, 0},
-    {"set_field", n_set_field, 3, 3, 1},
-    {"call_method", n_call_method, 2, -1, 0},
-    {"has_method", n_has_method, 2, 2, 0},
-    {"classes", n_classes, 0, 0, 0},
-    {"find_class", n_find_class, 1, 1, 0},
-    {"globals", n_globals, 0, 0, 0},
+    LUBE_BUILTIN(class_of, n_class_of, 1, 1, 0)
+    LUBE_BUILTIN(parent_of, n_parent_of, 1, 1, 0)
+    LUBE_BUILTIN(fields, n_fields, 1, 1, 0)
+    LUBE_BUILTIN(methods, n_methods, 1, 1, 0)
+    LUBE_BUILTIN(signature, n_signature, 1, 2, 0)
+    LUBE_BUILTIN(get_field, n_get_field, 2, 2, 0)
+    LUBE_BUILTIN(set_field, n_set_field, 3, 3, 1)
+    LUBE_BUILTIN(call_method, n_call_method, 2, -1, 0)
+    LUBE_BUILTIN(has_method, n_has_method, 2, 2, 0)
+    LUBE_BUILTIN(classes, n_classes, 0, 0, 0)
+    LUBE_BUILTIN(find_class, n_find_class, 1, 1, 0)
+    LUBE_BUILTIN(globals, n_globals, 0, 0, 0)
+    {NULL, NULL, 0, 0, 0}  /* (the end) */
 };
 
 void register_reflection(Interp *I) {
-    for (size_t i = 0; i < sizeof REFLECTION / sizeof REFLECTION[0]; i++)
+    for (size_t i = 0; REFLECTION[i].name; i++)
         lube_define(I, REFLECTION[i].name, OBJ_VAL(new_native(REFLECTION[i].name, REFLECTION[i].fn, REFLECTION[i].min,
                                                               REFLECTION[i].max, REFLECTION[i].changes_first)));
 }

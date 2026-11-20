@@ -6,7 +6,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
 
+#ifndef LUBE_RUNTIME  /* (a program built with --small: only what runs its packed program) */
 static void usage(FILE *out) {
     fprintf(out,
             "Lube %s - a small, smooth scripting language\n"
@@ -17,10 +22,17 @@ static void usage(FILE *out) {
             "  lube -e CODE          run CODE and print the value of the last expression\n"
             "  lube -                read a script from standard input\n"
             "  lube --check FILE     report syntax errors without running anything (FILE may be -)\n"
+            "  lube --debug FILE [ARGS...]\n"
+            "                        run FILE in the debugger (h at its prompt lists the commands)\n"
             "  lube --hot FILE [ARGS...]\n"
             "                        run FILE, applying changes to its files while it runs\n"
-            "  lube --build FILE [-o OUT]\n"
-            "                        build FILE and its imports into a standalone executable\n"
+            "  lube --build [--native [--fast]] [--small] FILE [-o OUT]\n"
+            "                        build FILE and its imports into a standalone executable; --native also\n"
+            "                        compiles its fns that compute only with Numbers and Bools to machine\n"
+            "                        code (needs a C compiler, and Lube's sources: LUBE_SRC); --fast lets\n"
+            "                        that code use 64-bit integers that wrap around and reorder sums;\n"
+            "                        --small makes it as small as it can be: only the parts of Lube the\n"
+            "                        program uses (needs a C compiler too)\n"
             "  lube -v, --version    print the version\n"
             "  lube -h, --help       show this help\n",
             LUBE_VERSION);
@@ -103,6 +115,8 @@ static char *read_stdin(size_t *len) {
     return sb.data;
 }
 
+#endif
+
 /* LUBE_MAX_ITEMS / LUBE_MAX_BYTES can lower a size limit (never raise it). */
 static void lower_limit(const char *name, size_t *limit) {
     const char *s = getenv(name);
@@ -119,12 +133,24 @@ static void lower_limit(const char *name, size_t *limit) {
 
 int main(int argc, char **argv) {
     char stack_marker;  /* the interpreter measures recursion depth from here */
+#ifdef _WIN32
+    /* bytes in and out as they are: "\n" stays "\n", as on every other system */
+    _setmode(_fileno(stdin), _O_BINARY);
+    _setmode(_fileno(stdout), _O_BINARY);
+    _setmode(_fileno(stderr), _O_BINARY);
+#endif
     lower_limit("LUBE_MAX_ITEMS", &lube_max_items);
     lower_limit("LUBE_MAX_BYTES", &lube_max_bytes);
     Interp *I = lube_new(&stack_marker);
     int bundled = lube_run_bundle(I, argv[0], argc, argv);  /* a built program runs itself */
     int status = bundled >= 0 ? bundled : 0;
 
+#ifdef LUBE_RUNTIME
+    if (bundled < 0) {  /* (its program is not there: the file was changed) */
+        fprintf(stderr, "lube: this executable's program is missing\n");
+        status = 70;
+    }
+#else
     if (bundled >= 0) {
         /* done: every argument went to the program */
     } else if (argc < 2) {
@@ -149,6 +175,7 @@ int main(int argc, char **argv) {
             status = 64;
         } else {
             int from_stdin = !strcmp(argv[2], "-");
+            lube_slashes(argv[2]);
             size_t len;
             char *text = from_stdin ? read_stdin(&len) : read_file(argv[2], &len);
             if (!text) {
@@ -158,6 +185,16 @@ int main(int argc, char **argv) {
                 status = lube_check_source(I, lube_add_source(I, from_stdin ? "<stdin>" : argv[2], text, len));
             }
         }
+    } else if (!strcmp(argv[1], "--debug")) {
+        if (argc < 3) {
+            usage(stderr);
+            status = 64;
+        } else {
+            lube_debug_terminal(I);
+            set_args(I, argc, argv, 3);
+            lube_slashes(argv[2]);
+            status = lube_run_file(I, argv[2]);
+        }
     } else if (!strcmp(argv[1], "--hot")) {
         if (argc < 3) {
             usage(stderr);
@@ -165,31 +202,43 @@ int main(int argc, char **argv) {
         } else {
             I->hot = 1;
             set_args(I, argc, argv, 3);
+            lube_slashes(argv[2]);
             status = lube_run_file(I, argv[2]);
         }
     } else if (!strcmp(argv[1], "--build")) {
-        /* lube --build app.lube [-o app]: the output is named after the file by default */
-        if (argc != 3 && !(argc == 5 && !strcmp(argv[3], "-o"))) {
+        /* lube --build [--native [--fast]] [--small] app.lube [-o app]: the output is named after the file by default */
+        int flags = 0, k = 2;  /* LUBE_BUILD_NATIVE, _FAST, _SMALL */
+        for (; k < argc; k++) {
+            if (!strcmp(argv[k], "--native")) flags |= LUBE_BUILD_NATIVE;
+            else if (!strcmp(argv[k], "--fast")) flags |= LUBE_BUILD_FAST;
+            else if (!strcmp(argv[k], "--small")) flags |= LUBE_BUILD_SMALL;
+            else break;
+        }
+        int native = k - 2, rest = argc - native;  /* (the options) */
+        char **a = argv + native;  /* a[2]: the file, a[4]: the output */
+        if ((rest != 3 && !(rest == 5 && !strcmp(a[3], "-o"))) || ((flags & LUBE_BUILD_FAST) && !(flags & LUBE_BUILD_NATIVE))) {
             usage(stderr);
             status = 64;
         } else {
             StrBuf out;
             sb_init(&out);
-            if (argc == 5) {
-                sb_puts(&out, argv[4]);
+            lube_slashes(a[2]);
+            if (rest == 5) lube_slashes(a[4]);
+            if (rest == 5) {
+                sb_puts(&out, a[4]);
             } else {
-                const char *name = strrchr(argv[2], '/') ? strrchr(argv[2], '/') + 1 : argv[2];
+                const char *name = strrchr(a[2], '/') ? strrchr(a[2], '/') + 1 : a[2];
                 const char *dot = strrchr(name, '.');
                 sb_putn(&out, name, dot && dot != name ? (size_t)(dot - name) : strlen(name));
 #ifdef _WIN32
                 sb_puts(&out, ".exe");
 #endif
             }
-            if (!strcmp(out.data, argv[2])) {
-                fprintf(stderr, "lube: the executable would replace '%s': name it with -o\n", argv[2]);
+            if (!strcmp(out.data, a[2])) {
+                fprintf(stderr, "lube: the executable would replace '%s': name it with -o\n", a[2]);
                 status = 64;
             } else {
-                status = lube_build(I, argv[0], argv[2], out.data);
+                status = lube_build(I, argv[0], a[2], out.data, flags);
             }
             sb_free(&out);
         }
@@ -204,8 +253,10 @@ int main(int argc, char **argv) {
         status = 64;
     } else {
         set_args(I, argc, argv, 2);
+        lube_slashes(argv[1]);
         status = lube_run_file(I, argv[1]);
     }
+#endif
 
     lube_wait_isolates();  /* the program ends when every isolate has */
     fflush(stdout);

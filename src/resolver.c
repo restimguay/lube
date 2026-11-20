@@ -20,6 +20,11 @@
  *   - names declared with let (and fn, loop variables, parameters) never change
  *   - a closure cannot change the variables it captured
  *   - return/break/continue only where they make sense
+ *
+ * An `on` block inside a function is not a closure: it runs on the
+ * function's own frame, so its parameters and locals get slots in that
+ * frame (kept while the code around the block runs), and it reads and
+ * changes the function's variables directly.
  */
 #include "lube.h"
 
@@ -34,6 +39,7 @@ typedef struct {
     int depth;
     int changeable;
     Origin origin;
+    OnList *watch;             /* changeable: the `on` blocks watching it */
 } Local;
 
 typedef struct FnCtx {
@@ -45,7 +51,12 @@ typedef struct FnCtx {
     int nslots, max_slots;
     int loop_depth;
     CaptureSrc *caps;
+    ObjString **capnames;
     int ncaps, cap_caps;
+    DebugVar *dvars;           /* a debugger expression: the paused frame's variables */
+    int ndvars;
+    OnDesc **ons;              /* the `on` blocks being resolved in this frame, innermost last */
+    int nons, cap_ons;
 } FnCtx;
 
 typedef struct {
@@ -160,6 +171,7 @@ static int declare(Resolver *R, ObjString *name, int line, int changeable, Origi
     l->depth = f->depth;
     l->changeable = changeable;
     l->origin = origin;
+    l->watch = changeable ? arena_alloc(R->tree, sizeof(OnList)) : NULL;  /* filled by any `on` that watches it */
     if (f->nslots > f->max_slots) f->max_slots = f->nslots;
     return l->slot;
 }
@@ -208,16 +220,19 @@ static Local *find_local(FnCtx *f, ObjString *name) {
     return NULL;
 }
 
-static int add_capture(Resolver *R, FnCtx *f, VarKind kind, int index) {
+static int add_capture(Resolver *R, FnCtx *f, VarKind kind, int index, ObjString *name) {
     for (int i = 0; i < f->ncaps; i++)
         if (f->caps[i].kind == kind && f->caps[i].index == index) return i;
     if (f->ncaps == f->cap_caps) {
         int cap = f->cap_caps ? f->cap_caps * 2 : 8;
         f->caps = arena_grow(R->tmp, f->caps, sizeof(CaptureSrc) * (size_t)f->cap_caps, sizeof(CaptureSrc) * (size_t)cap);
+        f->capnames = arena_grow(R->tmp, f->capnames, sizeof(ObjString *) * (size_t)f->cap_caps,
+                                 sizeof(ObjString *) * (size_t)cap);
         f->cap_caps = cap;
     }
     f->caps[f->ncaps].kind = kind;
     f->caps[f->ncaps].index = index;
+    f->capnames[f->ncaps] = name;
     return f->ncaps++;
 }
 
@@ -284,13 +299,30 @@ static void resolve_import(Resolver *R, Node *n) {
     n->as.import.pkg = pkg;
 }
 
+/* An `on` block's code uses local l from around it (the block cannot run
+ * while l is lent out: it would find nothing there). */
+static void note_use(Resolver *R, OnDesc *od, Local *l) {
+    for (int i = 0; i < od->nuses; i++)
+        if (od->uses[i].slot == l->slot) return;
+    if (od->nuses == od->capuses) {
+        int cap = od->capuses ? od->capuses * 2 : 4;
+        od->uses = arena_grow(R->tree, od->uses, sizeof(OnUse) * (size_t)od->capuses, sizeof(OnUse) * (size_t)cap);
+        od->capuses = cap;
+    }
+    od->uses[od->nuses].name = l->name;
+    od->uses[od->nuses].slot = l->slot;
+    od->nuses++;
+}
+
 static VarRef lookup(Resolver *R, FnCtx *f, ObjString *name, int allow_self) {
     VarRef r;
+    memset(&r, 0, sizeof r);
     r.name = name;
     r.kind = VAR_GLOBAL;
     r.index = 0;
     r.changeable = 0;
     r.origin = ORIGIN_VAR;
+    r.watch = NULL;
 
     Local *l = find_local(f, name);
     if (l) {
@@ -298,7 +330,18 @@ static VarRef lookup(Resolver *R, FnCtx *f, ObjString *name, int allow_self) {
         r.index = l->slot;
         r.changeable = l->changeable;
         r.origin = l->origin;
+        r.watch = l->watch;
+        for (int i = 0; i < f->nons; i++)  /* declared outside an `on` block being resolved */
+            if (l->slot < f->ons[i]->first) note_use(R, f->ons[i], l);
         return r;
+    }
+    for (int i = f->ndvars - 1; i >= 0; i--) {  /* the paused frame's variables (the innermost of a name wins) */
+        if (f->dvars[i].name == name) {
+            r.kind = f->dvars[i].kind;
+            r.index = f->dvars[i].index;
+            r.origin = ORIGIN_CAPTURE;
+            return r;
+        }
     }
     if (allow_self && f->decl && f->decl->name == name) {
         r.kind = VAR_SELF;
@@ -315,7 +358,7 @@ static VarRef lookup(Resolver *R, FnCtx *f, ObjString *name, int allow_self) {
         return r;
     }
     r.kind = VAR_CAPTURE;
-    r.index = add_capture(R, f, outer.kind, outer.index);
+    r.index = add_capture(R, f, outer.kind, outer.index, name);
     r.origin = ORIGIN_CAPTURE;
     return r;
 }
@@ -384,11 +427,80 @@ static void resolve_function(Resolver *R, FuncDecl *d) {
     if (f.ncaps) {
         d->captures = arena_alloc(R->tree, sizeof(CaptureSrc) * (size_t)f.ncaps);
         memcpy(d->captures, f.caps, sizeof(CaptureSrc) * (size_t)f.ncaps);
+        d->capnames = arena_alloc(R->tree, sizeof(ObjString *) * (size_t)f.ncaps);
+        memcpy(d->capnames, f.capnames, sizeof(ObjString *) * (size_t)f.ncaps);
     }
     R->fn = f.parent;
 }
 
 static void resolve_node(Resolver *R, Node *n);
+
+/* An `on` block that runs on this frame: a hidden slot (holding the block
+ * while it is in scope), then the block's parameters and locals. All of
+ * them stay taken until the code around the block ends. */
+static void resolve_frame_block(Resolver *R, OnDesc *od, FuncDecl *d) {
+    FnCtx *f = R->fn;
+    od->token = f->nslots++;
+    int saved_max = f->max_slots > f->nslots ? f->max_slots : f->nslots, saved_loops = f->loop_depth;
+    f->max_slots = f->nslots;  /* measures the block's own slots */
+    f->loop_depth = 0;         /* break and continue cannot leave it */
+    od->first = f->nslots;
+    if (f->nons == f->cap_ons) {
+        int cap = f->cap_ons ? f->cap_ons * 2 : 4;
+        f->ons = arena_grow(R->tmp, f->ons, sizeof(OnDesc *) * (size_t)f->cap_ons, sizeof(OnDesc *) * (size_t)cap);
+        f->cap_ons = cap;
+    }
+    f->ons[f->nons++] = od;
+    int start = begin_scope(R);
+    for (int i = 0; i < d->nparams; i++) od->param_slot[i] = declare(R, d->params[i], d->line, 0, ORIGIN_PARAM);
+    resolve_list(R, &d->body->as.block.stmts);
+    end_scope(R, start);
+    f->nons--;
+    od->nslots = f->max_slots - od->first;
+    d->nslots = f->max_slots;
+    d->on_block = od;
+    f->nslots = f->max_slots;
+    if (saved_max > f->max_slots) f->max_slots = saved_max;
+    f->loop_depth = saved_loops;
+}
+
+/* on a, this.b (old, new) { ... }: what it watches, then the block. At the
+ * top level of a file it watches globals and is a function of its own;
+ * anywhere else it can watch the variables there too, and runs on the frame. */
+static void resolve_on(Resolver *R, Node *n) {
+    FnCtx *f = R->fn;
+    OnDesc *od = arena_alloc(R->tree, sizeof(OnDesc));
+    od->items = n->as.on.items;
+    od->count = n->as.on.count;
+    od->func = n->as.on.func;
+    od->frame = f->decl || f->depth > 0;
+    n->as.on.desc = od;
+    for (int i = 0; i < od->count; i++) {
+        OnItem *it = &od->items[i];
+        VarRef r = lookup(R, f, it->name, 0);
+        if (r.kind == VAR_GLOBAL && !strcmp(it->name->chars, "this"))
+            rerror(R, n->line, "'this' can only be used inside a class's methods and constructor");
+        Origin origin = r.origin;
+        int frozen = r.kind == VAR_GLOBAL ? global_is_frozen(R, r.name, &origin) : !r.changeable;
+        if (frozen) {
+            char msg[300];
+            unchangeable_message(msg, sizeof msg, it->name->chars, origin);
+            rerror(R, n->line, "this 'on' block would never run: %s", msg);
+        }
+        it->root = r;
+        if (r.kind == VAR_LOCAL) {  /* the code that changes it runs the block (see compile.c) */
+            OnList *w = r.watch;
+            if (w->n == w->cap) {
+                int cap = w->cap ? w->cap * 2 : 2;
+                w->ons = arena_grow(R->tree, w->ons, sizeof(OnDesc *) * (size_t)w->cap, sizeof(OnDesc *) * (size_t)cap);
+                w->cap = cap;
+            }
+            w->ons[w->n++] = od;
+        }
+    }
+    if (od->frame) resolve_frame_block(R, od, od->func);
+    else resolve_function(R, od->func);
+}
 
 /* Long chains like 1 + 1 + ... build deep trees without deep nesting in
  * the source, so the tree depth is limited here, before anything else
@@ -453,18 +565,7 @@ static void resolve_node(Resolver *R, Node *n) {
         resolve(R, n->as.is.cls);
         break;
     case N_ON:
-        if (R->fn->decl || R->fn->depth > 0) rerror(R, n->line, "'on' can only be used at the top level of a file");
-        for (int i = 0; i < n->as.on.count; i++) {
-            Origin origin;
-            ObjString *name = n->as.on.names[i];
-            n->as.on.names[i] = ref_key(R, name);  /* the global watched */
-            if (global_is_frozen(R, n->as.on.names[i], &origin)) {
-                char msg[256];
-                unchangeable_message(msg, sizeof msg, name->chars, origin);
-                rerror(R, n->line, "this 'on' block would never run: %s", msg);
-            }
-        }
-        resolve_function(R, n->as.on.func);
+        resolve_on(R, n);
         break;
     case N_CLASS: {
         if (R->fn->decl || R->fn->depth > 0)
@@ -516,10 +617,20 @@ static void resolve_node(Resolver *R, Node *n) {
         resolve(R, n->as.binary.left);
         resolve(R, n->as.binary.right);
         break;
-    case N_CALL:
-        resolve(R, n->as.call.callee);
+    case N_CALL: {
+        Node *callee = n->as.call.callee;
+        ObjString *raw = callee->kind == N_VAR ? callee->as.var.name : NULL;
+        resolve(R, callee);
         resolve_list(R, &n->as.call.args);
+        if (raw && callee->as.var.kind == VAR_GLOBAL) {  /* a top-level fn (of this file, or made before): always callable */
+            Value v;
+            Origin origin;
+            n->as.call.known_fn = (map_get(R->own, OBJ_VAL(raw), &v) && IS_NUM(v) && v.as.number == 2 &&
+                                   callee->as.var.name == decl_key(R, raw)) ||
+                                  (global_is_frozen(R, callee->as.var.name, &origin) && origin == ORIGIN_FN);
+        }
         break;
+    }
     case N_METHOD:
         resolve(R, n->as.method.object);
         resolve_list(R, &n->as.method.args);
@@ -543,8 +654,8 @@ static void resolve_node(Resolver *R, Node *n) {
     case N_THROW:
         resolve(R, n->as.expr);
         break;
-    case N_RETURN: {
-        FuncDecl *d = R->fn->decl;
+    case N_RETURN: {  /* in an `on` block's code: ends the block */
+        FuncDecl *d = R->fn->nons ? R->fn->ons[R->fn->nons - 1]->func : R->fn->decl;
         if (!d) rerror(R, n->line, "'return' can only be used inside a function");
         const char *fname = d->name ? d->name->chars : "this function";
         const char *paren = d->name ? "()" : "";
@@ -657,7 +768,9 @@ int resolve_program(Interp *I, Node *program, Source *src, Arena *tree) {
     for (int i = 0; i < stmts->count; i++) {  /* the names this file declares */
         Node *s = stmts->items[i];
         ObjString *name = s->kind == N_LET ? s->as.let.var.name : s->kind == N_CLASS ? s->as.klass.var.name : NULL;
-        if (name) map_set(R.own, retain(OBJ_VAL(name)), BOOL_VAL(1));
+        if (!name) continue;
+        int fn = s->kind == N_LET && s->as.let.is_fn && !map_get(R.own, OBJ_VAL(name), NULL);  /* 2: a fn (declared once) */
+        map_set(R.own, retain(OBJ_VAL(name)), NUM_VAL(fn ? 2 : 1));
     }
     if (R.ns) R.pkg_names = package_names(&R, R.ns, 1);
     for (int i = 0; i < stmts->count; i++)  /* imports first: they decide what names mean */
@@ -669,6 +782,44 @@ int resolve_program(Interp *I, Node *program, Source *src, Arena *tree) {
         for (size_t i = 0; i < R.aliases->used; i++)
             map_set(I->main_aliases, retain(R.aliases->entries[i].key), retain(R.aliases->entries[i].value));
     }
+    release(OBJ_VAL(R.own));
+    if (src->aliases) release(OBJ_VAL(src->aliases));
+    src->aliases = R.aliases;  /* kept for the debugger's expressions */
+    arena_free(R.tmp);
+    return 1;
+}
+
+/* A debugger expression, wrapped in the function d: resolved as if written
+ * in the paused code (in file `home`), seeing the paused frame's variables. */
+int resolve_debug(Interp *I, FuncDecl *d, Source *src, Arena *tree, Source *home, DebugVar *vars, int nvars) {
+    Resolver R;
+    FnCtx top;
+    memset(&top, 0, sizeof top);
+    top.dvars = vars;
+    top.ndvars = nvars;
+    R.I = I;
+    R.src = src;
+    R.tmp = arena_new();
+    R.tree = tree;
+    R.fn = &top;
+    R.depth = 0;
+    R.globals = NULL;
+    R.nglobals = R.cap_globals = 0;
+    R.ns = home ? home->package : NULL;
+    R.pkg_names = NULL;
+    R.own = new_map();
+    R.aliases = new_map();
+    if (setjmp(R.jb) != 0) {
+        release(OBJ_VAL(R.own));
+        release(OBJ_VAL(R.aliases));
+        arena_free(R.tmp);
+        return 0;
+    }
+    if (home && home->aliases)
+        for (size_t i = 0; i < home->aliases->used; i++)
+            map_set(R.aliases, retain(home->aliases->entries[i].key), retain(home->aliases->entries[i].value));
+    if (R.ns) R.pkg_names = package_names(&R, R.ns, 1);
+    resolve_function(&R, d);
     release(OBJ_VAL(R.own));
     release(OBJ_VAL(R.aliases));
     arena_free(R.tmp);
