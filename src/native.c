@@ -37,6 +37,21 @@
 #include <string.h>
 
 #ifndef LUBE_RUNTIME  /* (translating to C: not in a program built with --small; its runtime part is at the end) */
+#include <stdarg.h>
+
+/* snprintf for the short pieces of C this file writes (names and small
+ * expressions, far below size): through vsnprintf, which compilers do not
+ * second-guess; a piece that does not fit would be a bug, so it stops. */
+static void cfmt(char *out, size_t size, const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(out, size, fmt, ap);
+    va_end(ap);
+    if (n < 0 || (size_t)n >= size) {  /* LCOV_EXCL_START */
+        fprintf(stderr, "lube: internal error: a piece of C too long (%s)\n", fmt);
+        abort();
+    }  /* LCOV_EXCL_STOP */
+}
 
 /* Types: NT_INT is a whole Number within 2^53 (held in an int64_t), NT_NUM
  * any Number (a double), NT_NONE a fn's result when it returns nothing.
@@ -169,7 +184,7 @@ static char letter(int t) { return t == NT_NUM ? 'd' : t == NT_INT ? 'i' : 'b'; 
 static const char *ctype(int t) { return t == NT_NUM ? "double" : t == NT_INT ? "int64_t" : "int"; }
 
 /* e (of type t) as a double. */
-static void as_double(int t, const char *e, char *out) { snprintf(out, 64, t == NT_INT ? "((double)%s)" : "%s", e); }
+static void as_double(int t, const char *e, char *out) { cfmt(out, 64, t == NT_INT ? "((double)%s)" : "%s", e); }
 
 /* From here on, slot holds the declaration `key` (a slot is reused by
  * variables of blocks that have ended: each has a type of its own). */
@@ -295,7 +310,7 @@ static int row_place(Gen *g, Node *n, char *place) {
         sb_printf(g->out, "int64_t k%d;\nif (lube_nidx(Rn%d, %s, &k%d)) %s\n", k, s, i, k, bail(g));
     else
         return fail(g);
-    snprintf(place, 64, "R%d + k%d * %d", s, k, SHAPE(g, g->dshape[g->live[s]])->n);
+    cfmt(place, 64, "R%d + k%d * %d", s, k, SHAPE(g, g->dshape[g->live[s]])->n);
     return 1;
 }
 
@@ -317,13 +332,13 @@ static int field_place(Gen *g, Node *n, char *place) {
     if (obj->kind == N_INDEX && (s = record(g, obj->as.index.object, NT_RLIST))) {
         char row[64];
         if (!row_place(g, obj, row) || (f = field_of(g, s - 1, n->as.field.name)) < 0) return 0;
-        snprintf(place, 64, "(%s)[%d]", row, f);
+        cfmt(place, 64, "(%s)[%d]", row, f);
         return 1;
     }
     if (!(s = record(g, obj, NT_REC))) return fail(g);
     s--;
     if ((f = field_of(g, s, n->as.field.name)) < 0) return 0;
-    snprintf(place, 64, "Bp%d[%d]", s, f);
+    cfmt(place, 64, "Bp%d[%d]", s, f);
     return 1;
 }
 
@@ -342,7 +357,7 @@ static int slot_store(Gen *g, int slot, int t, const char *v, char *how) {
     }
     if ((st == NT_BOOL) != (t == NT_BOOL)) return fail(g);
     if (st == NT_NUM) as_double(t, v, how);
-    else snprintf(how, 64, "%s", v);
+    else cfmt(how, 64, "%s", v);
     return st;
 }
 
@@ -357,7 +372,7 @@ static void store(Gen *g, int slot, int t, const char *v) {
 
 
 static void number_literal(char *res, double x) {  /* (in parentheses: -x of -2.5 is not --2.5) */
-    snprintf(res, 64, "(%.17g", x);
+    cfmt(res, 64, "(%.17g", x);
     if (!strpbrk(res, ".en")) strcat(res, ".0");  /* a double, never an int (1/2 is not 0) */
     strcat(res, ")");
 }
@@ -378,15 +393,15 @@ static void unbox(Gen *g, int *t, char *e, int want) {
     if (want == NT_BOOL) sb_printf(g->out, "int t%d;\nif (lube_nv_bool(%s, &t%d)) %s\n", k, e, k, bail(g));
     else sb_printf(g->out, "double t%d;\nif (lube_nv_num(%s, &t%d)) %s\n", k, e, k, bail(g));
     done_with(g, e);
-    snprintf(e, 64, "t%d", k);
+    cfmt(e, 64, "t%d", k);
     *t = want == NT_BOOL ? NT_BOOL : NT_NUM;
 }
 
 /* Number, Bool or value e (of type t) as a value: res is e's own when it was. */
 static int boxed(int t, const char *e, char *res) {
-    if (t == NT_VAL) snprintf(res, 64, "%s", e);
-    else if (NUMERIC(t)) snprintf(res, 64, t == NT_INT ? "NUM_VAL((double)%s)" : "NUM_VAL(%s)", e);
-    else if (t == NT_BOOL) snprintf(res, 64, "BOOL_VAL(%s)", e);
+    if (t == NT_VAL) cfmt(res, 64, "%s", e);
+    else if (NUMERIC(t)) cfmt(res, 64, t == NT_INT ? "NUM_VAL((double)%s)" : "NUM_VAL(%s)", e);
+    else if (t == NT_BOOL) cfmt(res, 64, "BOOL_VAL(%s)", e);
     else return 0;
     return 1;
 }
@@ -405,13 +420,13 @@ static int gen_binop(Gen *g, TokenType op, int ta, const char *a, int tb, const 
         if (g->fast) sb_printf(g->out, "int64_t t%d = (int64_t)((uint64_t)%s %c (uint64_t)%s);\n", t, a, op == T_PLUS ? '+' : '-', b);
         else sb_printf(g->out, "int64_t t%d = %s %c %s;\nif (LUBE_OUT(t%d)) %s\n", t, a, op == T_PLUS ? '+' : '-', b, t, bail(g));
         g->tnn[t] = op == T_PLUS && nonneg(g, a) && nonneg(g, b);
-        snprintf(res, 64, "t%d", t);
+        cfmt(res, 64, "t%d", t);
         return NT_INT;
     } else if (ta == NT_INT && tb == NT_INT && op == T_STAR && g->fast) {  /* (wrapping; still never -0) */
         sb_printf(g->out, "int64_t t%d = (int64_t)((uint64_t)%s * (uint64_t)%s);\n", t, a, b);
         sb_printf(g->out, "if (t%d == 0 && (%s < 0 || %s < 0)) %s\n", t, a, b, bail(g));
         g->tnn[t] = nonneg(g, a) && nonneg(g, b);
-        snprintf(res, 64, "t%d", t);
+        cfmt(res, 64, "t%d", t);
         return NT_INT;
     } else if (ta == NT_INT && tb == NT_INT && op == T_STAR) {  /* (as a double: exact when it fits; never -0) */
         sb_printf(g->out, "double m%d = (double)%s * (double)%s;\n", t, a, b);
@@ -419,19 +434,19 @@ static int gen_binop(Gen *g, TokenType op, int ta, const char *a, int tb, const 
                   t, a, b, bail(g));
         sb_printf(g->out, "int64_t t%d = (int64_t)m%d;\n", t, t);
         g->tnn[t] = nonneg(g, a) && nonneg(g, b);
-        snprintf(res, 64, "t%d", t);
+        cfmt(res, 64, "t%d", t);
         return NT_INT;
     } else if (ta == NT_INT && tb == NT_INT && op == T_PERCENT && nonneg(g, a) && b[0] == '(' && b[1] >= '1' && b[1] <= '9') {
         sb_printf(g->out, "int64_t t%d = %s %% %s;\n", t, a, b);  /* (neither negative: C's %, never -0) */
         g->tnn[t] = 1;
-        snprintf(res, 64, "t%d", t);
+        cfmt(res, 64, "t%d", t);
         return NT_INT;
     } else if (ta == NT_INT && tb == NT_INT && op == T_PERCENT) {  /* Lube's %: the sign of b; never -0 */
         sb_printf(g->out, g->fast ? "if (%s == 0) %s\nint64_t t%d = %s == -1 ? 0 : %s %% %s;\n"  /* (wrapped: INT64_MIN % -1) */
                                   : "if (%s == 0) %s\nint64_t t%d = %s%s %% %s;\n", b, bail(g), t, g->fast ? b : "", a, b);
         sb_printf(g->out, "if (t%d != 0 && (t%d < 0) != (%s < 0)) t%d += %s;\nelse if (t%d == 0 && %s < 0) %s\n", t, t,
                   b, t, b, t, a, bail(g));
-        snprintf(res, 64, "t%d", t);
+        cfmt(res, 64, "t%d", t);
         return NT_INT;
     } else {  /* doubles, as the VM computes */
         char x[64], y[64];
@@ -441,22 +456,22 @@ static int gen_binop(Gen *g, TokenType op, int ta, const char *a, int tb, const 
             sb_printf(g->out, "int t%d = %s %s %s;\n", t, x, cmp[c], y);
         } else if (op == T_PLUS || op == T_MINUS || op == T_STAR) {
             sb_printf(g->out, "double t%d = %s %c %s;\n", t, x, op == T_PLUS ? '+' : op == T_MINUS ? '-' : '*', y);
-            snprintf(res, 64, "t%d", t);
+            cfmt(res, 64, "t%d", t);
             return NT_NUM;
         } else if (op == T_SLASH || op == T_PERCENT) {  /* (by zero: the VM raises the error) */
             sb_printf(g->out, "if (%s == 0) %s\ndouble t%d = ", y, bail(g), t);
             sb_printf(g->out, op == T_SLASH ? "%s / %s;\n" : "lube_nmod(%s, %s);\n", x, y);
-            snprintf(res, 64, "t%d", t);
+            cfmt(res, 64, "t%d", t);
             return NT_NUM;
         } else if (op == T_POW) {
             sb_printf(g->out, "double t%d = lube_m_pow(%s, %s);\n", t, x, y);
-            snprintf(res, 64, "t%d", t);
+            cfmt(res, 64, "t%d", t);
             return NT_NUM;
         } else {
             return fail(g);
         }
     }
-    snprintf(res, 64, "t%d", t);
+    cfmt(res, 64, "t%d", t);
     return NT_BOOL;
 }
 
@@ -507,7 +522,7 @@ static int gen_items(Gen *g, Node *n, int expect) {
         if (!lt) sb_printf(g->out, "L%ct.n = 0;\n", LCHAR(it));  /* (the first item decides) */
         lt = it;
         if (LIST_NUM(lt)) as_double(t, v, d);
-        else snprintf(d, sizeof d, "%s", v);
+        else cfmt(d, sizeof d, "%s", v);
         sb_printf(g->out, "if (%s_push(&L%ct, %s)) %s\n", LTYPE(lt), LCHAR(lt), d, bail(g));
     }
     return lt ? lt : fail(g);  /* ([] alone: a list of what?) */
@@ -548,7 +563,7 @@ static void gen_push(Gen *g, Node *list, Node *value) {
         return;
     }
     if (LIST_NUM(lt)) as_double(t, v, d);
-    else snprintf(d, sizeof d, "%s", v);
+    else cfmt(d, sizeof d, "%s", v);
     sb_printf(g->out, "if (%s_push(&L%c%d, %s)) %s\n", LTYPE(lt), LCHAR(lt), list->as.var.index, d, bail(g));
 }
 
@@ -600,8 +615,8 @@ static int gen_record_arg(Gen *g, Node *x, Cand *c, int p, char *res, int *slot)
         if (want == UNTYPED && st == UNTYPED) return fail(g);  /* (neither says which kind) */
         if (want == UNTYPED) want = c->params[p] = st, g->shape_changes++;
         if (!record(g, v, want)) return fail(g);
-        if (want == NT_REC) snprintf(res, 64, "Bp%d", s);
-        else snprintf(res, 64, "R%d, Rn%d", s, s);
+        if (want == NT_REC) cfmt(res, 64, "Bp%d", s);
+        else cfmt(res, 64, "R%d, Rn%d", s, s);
     }
     *slot = s;
     if (c->cls[p] && g->cur->cls[s] != c->cls[p]) {  /* the callee calls methods on it: so it is of that class */
@@ -619,12 +634,12 @@ static int gen_call(Gen *g, Node *n, char *res, int need) {
     if (callee->kind != N_VAR || args->count > NATIVE_MAX_PARAMS) return fail(g);
     if (is_builtin(g, callee, "len") && args->count == 1 && list_slot(g, args->items[0])) {
         int lt = list_slot(g, args->items[0]);
-        snprintf(res, 64, "L%c%d.n", LCHAR(lt), args->items[0]->as.var.index);
+        cfmt(res, 64, "L%c%d.n", LCHAR(lt), args->items[0]->as.var.index);
         return NT_INT;
     }
     int rs = is_builtin(g, callee, "len") && args->count == 1 ? record(g, args->items[0], NT_RLIST) : 0;
     if (rs) {
-        snprintf(res, 64, "Rn%d", rs - 1);
+        cfmt(res, 64, "Rn%d", rs - 1);
         return NT_INT;
     }
     if (is_builtin(g, callee, "len") && args->count == 1 && is_value(g, args->items[0])) {  /* a list value's length */
@@ -633,7 +648,7 @@ static int gen_call(Gen *g, Node *n, char *res, int need) {
         int k = new_tmp(g);
         sb_printf(g->out, "int64_t t%d;\nif (lube_nv_len(%s, &t%d)) %s\n", k, v, k, bail(g));
         g->tnn[k] = 1;
-        snprintf(res, 64, "t%d", k);
+        cfmt(res, 64, "t%d", k);
         return NT_INT;
     }
     if (is_builtin(g, callee, "push") && args->count == 2 && args->items[0]->kind == N_REF && !need) {
@@ -672,7 +687,7 @@ static int gen_invoke(Gen *g, Cand *c, const char *fn, Node **argv, int argc, in
         if (want == NT_VAL) {  /* a value: as it is (borrowed by the callee), or a Number or Bool boxed */
             char bx[64];
             if (!boxed(ta[i], a[i], bx)) return fail(g);
-            snprintf(a[i], 64, "%s", bx);
+            cfmt(a[i], 64, "%s", bx);
             ta[i] = NT_VAL;
             continue;
         }
@@ -686,18 +701,18 @@ static int gen_invoke(Gen *g, Cand *c, const char *fn, Node **argv, int argc, in
     int t = new_tmp(g);
     if (fn) {  /* (a whole number's floor, ceil and round are itself, and its abs is whole) */
         if (ta[0] == NT_INT && (!strcmp(fn, "floor") || !strcmp(fn, "ceil") || !strcmp(fn, "lube_nround"))) {
-            snprintf(res, 64, "%s", a[0]);
+            cfmt(res, 64, "%s", a[0]);
             return NT_INT;
         }
         if (ta[0] == NT_INT && !strcmp(fn, "fabs")) {
             sb_printf(g->out, "int64_t t%d = %s < 0 ? -%s : %s;\n", t, a[0], a[0], a[0]);
-            snprintf(res, 64, "t%d", t);
+            cfmt(res, 64, "t%d", t);
             return NT_INT;
         }
         as_double(ta[0], a[0], x[0]);
         if (argc > 1) as_double(ta[1], a[1], x[1]);
         sb_printf(g->out, "double t%d = %s(%s%s%s);\n", t, fn, x[0], argc > 1 ? ", " : "", argc > 1 ? x[1] : "");
-        snprintf(res, 64, "t%d", t);
+        cfmt(res, 64, "t%d", t);
         return NT_NUM;
     }
     if (argc != c->d->nparams || (need && c->ret == NT_NONE)) return fail(g);
@@ -706,7 +721,7 @@ static int gen_invoke(Gen *g, Cand *c, const char *fn, Node **argv, int argc, in
         sb_printf(g->out, "int64_t t%d = ni_%d(", t, k);
         for (int i = 0; i < argc; i++) sb_printf(g->out, "%s, ", a[i]);
         sb_printf(g->out, "left - 1);\nif (t%d == LUBE_FAIL) %s\n", t, bail(g));
-        snprintf(res, 64, c->ret == NT_BOOL ? "((int)t%d)" : "t%d", t);
+        cfmt(res, 64, c->ret == NT_BOOL ? "((int)t%d)" : "t%d", t);
         return c->ret == NT_BOOL ? NT_BOOL : NT_INT;
     }
     int vt = c->ret == NT_VAL ? new_vt(g) : -1;  /* (a value it returns: this fn's own) */
@@ -725,10 +740,10 @@ static int gen_invoke(Gen *g, Cand *c, const char *fn, Node **argv, int argc, in
     for (int i = 0; i < argc; i++)
         if (ta[i] == NT_VAL) done_with(g, a[i]);  /* (values it made for the call) */
     if (vt >= 0) {
-        snprintf(res, 64, "vt%d", vt);
+        cfmt(res, 64, "vt%d", vt);
         return NT_VAL;
     }
-    snprintf(res, 64, c->ret == NT_BOOL ? "(t%d != 0)" : "t%d", t);
+    cfmt(res, 64, c->ret == NT_BOOL ? "(t%d != 0)" : "t%d", t);
     return c->ret == NT_BOOL ? NT_BOOL : NT_NUM;
 }
 
@@ -803,7 +818,7 @@ static int gen_expr(Gen *g, Node *n, char *res) {
         if (IS_NUM(n->as.literal)) {
             double x = n->as.literal.as.number;
             if (x >= -9007199254740992.0 && x <= 9007199254740992.0 && x == (double)(int64_t)x && !(x == 0 && signbit(x))) {
-                snprintf(res, 64, "(%lldLL)", (long long)x);  /* a whole number */
+                cfmt(res, 64, "(%lldLL)", (long long)x);  /* a whole number */
                 return NT_INT;
             }
             number_literal(res, x);
@@ -815,12 +830,12 @@ static int gen_expr(Gen *g, Node *n, char *res) {
     case N_VAR: {
         int t = n->as.var.kind == VAR_LOCAL ? type_of(g, n->as.var.index) : 0;
         if (t == NT_VAL) {  /* a parameter's value, or a variable's (borrowed) */
-            snprintf(res, 64, "%c%d", n->as.var.index < g->cur->d->nparams ? 'p' : 'V', n->as.var.index);
+            cfmt(res, 64, "%c%d", n->as.var.index < g->cur->d->nparams ? 'p' : 'V', n->as.var.index);
             return NT_VAL;
         }
         if (t == UNTYPED && g->cur->loop) t = loop_scalar(g, n->as.var.index, g->cur->hint[n->as.var.index]);
         if (t <= 0 || t >= NT_LNUM) return fail(g);  /* (a list or record is not a value here: it never leaves the fn) */
-        snprintf(res, 64, "%c%d", letter(t), n->as.var.index);
+        cfmt(res, 64, "%c%d", letter(t), n->as.var.index);
         return t;
     }
     case N_UNARY: {
@@ -839,7 +854,7 @@ static int gen_expr(Gen *g, Node *n, char *res) {
         } else {
             return fail(g);
         }
-        snprintf(res, 64, "t%d", k);
+        cfmt(res, 64, "t%d", k);
         return n->as.unary.op != T_MINUS ? NT_BOOL : t;
     }
     case N_BINARY: {
@@ -874,7 +889,7 @@ static int gen_expr(Gen *g, Node *n, char *res) {
         for (int i = 0; i < nowned; i++) sb_printf(g->out, "vt%d = NIL_VAL;\n", owned[i]);  /* (the list's now) */
         sb_free(&all);
         if (g->failed) return 0;
-        snprintf(res, 64, "vt%d", k);
+        cfmt(res, 64, "vt%d", k);
         return NT_VAL;
     }
     case N_AND:
@@ -884,7 +899,7 @@ static int gen_expr(Gen *g, Node *n, char *res) {
         sb_printf(g->out, "int t%d = %s;\nif (%st%d) {\n", k, a, n->kind == N_AND ? "" : "!", k);
         if (bool_expr(g, n->as.binary.right, b) != NT_BOOL) return fail(g);
         sb_printf(g->out, "t%d = %s;\n}\n", k, b);
-        snprintf(res, 64, "t%d", k);
+        cfmt(res, 64, "t%d", k);
         return NT_BOOL;
     }
     case N_CALL:
@@ -896,7 +911,7 @@ static int gen_expr(Gen *g, Node *n, char *res) {
         if (!field_place(g, n, p)) return fail(g);
         int t = new_tmp(g);
         sb_printf(g->out, "double t%d = %s;\n", t, p);
-        snprintf(res, 64, "t%d", t);
+        cfmt(res, 64, "t%d", t);
         return NT_NUM;
     }
     case N_INDEX: {  /* xs[i], xs a list of the fn's own */
@@ -908,7 +923,7 @@ static int gen_expr(Gen *g, Node *n, char *res) {
             int k = new_tmp(g);
             as_double(ti, ix, dx);
             sb_printf(g->out, "Value vb%d;\nif (lube_nv_index(%s, %s, &vb%d)) %s\n", k, a, dx, k, bail(g));
-            snprintf(res, 64, "vb%d", k);
+            cfmt(res, 64, "vb%d", k);
             return NT_VAL;
         }
         int lt = list_slot(g, n->as.index.object), k;
@@ -917,7 +932,7 @@ static int gen_expr(Gen *g, Node *n, char *res) {
         int t = new_tmp(g);
         sb_printf(g->out, "%s t%d = L%c%d.a[k%d];\n", LIST_NUM(lt) ? "double" : "int", t, LCHAR(lt),
                   n->as.index.object->as.var.index, k);
-        snprintf(res, 64, "t%d", t);
+        cfmt(res, 64, "t%d", t);
         return LIST_NUM(lt) ? NT_NUM : NT_BOOL;
     }
     default:  /* text, objects, closures...: not native */
@@ -942,12 +957,12 @@ static void gen_item_assign(Gen *g, Node *n) {
     if (op != T_ASSIGN) {  /* (Numbers) */
         TokenType bin = op == T_PLUS_EQ ? T_PLUS : op == T_MINUS_EQ ? T_MINUS : op == T_STAR_EQ ? T_STAR
                       : op == T_SLASH_EQ ? T_SLASH : T_PERCENT;
-        snprintf(cur, sizeof cur, "Ln%d.a[k%d]", s, k - 1);
+        cfmt(cur, sizeof cur, "Ln%d.a[k%d]", s, k - 1);
         t = gen_binop(g, bin, NT_NUM, cur, t, v, r);
-        snprintf(v, sizeof v, "%s", r);
+        cfmt(v, sizeof v, "%s", r);
     }
     if (LIST_NUM(lt)) as_double(t, v, d);
-    else snprintf(d, sizeof d, "%s", v);
+    else cfmt(d, sizeof d, "%s", v);
     sb_printf(g->out, "L%c%d.a[k%d] = %s;\n", L, s, k - 1, d);
 }
 
@@ -965,7 +980,7 @@ static void gen_field_assign(Gen *g, Node *n) {
         TokenType bin = op == T_PLUS_EQ ? T_PLUS : op == T_MINUS_EQ ? T_MINUS : op == T_STAR_EQ ? T_STAR
                       : op == T_SLASH_EQ ? T_SLASH : T_PERCENT;
         t = gen_binop(g, bin, NT_NUM, place, t, v, r);
-        snprintf(v, sizeof v, "%s", r);
+        cfmt(v, sizeof v, "%s", r);
     }
     as_double(t, v, r);
     sb_printf(g->out, "%s = %s;\n", place, r);
@@ -1012,7 +1027,7 @@ static void gen_assign(Gen *g, Node *n) {
     }
     TokenType bin = op == T_PLUS_EQ ? T_PLUS : op == T_MINUS_EQ ? T_MINUS : op == T_STAR_EQ ? T_STAR
                   : op == T_SLASH_EQ ? T_SLASH : T_PERCENT;
-    snprintf(cur, sizeof cur, "%c%d", letter(st), slot);
+    cfmt(cur, sizeof cur, "%c%d", letter(st), slot);
     int rt = st && NUMERIC(st) && NUMERIC(t) ? gen_binop(g, bin, st, cur, t, v, r) : fail(g);
     if (rt) store(g, slot, rt, r);
 }
@@ -1249,12 +1264,12 @@ static void gen_stmt(Gen *g, Node *n) {
             sb_printf(g->out, "for (int64_t k%d = 0; k%d < Rn%d; k%d++) {\n", k, k, s, k);
             declare(g, &n->as.for_s.first, first);
             if (n->as.for_s.two) {  /* for i, r in xs */
-                snprintf(y, sizeof y, "k%d", k);
+                cfmt(y, sizeof y, "k%d", k);
                 store(g, first, NT_INT, y);
                 first = n->as.for_s.second.index;
                 declare(g, &n->as.for_s.second, first);
             }
-            snprintf(x, sizeof x, "R%d + k%d * %d", s, k, SHAPE(g, sh)->n);
+            cfmt(x, sizeof x, "R%d + k%d * %d", s, k, SHAPE(g, sh)->n);
             record_copy(g, first, sh, x);
             gen_block(g, &n->as.for_s.body->as.block.stmts);
             sb_puts(g->out, "}\n");
@@ -1273,17 +1288,17 @@ static void gen_stmt(Gen *g, Node *n) {
                   it->as.range.inclusive);
         if (ts == NT_INT) sb_printf(g->out, "if ((double)s%d + n%d > LUBE_BIGD) %s\n", k, k, bail(g));
         sb_printf(g->out, "for (int64_t k%d = 0; (double)k%d < n%d; k%d++) {\n", k, k, k, k);
-        snprintf(x, sizeof x, ts == NT_INT ? "s%d + k%d" : "s%d + (double)k%d", k, k);
+        cfmt(x, sizeof x, ts == NT_INT ? "s%d + k%d" : "s%d + (double)k%d", k, k);
         if (ts == NT_INT) {  /* (as a temporary: not negative when the start is not) */
             int u = new_tmp(g);
             sb_printf(g->out, "int64_t t%d = %s;\n", u, x);
             g->tnn[u] = nonneg(g, v);
-            snprintf(x, sizeof x, "t%d", u);
+            cfmt(x, sizeof x, "t%d", u);
         }
         declare(g, &n->as.for_s.first, n->as.for_s.first.index);
         if (n->as.for_s.two) declare(g, &n->as.for_s.second, n->as.for_s.second.index);
         if (n->as.for_s.two) {  /* for i, x in a..b: the index, then the item */
-            snprintf(y, sizeof y, "k%d", k);
+            cfmt(y, sizeof y, "k%d", k);
             store(g, n->as.for_s.first.index, NT_INT, y);
             store(g, n->as.for_s.second.index, ts, x);
         } else {
@@ -1388,8 +1403,8 @@ static void gen_pass(Gen *g, Cand *c, StrBuf *out) {
             else sb_printf(&body, "R%d = r%d;\nRn%d = rn%d;\n", i, i, i, i);
             continue;
         }
-        if (c->loop) snprintf(p, sizeof p, t == NT_BOOL ? "(*p%d != 0)" : "(*p%d)", i);
-        else snprintf(p, sizeof p, t == NT_BOOL ? "(p%d != 0)" : "p%d", i);
+        if (c->loop) cfmt(p, sizeof p, t == NT_BOOL ? "(*p%d != 0)" : "(*p%d)", i);
+        else cfmt(p, sizeof p, t == NT_BOOL ? "(p%d != 0)" : "p%d", i);
         store(g, i, t == NT_NUM && g->mode ? NT_INT : t, p);
         mark_neg(g, i);  /* (a parameter: any) */
     }
@@ -1702,7 +1717,7 @@ static void consider_loop(Gen *g, Interp *I, Node *s, int index, uint64_t hash, 
         c.shape[i] = g->nshapes++;
     }
     char key[32];
-    snprintf(key, sizeof key, "@%d", index);
+    cfmt(key, sizeof key, "@%d", index);
     c.d = d;
     c.key = lube_intern(I, key, strlen(key));
     c.hash = hash;
@@ -1755,7 +1770,7 @@ static int records_wrapper(Gen *g, Cand *k, int i, StrBuf *c) {
         int t = k->params[p], nf = RECORD(t) ? SHAPE(g, k->shape[p])->n : 0;
         int ref = lent_param(k, p);  /* (& or this: keep what was loaded, to see what changed) */
         char cls[160];  /* (the class its records must be, when methods are called on them) */
-        if (k->cls[p]) snprintf(cls, sizeof cls, "\"%s\"", g->classes[k->cls[p] - 1].key->chars);
+        if (k->cls[p]) cfmt(cls, sizeof cls, "\"%s\"", g->classes[k->cls[p] - 1].key->chars);
         else strcpy(cls, "0");
         if (t == NT_RLIST) {
             sb_printf(c, "    if (lube_reclist_load(I, &rc_%d_%d, args[%d], fs_%d_%d, %d, %s, &r%d, &rn%d, rs%d, 256)) goto done;\n", i,
