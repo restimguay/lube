@@ -626,7 +626,7 @@ FN(f_geometric_mean) {
     DATA(0, d);
     Sum s;
     int zero = 0;
-    double total;
+    double total = 0.0;
     sum_init(&s);
     for (size_t i = 0; i < d.n; i++) {
         double x = d.x[i];

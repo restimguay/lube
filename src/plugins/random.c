@@ -373,7 +373,7 @@ static void *must_alloc(size_t size) {
 /* Seeds g as Python's seed(a, version) does: NULL, or why a cannot be a seed. */
 static const char *seed_with(Gen *g, LubeValue a, int version) {
     int kind = lube->kind(a);
-    uint32_t key[33];
+    uint32_t key[33] = {0};
     if (kind == LUBE_NOTHING) {
         seed_system(g);
         return NULL;

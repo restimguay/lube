@@ -116,7 +116,7 @@ static void model_release(void *data) { model_reset((Model *)data); }
 /* How option id's value v prints (into buf). */
 static void option_text(const Model *m, int id, char *buf, size_t size) {
     double v = m->p[id];
-    char num[64], c[32], hi[64];
+    char num[32], c[32], hi[32];  /* (a Number's text fits in 32) */
     lube->format_number(v, num, sizeof num);
     switch (PARAMS[id].type) {
     case T_BOOL: snprintf(buf, size, "%s", v != 0 ? "true" : "false"); break;

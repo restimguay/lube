@@ -359,9 +359,9 @@ static void copy_into(Array *dst, const Array *src) {
 static LubeValue arr_copy(LubeVM *vm, const Array *a, int dtype, Array **out) {
     Array *r;
     LubeValue v = arr_new(vm, dtype < 0 ? a->dtype : dtype, a->ndim, a->shape, &r, 0);
+    if (out) *out = r;
     if (!r) return v;  /* LCOV_EXCL_LINE: (too big: a has the same size) */
     copy_into(r, a);
-    if (out) *out = r;
     return v;
 }
 

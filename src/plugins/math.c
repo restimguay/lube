@@ -702,8 +702,20 @@ FN(m_ulp) {
     }
 BINARY(atan2, atan2(x, y))
 BINARY(copysign, copysign(x, y))
-BINARY(fmax, fmax(x, y))
-BINARY(fmin, fmin(x, y))
+/* IEEE 754's maximumNumber and minimumNumber: a nan loses to a number, and +0 is above -0 (C's fmax and fmin
+ * may give either zero: glibc's and Apple's differ) */
+static double max_of(double x, double y) {
+    if (isnan(x) || isnan(y)) return isnan(x) ? y : x;
+    if (x == y) return signbit(x) ? y : x;
+    return x > y ? x : y;
+}
+static double min_of(double x, double y) {
+    if (isnan(x) || isnan(y)) return isnan(x) ? y : x;
+    if (x == y) return signbit(x) ? x : y;
+    return x < y ? x : y;
+}
+BINARY(fmax, max_of(x, y))
+BINARY(fmin, min_of(x, y))
 
 /* pow(x, y), with Python's answers for inf and nan (which C libraries differ on) */
 FN(m_pow) {

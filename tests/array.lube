@@ -5,6 +5,7 @@ import fs.*
 
 fn tries(f) { try { print(f()) } catch e { print("error:", e) } }
 fn r6(x) => np.round(x, 6)
+fn r4(x) => np.round(x, 4)  // (float32's libm results: their last digits differ from system to system)
 
 // ---------- making them ----------
 let a = np.array([[1, 2, 3], [4, 5, 6]])
@@ -62,8 +63,8 @@ print(np.isnan([1, np.nan]), np.isinf([np.inf, 1]), np.isfinite([np.inf, 1]), np
 print(np.floor(np.array([1, 2], "int64")), np.floor(np.array([1], "int64")).dtype, np.floor(2.5), np.sqrt(np.array([4], "int32")).dtype)
 let f32 = np.array([4, 0.25, -1], "float32")
 print(np.negative(f32), np.abs(f32), np.sqrt(f32), r6(np.exp(f32)), r6(np.log(np.abs(f32))), r6(np.log2(np.abs(f32))), r6(np.log10(np.abs(f32))), r6(np.log1p(np.abs(f32))))
-print(r6(np.expm1(f32)), r6(np.sin(f32)), r6(np.cos(f32)), r6(np.tan(f32)), r6(np.arcsin(f32 / 4)), r6(np.arccos(f32 / 4)), r6(np.arctan(f32)), r6(np.sinh(f32)))
-print(r6(np.cosh(f32)), r6(np.tanh(f32)), r6(np.arcsinh(f32)), r6(np.arccosh(np.abs(f32) + 1)), r6(np.arctanh(f32 / 8)), np.floor(f32), np.ceil(f32), np.trunc(f32))
+print(r4(np.expm1(f32)), r4(np.sin(f32)), r4(np.cos(f32)), r4(np.tan(f32)), r4(np.arcsin(f32 / 4)), r4(np.arccos(f32 / 4)), r4(np.arctan(f32)), r4(np.sinh(f32)))
+print(r4(np.cosh(f32)), r4(np.tanh(f32)), r4(np.arcsinh(f32)), r4(np.arccosh(np.abs(f32) + 1)), r4(np.arctanh(f32 / 8)), np.floor(f32), np.ceil(f32), np.trunc(f32))
 print(np.rint(f32), np.sign(f32), np.square(f32), np.reciprocal(f32), r6(np.cbrt(f32)), r6(np.exp2(f32)), r6(np.erf(f32)), np.isnan(f32), np.isinf(f32), np.isfinite(f32))
 print(np.round([0.5, 1.5, 2.675], 0), np.round([1.234, 5.678], 1), np.round(2.5), np.round(np.array([1.25]), 1), a.round(), np.round(np.array([12345], "int64"), -2))
 print(np.clip(a, 2, 5), a.clip(0, 1), np.clip([1, 5], np.array([2, 2]), 4), np.clip(9, 0, 3))

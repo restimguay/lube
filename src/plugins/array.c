@@ -825,7 +825,7 @@ FN(f_tile) {
         lube->release(keep);
         return lube->error(vm, "tile(): too many dimensions");
     }
-    int64_t shape[ARR_MAXDIM], r2[ARR_MAXDIM], s2[ARR_MAXDIM], st[ARR_MAXDIM];
+    int64_t shape[ARR_MAXDIM] = {0}, r2[ARR_MAXDIM], s2[ARR_MAXDIM], st[ARR_MAXDIM];
     for (int d = 0; d < nd; d++) {
         int ad = a->ndim - nd + d, rd = nr - nd + d;
         s2[d] = ad >= 0 ? a->shape[ad] : 1;
@@ -1665,8 +1665,8 @@ FN(f_unique) {
     int want_index = opt_bool(vm, opts, "return_index", 0), want_inverse = opt_bool(vm, opts, "return_inverse", 0),
         want_counts = opt_bool(vm, opts, "return_counts", 0);
     int64_t n = a->size;
-    double *kd = (double *)malloc(sizeof(double) * (size_t)(n + 1));
-    int64_t *ki = (int64_t *)malloc(sizeof(int64_t) * (size_t)(n + 1)), *idx = (int64_t *)malloc(sizeof(int64_t) * (size_t)(n + 1)),
+    double *kd = (double *)calloc((size_t)(n + 1), sizeof(double));  /* (zeroed: the one not used is read too, gcc thinks) */
+    int64_t *ki = (int64_t *)calloc((size_t)(n + 1), sizeof(int64_t)), *idx = (int64_t *)malloc(sizeof(int64_t) * (size_t)(n + 1)),
             *tmp = (int64_t *)malloc(sizeof(int64_t) * (size_t)(n + 1));
     if (!kd || !ki || !idx || !tmp) abort();  /* LCOV_EXCL_LINE: out of memory */
     int is_int = !IS_FLOAT(a->dtype);

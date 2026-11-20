@@ -38,8 +38,9 @@ static void blas_open(void) {
         for (size_t i = 0; i < sizeof names / sizeof names[0] && !blas_dgemm; i++) {
             HMODULE h = LoadLibraryA(names[i]);
             if (!h) continue;
-            *(FARPROC *)&blas_dgemm = GetProcAddress(h, "cblas_dgemm");
-            *(FARPROC *)&blas_sgemm = GetProcAddress(h, "cblas_sgemm");
+            FARPROC d = GetProcAddress(h, "cblas_dgemm"), s = GetProcAddress(h, "cblas_sgemm");
+            memcpy(&blas_dgemm, &d, sizeof d);  /* (a function pointer of another type: copied, not cast) */
+            memcpy(&blas_sgemm, &s, sizeof s);
             blas_name = "OpenBLAS";
         }
 #else
