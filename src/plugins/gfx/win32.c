@@ -96,7 +96,7 @@ static LRESULT CALLBACK w32_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_SYSKEYUP:
         e.kind = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN ? LUBE_GFX_KEY_DOWN : LUBE_GFX_KEY_UP;
         e.key = vk_key(wp);
-        e.repeat = e.kind == LUBE_GFX_KEY_DOWN && (lp >> 30) & 1;
+        e.repeat = e.kind == LUBE_GFX_KEY_DOWN && ((lp >> 30) & 1);
         if (e.key) push_event(w, &e);
         if (msg == WM_SYSKEYDOWN && wp == VK_F4) break;  /* (alt-F4 still closes it) */
         return 0;

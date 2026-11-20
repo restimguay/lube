@@ -266,7 +266,7 @@ static void none_pump(Win *w) { (void)w; }
 static void none_present(Win *w) { (void)w; }
 static void none_close(Win *w) { (void)w; }
 static void none_title(Win *w, const char *title) { (void)w, (void)title; }
-static const Backend NONE = {none_open, none_pump, none_present, none_close, none_title};
+static const Backend NONE_BACKEND = {none_open, none_pump, none_present, none_close, none_title};
 
 /* ---------- a host program's surface (lube_gfx.h) ---------- */
 
@@ -359,7 +359,7 @@ static void host_close(Win *w) {
     if (h.closed) h.closed(h.user);
 }
 
-static const Backend HOST = {host_open, host_pump, host_present, host_close, none_title};
+static const Backend HOST_BACKEND = {host_open, host_pump, host_present, host_close, none_title};
 
 /* ---------- the system's own ---------- */
 
@@ -419,7 +419,8 @@ static LubeValue new_image(LubeVM *vm, int w, int h, Canvas **out) {
     Canvas *c = (Canvas *)data;
     c->w = w;
     c->h = h;
-    c->px = (uint32_t *)calloc((size_t)w * (size_t)h ? (size_t)w * (size_t)h : 1, sizeof(uint32_t));
+    size_t n = (size_t)w * (size_t)h;
+    c->px = (uint32_t *)calloc(n ? n : 1, sizeof(uint32_t));
     if (!c->px) abort();  /* LCOV_EXCL_LINE: out of memory */
     if (out) *out = c;
     return v;
@@ -849,7 +850,7 @@ FN(f_window) {
     if (!(scale >= 1 && scale <= 16)) return lube->error(vm, "window(): its scale is from 1 to 16");
     if (active) return lube->error(vm, "window(): there is a window open already (one at a time: close it first)");
     const char *want = getenv("LUBE_GFX");
-    const Backend *be = want && !strcmp(want, "none") ? &NONE : have_host ? &HOST : NULL;
+    const Backend *be = want && !strcmp(want, "none") ? &NONE_BACKEND : have_host ? &HOST_BACKEND : NULL;
 #if GFX_SYSTEM == 1
     if (!be) be = &WIN32_BACKEND;
 #elif GFX_SYSTEM == 2
