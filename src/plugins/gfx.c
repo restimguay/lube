@@ -5,7 +5,8 @@
  *   let win = window(320, 180, "Game", 3)    a window of 320 by 180 pixels, shown 3 times as large
  *   let ship = load_image("ship.png")        an Image (PNG); image(w, h) a blank one
  *   while win.is_open() {
- *     for e in win.events() { ... }          {kind: "key_down", key: "left"}, mouse, touch, ...
+ *     for e in win.events() { ... }          {kind: "key_down", key: "left"}, mouse, touch, controllers...
+ *     if win.pad(0).a { ... }                a game controller, held now (win.pads(): those connected)
  *     win.clear(rgb(10, 10, 30))
  *     win.draw(ship, x, y, {rotate: 90})     also rect, fill_rect, line, circle, text, ...
  *     win.present()                          shows it, 60 times a second
@@ -17,6 +18,8 @@
  * system has, loaded when the first window opens: Win32 (gfx/win32.c),
  * Cocoa (gfx/cocoa.c), X11 (gfx/x11.c); or on a host program's surface
  * (lube_gfx.h: the phone templates in mobile/); or nowhere (LUBE_GFX=none).
+ * Game controllers come from the same: XInput, GameController, the Linux
+ * kernel's (gfx/evdev.c), or the host's.
  */
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -97,25 +100,47 @@ static int key_named(const char *name) {
 }
 
 static const char *const EVENT_NAMES[] = {"", "key_down", "key_up", "text", "mouse_move", "mouse_down", "mouse_up", "wheel",
-                                          "touch_down", "touch_move", "touch_up", "focus", "blur", "close"};
+                                          "touch_down", "touch_move", "touch_up", "focus", "blur", "close",
+                                          "pad_connected", "pad_disconnected", "pad_down", "pad_up", "pad_axis"};
+
+/* Game controllers: buttons named by where they are (a bottom, b right, x left, y top: as on an Xbox's). */
+static const char *const PAD_BUTTONS[] = {
+    "unknown", "a", "b", "x", "y", "left_shoulder", "right_shoulder", "left_trigger", "right_trigger",
+    "back", "start", "guide", "left_stick", "right_stick", "up", "down", "left", "right",
+};
+#define PAD_BUTTON_COUNT ((int)(sizeof PAD_BUTTONS / sizeof PAD_BUTTONS[0]))
+enum { P_A = 1, P_B, P_X, P_Y, P_LEFT_SHOULDER, P_RIGHT_SHOULDER, P_LEFT_TRIGGER, P_RIGHT_TRIGGER, P_BACK, P_START, P_GUIDE,
+       P_LEFT_STICK, P_RIGHT_STICK, P_UP, P_DOWN, P_LEFT, P_RIGHT };
+static const char *const PAD_AXES[] = {"left_x", "left_y", "right_x", "right_y", "left_trigger", "right_trigger"};
+enum { A_LEFT_X, A_LEFT_Y, A_RIGHT_X, A_RIGHT_Y, A_LEFT_TRIGGER, A_RIGHT_TRIGGER, AXIS_COUNT };
+#define MAX_PADS 8
+#define STICK_DEAD 0.2  /* (a stick at rest is never quite still) */
+
+static int named(const char *const *names, int from, int count, const char *name) {
+    for (int i = from; i < count; i++)
+        if (!strcmp(names[i], name)) return i;
+    return -1;
+}
 
 typedef struct {
     int kind;            /* LUBE_GFX_... */
     int key, button, id, repeat;
     double x, y, dx, dy;
     char text[16];
+    char name[48];       /* PAD_CONNECTED: the controller's */
 } Event;
 
-/* Typed text into e: as much as fits, ending where a character does. */
-static void set_text(Event *e, const char *t) {
+/* Text into a field of size bytes: as much as fits, ending where a character does. */
+static void copy_text(char *to, size_t size, const char *t) {
     size_t n = strlen(t);
-    if (n >= sizeof e->text) {
-        n = sizeof e->text - 1;
+    if (n >= size) {
+        n = size - 1;
         while (n > 0 && ((unsigned char)t[n] & 0xC0) == 0x80) n--;
     }
-    memcpy(e->text, t, n);
-    e->text[n] = '\0';
+    memcpy(to, t, n);
+    to[n] = '\0';
 }
+#define set_text(e, t) copy_text((e)->text, sizeof (e)->text, (t))
 
 typedef struct Win Win;
 typedef struct {
@@ -124,7 +149,16 @@ typedef struct {
     void (*present)(Win *w);    /* shows w->c */
     void (*close)(Win *w);
     void (*title)(Win *w, const char *title);
+    void (*fullscreen)(Win *w, int on);  /* (NULL: nothing to do, as on a phone) */
+    void (*cursor)(Win *w, int shown);
 } Backend;
+
+typedef struct {
+    int connected;
+    char name[48];
+    unsigned buttons;           /* 1 << P_... */
+    double axes[AXIS_COUNT];    /* as the controller has them: sticks -1 to 1, triggers 0 to 1 */
+} Pad;
 
 struct Win {
     Canvas c;
@@ -136,6 +170,8 @@ struct Win {
     double mx, my;
     int buttons;                /* 1 left, 2 right, 4 middle */
     int primary;                /* the touch that is also the mouse, or -1 */
+    int fullscreen, cursor_hidden;
+    Pad pads[MAX_PADS];
     Event *q;
     int nq, capq;
 };
@@ -206,6 +242,62 @@ static void closed_by_user(Win *w) {
     if (active == w) active = NULL;
 }
 
+/* ---------- game controllers: what the system (or the host) says, as events and as what is held now ---------- */
+
+static void pad_event(Win *w, int kind, int i, int button, const char *name) {
+    Event e;
+    memset(&e, 0, sizeof e);
+    e.kind = kind;
+    e.id = i;
+    e.button = button;
+    if (name) copy_text(e.name, sizeof e.name, name);
+    enqueue(w, &e);
+}
+
+static void pad_connect(Win *w, int i, const char *name) {
+    Pad *p = &w->pads[i];
+    if (p->connected) return;
+    memset(p, 0, sizeof *p);
+    p->connected = 1;
+    copy_text(p->name, sizeof p->name, name && name[0] ? name : "controller");
+    pad_event(w, LUBE_GFX_PAD_CONNECTED, i, 0, p->name);
+}
+
+static void pad_disconnect(Win *w, int i) {
+    if (!w->pads[i].connected) return;
+    memset(&w->pads[i], 0, sizeof w->pads[i]);
+    pad_event(w, LUBE_GFX_PAD_DISCONNECTED, i, 0, NULL);
+}
+
+static void pad_button(Win *w, int i, int b, int down) {
+    Pad *p = &w->pads[i];
+    pad_connect(w, i, NULL);  /* (a controller heard from is there) */
+    if ((int)(p->buttons >> b & 1) == down) return;
+    p->buttons ^= 1u << b;
+    pad_event(w, down ? LUBE_GFX_PAD_DOWN : LUBE_GFX_PAD_UP, i, b, NULL);
+}
+
+static void pad_axis(Win *w, int i, int a, double v) {
+    Pad *p = &w->pads[i];
+    pad_connect(w, i, NULL);
+    double lo = a >= A_LEFT_TRIGGER ? 0 : -1;
+    p->axes[a] = v != v ? 0 : v < lo ? lo : v > 1 ? 1 : v;
+    if (a >= A_LEFT_TRIGGER) {  /* a trigger is a button too: down past half way, up again below 0.4 (no flicker) */
+        int b = a == A_LEFT_TRIGGER ? P_LEFT_TRIGGER : P_RIGHT_TRIGGER, held = (int)(p->buttons >> b & 1);
+        if (!held && p->axes[a] > 0.5) pad_button(w, i, b, 1);
+        if (held && p->axes[a] < 0.4) pad_button(w, i, b, 0);
+    }
+}
+
+#if GFX_SYSTEM == 1 || GFX_SYSTEM == 2
+/* A controller asked for its state (XInput, GameController): events for what changed since. */
+static void pad_state(Win *w, int i, unsigned buttons, const double *axes) {
+    for (int b = 1; b < PAD_BUTTON_COUNT; b++)
+        if (b != P_LEFT_TRIGGER && b != P_RIGHT_TRIGGER) pad_button(w, i, b, (int)(buttons >> b & 1));
+    for (int a = 0; a < AXIS_COUNT; a++) pad_axis(w, i, a, axes[a]);
+}
+#endif
+
 void lube_gfx_fit(int w, int h, int sw, int sh, double *x, double *y, double *scale) {
     double s = w > 0 && h > 0 ? fmin((double)sw / w, (double)sh / h) : 1;
     if (s >= 1) s = floor(s);  /* (whole pixels where they fit: sharp) */
@@ -266,7 +358,7 @@ static void none_pump(Win *w) { (void)w; }
 static void none_present(Win *w) { (void)w; }
 static void none_close(Win *w) { (void)w; }
 static void none_title(Win *w, const char *title) { (void)w, (void)title; }
-static const Backend NONE_BACKEND = {none_open, none_pump, none_present, none_close, none_title};
+static const Backend NONE_BACKEND = {none_open, none_pump, none_present, none_close, none_title, NULL, NULL};
 
 /* ---------- a host program's surface (lube_gfx.h) ---------- */
 
@@ -292,20 +384,30 @@ void lube_gfx_set_host(const LubeGfxHost *h) {
 }
 
 void lube_gfx_post(const LubeGfxEvent *in) {
-    if (in->kind < LUBE_GFX_KEY_DOWN || in->kind > LUBE_GFX_CLOSE) return;  /* (none Lube knows) */
+    if (in->kind < LUBE_GFX_KEY_DOWN || in->kind > LUBE_GFX_PAD_AXIS) return;  /* (none Lube knows) */
     Event e;
     memset(&e, 0, sizeof e);
     e.kind = in->kind;
-    e.key = in->key ? key_named(in->key) : 0;
-    if ((e.kind == LUBE_GFX_KEY_DOWN || e.kind == LUBE_GFX_KEY_UP) && !e.key) return;  /* (as the systems': keys with names) */
-    if (in->text) set_text(&e, in->text);
-    e.x = in->x;
-    e.y = in->y;
-    e.button = in->button >= 1 && in->button <= 3 ? in->button : 1;
-    e.id = in->id;
-    e.dx = in->dx;
-    e.dy = in->dy;
-    e.repeat = e.kind == LUBE_GFX_KEY_DOWN && in->repeat;
+    if (e.kind >= LUBE_GFX_PAD_CONNECTED) {
+        if (in->id < 0 || in->id >= MAX_PADS) return;  /* (a controller Lube has no room for) */
+        e.id = in->id;
+        if (e.kind == LUBE_GFX_PAD_DOWN || e.kind == LUBE_GFX_PAD_UP) e.button = in->key ? named(PAD_BUTTONS, 1, PAD_BUTTON_COUNT, in->key) : -1;
+        if (e.kind == LUBE_GFX_PAD_AXIS) e.button = in->key ? named(PAD_AXES, 0, AXIS_COUNT, in->key) : -1;
+        if (e.button < 0) return;  /* (a button or an axis without a name Lube knows) */
+        if (e.kind == LUBE_GFX_PAD_CONNECTED && in->text) copy_text(e.name, sizeof e.name, in->text);
+        e.x = in->value;
+    } else {
+        e.key = in->key ? key_named(in->key) : 0;
+        if ((e.kind == LUBE_GFX_KEY_DOWN || e.kind == LUBE_GFX_KEY_UP) && !e.key) return;  /* (as the systems': keys with names) */
+        if (in->text) set_text(&e, in->text);
+        e.x = in->x;
+        e.y = in->y;
+        e.button = in->button >= 1 && in->button <= 3 ? in->button : 1;
+        e.id = in->id;
+        e.dx = in->dx;
+        e.dy = in->dy;
+        e.repeat = e.kind == LUBE_GFX_KEY_DOWN && in->repeat;
+    }
     HOST_LOCK();
     if (nposted == capposted) {
         capposted = capposted ? capposted * 2 : 64;
@@ -326,6 +428,24 @@ static const char *host_open(Win *w, const char *title, int scale) {
     return NULL;
 }
 
+/* What the host posted, on the program's thread. */
+static void apply_posted(Win *w, const Event *e) {
+    switch (e->kind) {
+    case LUBE_GFX_CLOSE: closed_by_user(w); break;
+    case LUBE_GFX_PAD_CONNECTED: pad_connect(w, e->id, e->name); break;
+    case LUBE_GFX_PAD_DISCONNECTED: pad_disconnect(w, e->id); break;
+    case LUBE_GFX_PAD_DOWN:
+    case LUBE_GFX_PAD_UP:
+        if (e->button == P_LEFT_TRIGGER || e->button == P_RIGHT_TRIGGER)  /* (a trigger is its axis: all or nothing) */
+            pad_axis(w, e->id, e->button == P_LEFT_TRIGGER ? A_LEFT_TRIGGER : A_RIGHT_TRIGGER, e->kind == LUBE_GFX_PAD_DOWN);
+        else
+            pad_button(w, e->id, e->button, e->kind == LUBE_GFX_PAD_DOWN);
+        break;
+    case LUBE_GFX_PAD_AXIS: pad_axis(w, e->id, e->button, e->x); break;
+    default: push_event(w, e); break;
+    }
+}
+
 static void host_pump(Win *w) {
     HOST_LOCK();
     LubeGfxHost h = host;
@@ -337,10 +457,7 @@ static void host_pump(Win *w) {
     if (n) memcpy(got, posted, sizeof(Event) * (size_t)n);
     nposted = 0;
     HOST_UNLOCK();
-    for (int i = 0; i < n && w->open; i++) {
-        if (got[i].kind == LUBE_GFX_CLOSE) closed_by_user(w);
-        else push_event(w, &got[i]);
-    }
+    for (int i = 0; i < n && w->open; i++) apply_posted(w, &got[i]);
     free(got);
 }
 
@@ -359,7 +476,7 @@ static void host_close(Win *w) {
     if (h.closed) h.closed(h.user);
 }
 
-static const Backend HOST_BACKEND = {host_open, host_pump, host_present, host_close, none_title};
+static const Backend HOST_BACKEND = {host_open, host_pump, host_present, host_close, none_title, NULL, NULL};
 
 /* ---------- the system's own ---------- */
 
@@ -936,6 +1053,15 @@ FN(m_events) {
             event_field(vm, o, "y", e->y);
             if (e->kind == LUBE_GFX_MOUSE_DOWN || e->kind == LUBE_GFX_MOUSE_UP) event_field(vm, o, "button", e->button);
             break;
+        case LUBE_GFX_PAD_CONNECTED:
+        case LUBE_GFX_PAD_DISCONNECTED:
+        case LUBE_GFX_PAD_DOWN:
+        case LUBE_GFX_PAD_UP:
+            event_field(vm, o, "pad", e->id);
+            if (e->kind == LUBE_GFX_PAD_CONNECTED) lube->object_set(vm, o, "name", lube->new_str(vm, e->name, strlen(e->name)));
+            if (e->kind >= LUBE_GFX_PAD_DOWN)
+                lube->object_set(vm, o, "button", lube->new_str(vm, PAD_BUTTONS[e->button], strlen(PAD_BUTTONS[e->button])));
+            break;
         default: break;
         }
         lube->list_push(l, o);
@@ -1003,6 +1129,91 @@ FN(m_set_fps) {
     return lube->nothing();
 }
 
+static int bool_arg(LubeVM *vm, const char *fn, LubeValue v, LubeValue *err) {
+    if (lube->kind(v) == LUBE_BOOL) return 1;
+    *err = lube->error(vm, "%s() expects a Bool, got %s", fn, lube->type_name(v));
+    return 0;
+}
+
+/* win.set_fullscreen(on): the whole screen, or a window again. */
+FN(m_set_fullscreen) {
+    (void)argc;
+    LubeValue err;
+    if (!bool_arg(vm, "set_fullscreen", argv[1], &err)) return err;
+    Win *w = window_of(argv[0]);
+    int on = lube->truthy(argv[1]);
+    if (w->open && w->be->fullscreen && on != w->fullscreen) w->be->fullscreen(w, on);
+    w->fullscreen = on;
+    return lube->nothing();
+}
+
+FN(m_is_fullscreen) {
+    (void)vm, (void)argc;
+    return lube->boolean(window_of(argv[0])->fullscreen);
+}
+
+/* win.show_cursor(shown): the mouse's arrow over the window, or none. */
+FN(m_show_cursor) {
+    (void)argc;
+    LubeValue err;
+    if (!bool_arg(vm, "show_cursor", argv[1], &err)) return err;
+    Win *w = window_of(argv[0]);
+    int shown = lube->truthy(argv[1]);
+    if (w->open && w->be->cursor && shown == w->cursor_hidden) w->be->cursor(w, shown);
+    w->cursor_hidden = !shown;
+    return lube->nothing();
+}
+
+/* win.pads(): the numbers of the controllers connected now. */
+FN(m_pads) {
+    (void)argc;
+    const Win *w = window_of(argv[0]);
+    LubeValue l = lube->new_list(vm);
+    for (int i = 0; i < MAX_PADS; i++)
+        if (w->pads[i].connected) lube->list_push(l, lube->number_value(i));
+    return l;
+}
+
+/* A stick's axes, its middle taken out (and from the middle no more than 1). */
+static void stick(const double *xy, double *out) {
+    double m = sqrt(xy[0] * xy[0] + xy[1] * xy[1]);
+    if (m <= STICK_DEAD) {
+        out[0] = out[1] = 0;
+        return;
+    }
+    double k = (m >= 1 ? 1 : (m - STICK_DEAD) / (1 - STICK_DEAD)) / m;
+    out[0] = xy[0] * k;
+    out[1] = xy[1] * k;
+}
+
+/* win.pad(n): controller n now: {connected, name, a, b, ... (each button), left_x, left_y, right_x, right_y, left_trigger,
+ * right_trigger}. */
+FN(m_pad) {
+    (void)argc;
+    double n = lube->kind(argv[1]) == LUBE_NUMBER ? lube->number(argv[1]) : -1;
+    if (!(n >= 0 && n < MAX_PADS && n == floor(n)))
+        return lube->error(vm, "pad(): a controller's number, from 0 to %d (see pads())", MAX_PADS - 1);
+    const Pad *p = &window_of(argv[0])->pads[(int)n];
+    LubeValue o = lube->new_object(vm);
+    lube->object_set(vm, o, "connected", lube->boolean(p->connected));
+    lube->object_set(vm, o, "name", lube->new_str(vm, p->name, strlen(p->name)));
+    for (int b = 1; b < PAD_BUTTON_COUNT; b++)  /* (the triggers: as Numbers, below) */
+        if (b != P_LEFT_TRIGGER && b != P_RIGHT_TRIGGER) lube->object_set(vm, o, PAD_BUTTONS[b], lube->boolean(p->buttons >> b & 1));
+    double sticks[4];
+    stick(p->axes + A_LEFT_X, sticks);
+    stick(p->axes + A_RIGHT_X, sticks + 2);
+    for (int a = 0; a < AXIS_COUNT; a++) event_field(vm, o, PAD_AXES[a], a < 4 ? sticks[a] : p->axes[a]);
+    return o;
+}
+
+/* pad_buttons(): the names controllers' buttons have. */
+FN(f_pad_buttons) {
+    (void)argc, (void)argv;
+    LubeValue l = lube->new_list(vm);
+    for (int i = 1; i < PAD_BUTTON_COUNT; i++) lube->list_push(l, lube->new_str(vm, PAD_BUTTONS[i], strlen(PAD_BUTTONS[i])));
+    return l;
+}
+
 /* ======================================================================
  * The plugin
  * ==================================================================== */
@@ -1037,6 +1248,7 @@ LUBE_PLUGIN(gfx) {
     api->function(plugin, "color", f_color, 1, 1);
     api->function(plugin, "text_size", f_text_size, 1, 2);
     api->function(plugin, "keys", f_keys, 0, 0);
+    api->function(plugin, "pad_buttons", f_pad_buttons, 0, 0);
     ImageType = api->type(plugin, "Image", sizeof(Canvas), image_release, image_describe);
     api->constructor(ImageType, f_image, 2, 3);
     drawing_methods(api, ImageType);
@@ -1051,5 +1263,10 @@ LUBE_PLUGIN(gfx) {
     api->method(WindowType, "mouse", m_mouse, 1, 1);
     api->method(WindowType, "set_title", m_set_title, 2, 2);
     api->method(WindowType, "set_fps", m_set_fps, 2, 2);
+    api->method(WindowType, "set_fullscreen", m_set_fullscreen, 2, 2);
+    api->method(WindowType, "is_fullscreen", m_is_fullscreen, 1, 1);
+    api->method(WindowType, "show_cursor", m_show_cursor, 2, 2);
+    api->method(WindowType, "pads", m_pads, 1, 1);
+    api->method(WindowType, "pad", m_pad, 2, 2);
     return LUBE_PLUGIN_API;
 }

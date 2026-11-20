@@ -17,12 +17,23 @@ set(LUBE_GAME "${CMAKE_CURRENT_SOURCE_DIR}/../game" CACHE PATH "the program's fo
 file(GLOB LUBE_CORE "${LUBE_SRC}/*.c")
 list(FILTER LUBE_CORE EXCLUDE REGEX "/main\\.c$")  # (the lube command's)
 file(GLOB LUBE_PLUGINS "${LUBE_SRC}/plugins/*.c")  # (fs, net, audio, gfx: inside the app)
-file(GLOB GAME_FILES "${LUBE_GAME}/*")
+file(GLOB_RECURSE GAME_FILES RELATIVE "${LUBE_GAME}" "${LUBE_GAME}/*")
+set(GAME_TOP "")
+set(GAME_PATHS "")
+foreach(f ${GAME_FILES})  # (a file in a folder goes in that folder of the app: sounds/pop.wav)
+    list(APPEND GAME_PATHS "${LUBE_GAME}/${f}")
+    get_filename_component(dir "${f}" DIRECTORY)
+    if(dir)
+        set_source_files_properties("${LUBE_GAME}/${f}" PROPERTIES MACOSX_PACKAGE_LOCATION "${dir}")
+    else()
+        list(APPEND GAME_TOP "${LUBE_GAME}/${f}")
+    endif()
+endforeach()
 
-add_executable(LubeApp MACOSX_BUNDLE main.m ${LUBE_CORE} ${LUBE_PLUGINS} ${GAME_FILES})
+add_executable(LubeApp MACOSX_BUNDLE main.m ${LUBE_CORE} ${LUBE_PLUGINS} ${GAME_PATHS})
 set_target_properties(LubeApp PROPERTIES
     C_STANDARD 99
-    RESOURCE "${GAME_FILES}"
+    RESOURCE "${GAME_TOP}"
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in"
     MACOSX_BUNDLE_GUI_IDENTIFIER "dev.lube.app"  # (your own, for an app of your own)
     MACOSX_BUNDLE_BUNDLE_NAME "Lube"
@@ -34,4 +45,5 @@ set_target_properties(LubeApp PROPERTIES
 target_compile_definitions(LubeApp PRIVATE LUBE_STATIC_PLUGINS)
 target_include_directories(LubeApp PRIVATE "${LUBE_SRC}")
 target_compile_options(LubeApp PRIVATE $<$<COMPILE_LANGUAGE:OBJC>:-fobjc-arc>)
-target_link_libraries(LubeApp PRIVATE "-framework UIKit" "-framework QuartzCore" "-framework CoreGraphics" "-framework Foundation")
+target_link_libraries(LubeApp PRIVATE "-framework UIKit" "-framework QuartzCore" "-framework CoreGraphics" "-framework Foundation"
+    "-framework GameController")

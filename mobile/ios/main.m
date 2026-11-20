@@ -5,11 +5,13 @@
  * own, and shows its window (gfx) on the screen: as large as fits, in whole
  * pixels where it can, black around it. Touches go to the program as touch
  * events (the first finger as the mouse too); a hardware keyboard's keys as
- * key events. What it prints goes to Xcode's console.
+ * key events; game controllers as controllers. What it prints goes to
+ * Xcode's console.
  *
  * Each frame the program presents becomes an image the main thread puts on
  * a layer (only the latest, if the main thread is behind).
  */
+#import <GameController/GameController.h>
 #import <UIKit/UIKit.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -18,6 +20,7 @@
 #include "lube_gfx.h"
 
 static _Atomic int win_w, win_h;  /* the program's window (0 when none is open) */
+static _Atomic int pads_again;    /* a window opened: every controller is said to be there again */
 static CALayer *canvas;           /* (the main thread's) */
 static UIView *screen;
 static pthread_mutex_t frame_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -62,7 +65,71 @@ static void opened(void *user, int width, int height, const char *title) {
     (void)user, (void)title;
     win_w = width;
     win_h = height;
+    pads_again = 1;
     dispatch_async(dispatch_get_main_queue(), ^{ [screen setNeedsLayout]; });
+}
+
+/* ---- game controllers: GameController's, asked for their state each time the screen draws (the main thread) ---- */
+
+#define MAX_PADS 8
+static GCController *pads[MAX_PADS];
+static unsigned pads_held[MAX_PADS];
+static float pads_axes[MAX_PADS][6];
+
+static void post_pad(int kind, int i, const char *key, const char *text, double value) {
+    LubeGfxEvent e;
+    memset(&e, 0, sizeof e);
+    e.kind = kind;
+    e.id = i;
+    e.key = key;
+    e.text = text;
+    e.value = value;
+    lube_gfx_post(&e);
+}
+
+static void poll_pads(void) {
+    static const char *const buttons[] = {"a", "b", "x", "y", "left_shoulder", "right_shoulder", "back", "start", "guide",
+                                          "left_stick", "right_stick", "up", "down", "left", "right"};
+    static const char *const axes[] = {"left_x", "left_y", "right_x", "right_y", "left_trigger", "right_trigger"};
+    if (atomic_exchange(&pads_again, 0))
+        for (int i = 0; i < MAX_PADS; i++) pads[i] = nil;
+    BOOL seen[MAX_PADS] = {NO};
+    for (GCController *c in GCController.controllers) {
+        GCExtendedGamepad *g = c.extendedGamepad;
+        if (!g) continue;  /* (a remote: not a game controller's buttons) */
+        int i = 0;
+        while (i < MAX_PADS && pads[i] != c) i++;
+        if (i == MAX_PADS) {  /* a new one: the first free number */
+            for (i = 0; i < MAX_PADS && pads[i]; i++) continue;
+            if (i == MAX_PADS) continue;
+            pads[i] = c;
+            pads_held[i] = 0;
+            memset(pads_axes[i], 0, sizeof pads_axes[i]);
+            post_pad(LUBE_GFX_PAD_CONNECTED, i, NULL, c.vendorName.UTF8String, 0);
+        }
+        seen[i] = YES;
+        GCControllerButtonInput *const input[] = {g.buttonA, g.buttonB, g.buttonX, g.buttonY, g.leftShoulder, g.rightShoulder,
+                                                  g.buttonOptions, g.buttonMenu, g.buttonHome, g.leftThumbstickButton,
+                                                  g.rightThumbstickButton, g.dpad.up, g.dpad.down, g.dpad.left, g.dpad.right};
+        unsigned held = 0;
+        for (int b = 0; b < 15; b++)
+            if (input[b].pressed) held |= 1u << b;
+        for (int b = 0; b < 15; b++)
+            if ((held ^ pads_held[i]) >> b & 1) post_pad(held >> b & 1 ? LUBE_GFX_PAD_DOWN : LUBE_GFX_PAD_UP, i, buttons[b], NULL, 0);
+        pads_held[i] = held;
+        float now[6] = {g.leftThumbstick.xAxis.value, -g.leftThumbstick.yAxis.value,  /* (GameController's y: up is more) */
+                        g.rightThumbstick.xAxis.value, -g.rightThumbstick.yAxis.value, g.leftTrigger.value, g.rightTrigger.value};
+        for (int a = 0; a < 6; a++)
+            if (now[a] != pads_axes[i][a]) {
+                pads_axes[i][a] = now[a];
+                post_pad(LUBE_GFX_PAD_AXIS, i, axes[a], NULL, now[a]);
+            }
+    }
+    for (int i = 0; i < MAX_PADS; i++)
+        if (pads[i] && !seen[i]) {
+            pads[i] = nil;
+            post_pad(LUBE_GFX_PAD_DISCONNECTED, i, NULL, NULL, 0);
+        }
 }
 
 static void closed(void *user) {
@@ -206,6 +273,14 @@ static const char *key_name(long code) {
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
     [self becomeFirstResponder];
+}
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    [[CADisplayLink displayLinkWithTarget:self selector:@selector(tick:)] addToRunLoop:NSRunLoop.mainRunLoop
+                                                                              forMode:NSRunLoopCommonModes];
+}
+- (void)tick:(CADisplayLink *)link {
+    if (win_w) poll_pads();  /* (only for a window: what comes before one is not for it) */
 }
 
 - (BOOL)postKeys:(NSSet<UIPress *> *)presses down:(BOOL)down {

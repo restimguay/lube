@@ -5,9 +5,12 @@
  * libX11, opened when the first window opens, so that building Lube needs no
  * X headers and a server without X still loads the plugin. Its types, the
  * few used here, are declared here (they have not changed in decades). Each
- * frame is fitted to the window's size and put with XPutImage.
+ * frame is fitted to the window's size and put with XPutImage. Game
+ * controllers are the kernel's (evdev.c).
  */
 #include <dlfcn.h>
+
+#include "evdev.c"
 
 typedef struct XDisplay Display;
 typedef struct XVisual Visual;
@@ -59,6 +62,12 @@ typedef union {
     long pad[24];
 } XEvent;
 
+typedef struct {
+    unsigned long pixel;
+    unsigned short red, green, blue;
+    char flags, pad;
+} XColor;
+
 typedef struct XImage {
     int width, height, xoffset, format;
     char *data;
@@ -98,6 +107,13 @@ static int (*x_flush)(Display *d);
 static int (*x_destroy)(Display *d, XID w);
 static int (*x_close)(Display *d);
 static int (*x_detectable_repeat)(Display *d, int detectable, int *supported);
+static int (*x_send_event)(Display *d, XID w, int propagate, long mask, XEvent *e);
+static XID (*x_create_bitmap)(Display *d, XID drawable, const char *data, unsigned w, unsigned h);
+static XID (*x_create_pixmap_cursor)(Display *d, XID source, XID mask, XColor *fg, XColor *bg, unsigned x, unsigned y);
+static int (*x_free_pixmap)(Display *d, XID pixmap);
+static int (*x_define_cursor)(Display *d, XID w, XID cursor);
+static int (*x_undefine_cursor)(Display *d, XID w);
+static int (*x_free_cursor)(Display *d, XID cursor);
 
 static int x_symbol(void *lib, const char *name, void *fn, size_t size) {
     void *sym = dlsym(lib, name);
@@ -118,18 +134,25 @@ static int x_load(void) {
              XSYM(x_free_gc, "XFreeGC") && XSYM(x_create_image, "XCreateImage") && XSYM(x_put_image, "XPutImage") &&
              XSYM(x_pending, "XPending") && XSYM(x_next_event, "XNextEvent") && XSYM(x_lookup_string, "XLookupString") &&
              XSYM(x_lookup_keysym, "XLookupKeysym") && XSYM(x_flush, "XFlush") && XSYM(x_destroy, "XDestroyWindow") &&
-             XSYM(x_close, "XCloseDisplay") && XSYM(x_detectable_repeat, "XkbSetDetectableAutoRepeat");
+             XSYM(x_close, "XCloseDisplay") && XSYM(x_detectable_repeat, "XkbSetDetectableAutoRepeat") &&
+             XSYM(x_send_event, "XSendEvent") && XSYM(x_create_bitmap, "XCreateBitmapFromData") &&
+             XSYM(x_create_pixmap_cursor, "XCreatePixmapCursor") && XSYM(x_free_pixmap, "XFreePixmap") &&
+             XSYM(x_define_cursor, "XDefineCursor") && XSYM(x_undefine_cursor, "XUndefineCursor") &&
+             XSYM(x_free_cursor, "XFreeCursor");
     loaded = ok ? 1 : -1;
     return ok;
 }
 
 typedef struct {
     Display *d;
-    XID win, wm_delete, net_name, utf8;
+    XID root, win, wm_delete, net_name, utf8, net_state, net_fullscreen;
+    XID blank;      /* the cursor that is none (0 until it is wanted) */
     GC gc;
     Visual *visual;
     int depth, sw, sh;
+    int mapped;     /* shown (a window manager takes fullscreen from a message only then) */
     XImage *image;  /* the frame, fitted to the window */
+    Evdev pads;
 } X;
 
 /* An X keysym, as a key. */
@@ -198,19 +221,23 @@ static const char *x11_open(Win *w, const char *title, int scale) {
         return "this display's pixels are not 24-bit color (as nearly every display's are)";
     }
     unsigned long black = x_black(s->d, screen);
-    s->win = x_create(s->d, x_root(s->d, screen), 0, 0, (unsigned)s->sw, (unsigned)s->sh, 0, black, black);
+    s->root = x_root(s->d, screen);
+    s->win = x_create(s->d, s->root, 0, 0, (unsigned)s->sw, (unsigned)s->sh, 0, black, black);
     x_select(s->d, s->win, 1L | 2L | 4L | 8L | (1L << 6) | (1L << 15) | (1L << 17) | (1L << 21));
     /* (keys, buttons, motion, exposure, structure, focus) */
     s->wm_delete = x_atom(s->d, "WM_DELETE_WINDOW", 0);
     x_protocols(s->d, s->win, &s->wm_delete, 1);
     s->net_name = x_atom(s->d, "_NET_WM_NAME", 0);
     s->utf8 = x_atom(s->d, "UTF8_STRING", 0);
+    s->net_state = x_atom(s->d, "_NET_WM_STATE", 0);
+    s->net_fullscreen = x_atom(s->d, "_NET_WM_STATE_FULLSCREEN", 0);
     x_store_name(s->d, s->win, title);
     x_change_property(s->d, s->win, s->net_name, s->utf8, 8, 0, (const unsigned char *)title, (int)strlen(title));
     x_detectable_repeat(s->d, 1, NULL);  /* (a held key: presses, not press and release over and over) */
     s->gc = x_create_gc(s->d, s->win, 0, NULL);
     x_map(s->d, s->win);
     x_flush(s->d);
+    ev_open(&s->pads);
     w->sys = s;
     return NULL;
 }
@@ -280,6 +307,7 @@ static void x11_pump(Win *w) {
         case 9: push_simple(w, LUBE_GFX_FOCUS, 0, 0, 0); break;
         case 10: push_simple(w, LUBE_GFX_BLUR, 0, 0, 0); break;
         case 12: x11_blit(w); break;  /* exposed: the last frame again */
+        case 19: s->mapped = 1; break;
         case 22:
             s->sw = ev.configure.width;
             s->sh = ev.configure.height;
@@ -290,6 +318,45 @@ static void x11_pump(Win *w) {
         default: break;
         }
     }
+    if (w->open) ev_poll(&s->pads, w);
+}
+
+/* Fullscreen, by asking the window manager (as every desktop's does, the EWMH way). */
+static void x11_fullscreen(Win *w, int on) {
+    X *s = (X *)w->sys;
+    if (!s->mapped) {  /* (not managed yet: as a property, which it reads when it takes the window) */
+        x_change_property(s->d, s->win, s->net_state, 4 /* ATOM */, 32, 0, (const unsigned char *)&s->net_fullscreen, on ? 1 : 0);
+    } else {
+        XEvent e;
+        memset(&e, 0, sizeof e);
+        e.client.type = 33;  /* ClientMessage */
+        e.client.window = s->win;
+        e.client.message_type = s->net_state;
+        e.client.format = 32;
+        e.client.data.l[0] = on ? 1 : 0;  /* add, or remove */
+        e.client.data.l[1] = (long)s->net_fullscreen;
+        e.client.data.l[3] = 1;  /* (from a program) */
+        x_send_event(s->d, s->root, 0, (1L << 19) | (1L << 20), &e);  /* (substructure notify and redirect) */
+    }
+    x_flush(s->d);
+}
+
+static void x11_cursor(Win *w, int shown) {
+    X *s = (X *)w->sys;
+    if (shown) {
+        x_undefine_cursor(s->d, s->win);
+    } else {
+        if (!s->blank) {  /* a cursor of one pixel, all of it see-through */
+            static const char none[1] = {0};
+            XColor black;
+            memset(&black, 0, sizeof black);
+            XID pixmap = x_create_bitmap(s->d, s->win, none, 1, 1);
+            s->blank = x_create_pixmap_cursor(s->d, pixmap, pixmap, &black, &black, 0, 0);
+            x_free_pixmap(s->d, pixmap);
+        }
+        x_define_cursor(s->d, s->win, s->blank);
+    }
+    x_flush(s->d);
 }
 
 static void x11_blit(Win *w) {
@@ -317,7 +384,9 @@ static void x11_present(Win *w) {
 
 static void x11_close(Win *w) {
     X *s = (X *)w->sys;
+    ev_close(&s->pads);
     if (s->image) s->image->f.destroy_image(s->image);
+    if (s->blank) x_free_cursor(s->d, s->blank);
     x_free_gc(s->d, s->gc);
     x_destroy(s->d, s->win);
     x_close(s->d);
@@ -332,4 +401,4 @@ static void x11_title(Win *w, const char *title) {
     x_flush(s->d);
 }
 
-static const Backend X11 = {x11_open, x11_pump, x11_present, x11_close, x11_title};
+static const Backend X11 = {x11_open, x11_pump, x11_present, x11_close, x11_title, x11_fullscreen, x11_cursor};

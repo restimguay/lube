@@ -45,6 +45,10 @@ static long get_long(id o, const char *s) { return SEND(long (*)(id, SEL))(o, ob
 static unsigned get_ushort(id o, const char *s) { return SEND(unsigned short (*)(id, SEL))(o, objc_sel(s)); }
 static unsigned long get_ulong(id o, const char *s) { return SEND(unsigned long (*)(id, SEL))(o, objc_sel(s)); }
 static double get_double(id o, const char *s) { return SEND(double (*)(id, SEL))(o, objc_sel(s)); }
+static double get_float(id o, const char *s) { return SEND(float (*)(id, SEL))(o, objc_sel(s)); }
+static int responds(id o, const char *s) {
+    return SEND(signed char (*)(id, SEL, SEL))(o, objc_sel("respondsToSelector:"), objc_sel(s)) != 0;
+}
 static CPoint get_point(id o, const char *s) { return SEND(CPoint(*)(id, SEL))(o, objc_sel(s)); }
 static CRect get_rect(id o, const char *s) {
 #if defined(__x86_64__)
@@ -97,7 +101,13 @@ typedef struct {
     int bw, bh;
     int focused;
     unsigned long flags;   /* the modifier keys down */
+    int fs_want;           /* fullscreen as last asked for, */
+    double fs_since;       /* since when (0: not on its way: the window's own says) */
+    int cursor_hidden;
+    id pads[MAX_PADS];     /* each controller's GCController, or NULL */
 } Cocoa;
+
+#define FULLSCREEN_MASK (1ul << 14)  /* (NSWindowStyleMaskFullScreen) */
 
 /* macOS's key codes (kVK_...), as keys. */
 static int mac_key(unsigned code) {
@@ -179,6 +189,7 @@ static const char *cocoa_open(Win *w, const char *title, int scale) {
         send_id(objc_class("NSWindow"), "alloc"), objc_sel("initWithContentRect:styleMask:backing:defer:"), r,
         1 | 2 | 4 | 8 /* titled, closable, miniaturizable, resizable */, 2 /* buffered */, 0);
     send_bool(s->win, "setReleasedWhenClosed:", 0);
+    SEND(void (*)(id, SEL, unsigned long))(s->win, objc_sel("setCollectionBehavior:"), 1ul << 7);  /* (can be fullscreen) */
     send_obj(s->win, "setTitle:", ns_string(title));
     send_obj(s->win, "setBackgroundColor:", send_id(objc_class("NSColor"), "blackColor"));
     send_void(s->win, "center");
@@ -205,6 +216,63 @@ static void cocoa_mouse(Win *w, id ev, int kind, int button) {
     e.button = button;
     to_window(w, p.x, b.h - p.y, (int)b.w, (int)b.h, &e.x, &e.y);  /* (Cocoa's y goes up) */
     push_event(w, &e);
+}
+
+/* ---- game controllers: GameController's, asked for their state each time ---- */
+
+static unsigned gc_pressed(id parent, const char *element) {  /* (some elements are newer than some macOS) */
+    id e = parent && responds(parent, element) ? send_id(parent, element) : NULL;
+    return e && get_bool(e, "isPressed") ? 1u : 0u;
+}
+
+static double gc_value(id parent, const char *element, const char *axis) {
+    id e = send_id(parent, element);
+    if (e && axis) e = send_id(e, axis);
+    return e ? get_float(e, "value") : 0;
+}
+
+static void cocoa_pads(Win *w) {
+    static int loaded;  /* (GameController: opened when the first window asks) */
+    if (!loaded)
+        loaded = dlopen("/System/Library/Frameworks/GameController.framework/GameController", RTLD_LAZY | RTLD_GLOBAL) &&
+                         objc_class("GCController") ? 1 : -1;
+    if (loaded < 0) return;
+    Cocoa *s = (Cocoa *)w->sys;
+    id list = send_id(objc_class("GCController"), "controllers");
+    unsigned long n = list ? get_ulong(list, "count") : 0;
+    int seen[MAX_PADS] = {0};
+    for (unsigned long k = 0; k < n; k++) {
+        id c = SEND(id(*)(id, SEL, unsigned long))(list, objc_sel("objectAtIndex:"), k);
+        id g = send_id(c, "extendedGamepad");
+        if (!g) continue;  /* (a remote: not a game controller's buttons) */
+        int i = 0;
+        while (i < MAX_PADS && s->pads[i] != c) i++;
+        if (i == MAX_PADS) {  /* a new one: the first free number */
+            for (i = 0; i < MAX_PADS && s->pads[i]; i++) continue;
+            if (i == MAX_PADS) continue;
+            s->pads[i] = c;
+            id vendor = send_id(c, "vendorName");
+            pad_connect(w, i, vendor ? (const char *)send_id(vendor, "UTF8String") : NULL);
+        }
+        seen[i] = 1;
+        id dpad = send_id(g, "dpad");
+        unsigned b = gc_pressed(g, "buttonA") << P_A | gc_pressed(g, "buttonB") << P_B | gc_pressed(g, "buttonX") << P_X |
+                     gc_pressed(g, "buttonY") << P_Y | gc_pressed(g, "leftShoulder") << P_LEFT_SHOULDER |
+                     gc_pressed(g, "rightShoulder") << P_RIGHT_SHOULDER | gc_pressed(g, "buttonOptions") << P_BACK |
+                     gc_pressed(g, "buttonMenu") << P_START | gc_pressed(g, "buttonHome") << P_GUIDE |
+                     gc_pressed(g, "leftThumbstickButton") << P_LEFT_STICK | gc_pressed(g, "rightThumbstickButton") << P_RIGHT_STICK |
+                     gc_pressed(dpad, "up") << P_UP | gc_pressed(dpad, "down") << P_DOWN | gc_pressed(dpad, "left") << P_LEFT |
+                     gc_pressed(dpad, "right") << P_RIGHT;
+        double axes[AXIS_COUNT] = {gc_value(g, "leftThumbstick", "xAxis"), -gc_value(g, "leftThumbstick", "yAxis"),  /* (up is more) */
+                                   gc_value(g, "rightThumbstick", "xAxis"), -gc_value(g, "rightThumbstick", "yAxis"),
+                                   gc_value(g, "leftTrigger", NULL), gc_value(g, "rightTrigger", NULL)};
+        pad_state(w, i, b, axes);
+    }
+    for (int i = 0; i < MAX_PADS; i++)
+        if (s->pads[i] && !seen[i]) {
+            s->pads[i] = NULL;
+            pad_disconnect(w, i);
+        }
 }
 
 static void cocoa_pump(Win *w) {
@@ -291,7 +359,27 @@ static void cocoa_pump(Win *w) {
         s->focused = focused;
         push_simple(w, focused ? LUBE_GFX_FOCUS : LUBE_GFX_BLUR, 0, 0, 0);
     }
+    int fs = (get_ulong(s->win, "styleMask") & FULLSCREEN_MASK) != 0;  /* (the green button changes it too) */
+    if (s->fs_since && (fs == s->fs_want || lube->now() - s->fs_since > 3)) s->fs_since = 0;  /* (there, or never coming) */
+    if (!s->fs_since) w->fullscreen = fs;
+    cocoa_pads(w);
     pool_pop(pool);
+}
+
+static void cocoa_fullscreen(Win *w, int on) {
+    Cocoa *s = (Cocoa *)w->sys;
+    void *pool = pool_push();
+    if (((get_ulong(s->win, "styleMask") & FULLSCREEN_MASK) != 0) != on) send_obj(s->win, "toggleFullScreen:", NULL);
+    s->fs_want = on;
+    s->fs_since = lube->now();  /* (it takes a moment: the screen slides) */
+    pool_pop(pool);
+}
+
+static void cocoa_cursor(Win *w, int shown) {
+    Cocoa *s = (Cocoa *)w->sys;
+    if (shown != s->cursor_hidden) return;
+    send_void(objc_class("NSCursor"), shown ? "unhide" : "hide");  /* (counted: hidden once, shown once) */
+    s->cursor_hidden = !shown;
 }
 
 static void cocoa_present(Win *w) {
@@ -326,6 +414,7 @@ static void cocoa_present(Win *w) {
 static void cocoa_close(Win *w) {
     Cocoa *s = (Cocoa *)w->sys;
     void *pool = pool_push();
+    if (s->cursor_hidden) send_void(objc_class("NSCursor"), "unhide");
     send_void(s->win, "close");
     send_void(s->win, "release");
     cf_release(s->space);
@@ -341,4 +430,4 @@ static void cocoa_title(Win *w, const char *title) {
     pool_pop(pool);
 }
 
-static const Backend COCOA = {cocoa_open, cocoa_pump, cocoa_present, cocoa_close, cocoa_title};
+static const Backend COCOA = {cocoa_open, cocoa_pump, cocoa_present, cocoa_close, cocoa_title, cocoa_fullscreen, cocoa_cursor};

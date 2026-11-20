@@ -2,6 +2,8 @@
  * win32.c (part of gfx.c) - windows on Windows: user32 and gdi32, which
  * every Windows has. Each frame goes to the window with StretchDIBits,
  * fitted (as large as fits, in whole pixels where it can, black around it).
+ * Game controllers: XInput's (Xbox controllers, and the many that work as
+ * one), its DLL opened when the first window opens.
  */
 #include <windowsx.h>
 
@@ -10,7 +12,60 @@ typedef struct {
     BITMAPINFO bmi;
     int sw, sh;          /* the window's inside, in pixels */
     WCHAR high;          /* the first half of a character typed in two (UTF-16) */
+    int fullscreen, cursor_hidden;
+    WINDOWPLACEMENT placed;  /* where it was before fullscreen */
 } W32;
+
+/* ---- game controllers: XInput (its types, as xinput.h has them) ---- */
+
+typedef struct {
+    WORD buttons;
+    BYTE left_trigger, right_trigger;
+    SHORT lx, ly, rx, ry;
+} XPad;
+typedef struct {
+    DWORD packet;
+    XPad pad;
+} XPadState;
+typedef DWORD(WINAPI *XGetState)(DWORD index, XPadState *state);
+static XGetState x_get_state;
+static double x_checked[4];  /* when each controller not connected was last looked for */
+
+static void w32_pads(Win *w) {
+    static int loaded;
+    if (!loaded) {
+        const char *const dlls[] = {"xinput1_4.dll", "xinput1_3.dll", "xinput9_1_0.dll"};
+        for (int i = 0; i < 3 && !x_get_state; i++) {
+            HMODULE lib = LoadLibraryA(dlls[i]);
+            if (lib) x_get_state = (XGetState)(void (*)(void))GetProcAddress(lib, "XInputGetState");
+        }
+        loaded = 1;
+    }
+    if (!x_get_state) return;
+    double now = lube->now();
+    for (int i = 0; i < 4; i++) {
+        if (!w->pads[i].connected && now - x_checked[i] < 1) continue;  /* (asking for one not there is slow: once a second) */
+        XPadState st;
+        if (x_get_state((DWORD)i, &st) != ERROR_SUCCESS) {
+            x_checked[i] = now;
+            pad_disconnect(w, i);
+            continue;
+        }
+        pad_connect(w, i, "XInput controller");
+        static const struct {
+            WORD bit;
+            int button;
+        } map[] = {{0x1000, P_A}, {0x2000, P_B}, {0x4000, P_X}, {0x8000, P_Y}, {0x0100, P_LEFT_SHOULDER},
+                   {0x0200, P_RIGHT_SHOULDER}, {0x0020, P_BACK}, {0x0010, P_START}, {0x0040, P_LEFT_STICK},
+                   {0x0080, P_RIGHT_STICK}, {0x0001, P_UP}, {0x0002, P_DOWN}, {0x0004, P_LEFT}, {0x0008, P_RIGHT}};
+        unsigned b = 0;
+        for (size_t k = 0; k < sizeof map / sizeof map[0]; k++)
+            if (st.pad.buttons & map[k].bit) b |= 1u << map[k].button;
+        double axes[AXIS_COUNT] = {st.pad.lx / 32767.0, -st.pad.ly / 32767.0, st.pad.rx / 32767.0, -st.pad.ry / 32767.0,
+                                   st.pad.left_trigger / 255.0, st.pad.right_trigger / 255.0};  /* (XInput's y: up is more) */
+        pad_state(w, i, b, axes);
+    }
+}
 
 /* A Windows virtual-key code, as a key. */
 static int vk_key(WPARAM vk) {
@@ -143,6 +198,12 @@ static LRESULT CALLBACK w32_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         else e.dx = GET_WHEEL_DELTA_WPARAM(wp) / 120.0;
         push_event(w, &e);
         return 0;
+    case WM_SETCURSOR:
+        if (s->cursor_hidden && LOWORD(lp) == HTCLIENT) {  /* (over the window's inside: none) */
+            SetCursor(NULL);
+            return TRUE;
+        }
+        break;
     case WM_ERASEBKGND: return 1;
     case WM_PAINT: {
         PAINTSTRUCT ps;
@@ -209,6 +270,7 @@ static const char *w32_open(Win *w, const char *title, int scale) {
     s->sh = client.bottom;
     ShowWindow(s->hwnd, SW_SHOW);
     UpdateWindow(s->hwnd);
+    memset(x_checked, 0, sizeof x_checked);  /* (a new window: its controllers at once) */
     return NULL;
 }
 
@@ -218,6 +280,39 @@ static void w32_pump(Win *w) {
         TranslateMessage(&m);
         DispatchMessageW(&m);
     }
+    if (w->open) w32_pads(w);
+}
+
+/* Fullscreen: no border, as large as its screen (and back where it was). */
+static void w32_fullscreen(Win *w, int on) {
+    W32 *s = (W32 *)w->sys;
+    DWORD style = (DWORD)GetWindowLongW(s->hwnd, GWL_STYLE);
+    if (on && !s->fullscreen) {
+        MONITORINFO mi;
+        memset(&mi, 0, sizeof mi);
+        mi.cbSize = sizeof mi;
+        s->placed.length = sizeof s->placed;
+        if (!GetWindowPlacement(s->hwnd, &s->placed) || !GetMonitorInfoW(MonitorFromWindow(s->hwnd, MONITOR_DEFAULTTOPRIMARY), &mi))
+            return;
+        SetWindowLongW(s->hwnd, GWL_STYLE, (LONG)(style & ~(DWORD)WS_OVERLAPPEDWINDOW));
+        SetWindowPos(s->hwnd, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right - mi.rcMonitor.left,
+                     mi.rcMonitor.bottom - mi.rcMonitor.top, SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+        s->fullscreen = 1;
+    } else if (!on && s->fullscreen) {
+        SetWindowLongW(s->hwnd, GWL_STYLE, (LONG)(style | WS_OVERLAPPEDWINDOW));
+        SetWindowPlacement(s->hwnd, &s->placed);
+        SetWindowPos(s->hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+        s->fullscreen = 0;
+    }
+}
+
+static void w32_cursor(Win *w, int shown) {
+    W32 *s = (W32 *)w->sys;
+    s->cursor_hidden = !shown;
+    POINT p;
+    RECT r;
+    if (GetCursorPos(&p) && ScreenToClient(s->hwnd, &p) && GetClientRect(s->hwnd, &r) && PtInRect(&r, p))
+        SetCursor(shown ? LoadCursor(NULL, IDC_ARROW) : NULL);  /* (now, not when the mouse next moves) */
 }
 
 static void w32_present(Win *w) {
@@ -242,4 +337,4 @@ static void w32_title(Win *w, const char *title) {
     free(t);
 }
 
-static const Backend WIN32_BACKEND = {w32_open, w32_pump, w32_present, w32_close, w32_title};
+static const Backend WIN32_BACKEND = {w32_open, w32_pump, w32_present, w32_close, w32_title, w32_fullscreen, w32_cursor};

@@ -1318,6 +1318,23 @@ back, a key no one knows, a long text:
   {kind: "text", text: "abcdefghijklmé"}
 5000 at once:
 2952 2048 4999
+controllers:
+  {kind: "pad_connected", pad: 0, name: "Test Pad"}
+  {kind: "pad_down", pad: 0, button: "a"}
+  {kind: "pad_down", pad: 0, button: "left_trigger"}
+  {kind: "pad_down", pad: 0, button: "right_trigger"}
+  {kind: "pad_connected", pad: 1, name: "controller"}
+  {kind: "pad_down", pad: 1, button: "start"}
+[0, 1] true Test Pad true false false 0 0.5 0 0 0.45 1
+{connected: false, name: "", a: false, b: false, x: false, y: false, left_shoulder: false, right_shoulder: false, back: false, start: false, guide: false, left_stick: false, right_stick: false, up: false, down: false, left: false, right: false, left_x: 0, left_y: 0, right_x: 0, right_y: 0, left_trigger: 0, right_trigger: 0}
+controllers: let go of, past their ends, and one gone:
+  {kind: "pad_up", pad: 0, button: "a"}
+  {kind: "pad_up", pad: 0, button: "left_trigger"}
+  {kind: "pad_up", pad: 0, button: "right_trigger"}
+  {kind: "pad_disconnected", pad: 1}
+  {kind: "pad_connected", pad: 2, name: "controller"}
+  {kind: "pad_connected", pad: 3, name: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}
+[0, 2, 3] false -0.857 0.514 1 0 0 0 false xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 closed by the host:
 [host] closed
   {kind: "close"}
@@ -1344,7 +1361,17 @@ error: set_fps(): frames a second, from 0 (no waiting) to 1000
 error: set_title() expects a str, got Number
 error: window(): its scale is from 1 to 16
 error: window(): a size is whole Numbers of pixels, from 1 to 16384
+false
+true
+false [] {connected: false, name: "", a: false, b: false, x: false, y: false, left_shoulder: false, right_shoulder: false, back: false, start: false, guide: false, left_stick: false, right_stick: false, up: false, down: false, left: false, right: false, left_x: 0, left_y: 0, right_x: 0, right_y: 0, left_trigger: 0, right_trigger: 0}
+["a", "b", "x", "y", "left_shoulder", "right_shoulder", "left_trigger", "right_trigger", "back", "start", "guide", "left_stick", "right_stick", "up", "down", "left", "right"]
+error: set_fullscreen() expects a Bool, got Number
+error: show_cursor() expects a Bool, got str
+error: pad(): a controller's number, from 0 to 7 (see pads())
+error: pad(): a controller's number, from 0 to 7 (see pads())
+error: pad(): a controller's number, from 0 to 7 (see pads())
 Window(16 x 8, closed) false []
+true []
 true
 Window(4 x 2)
 2 Window(3 x 3)
