@@ -2340,7 +2340,7 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
         StrBuf shake;  /* --small: Lube's runtime only (not the tools that build), with the built-ins the program uses */
         sb_init(&shake);
         if (small) sb_printf(&shake, " -DLUBE_RUNTIME -DLUBE_SHAKE -include \"%s\" -ffunction-sections -fdata-sections", keep.data);
-        sb_printf(&cmd, "\"%s\" %s -std=c99 -ffp-contract=off -DLUBE_STACK_SIZE=0x%lx%s", cc && *cc ? cc : dflt,
+        sb_printf(&cmd, "\"%s\" %s -std=c99 -w -ffp-contract=off -DLUBE_STACK_SIZE=0x%lx%s", cc && *cc ? cc : dflt,
                   small ? "-Os" : "-O3", (unsigned long)LUBE_STACK_SIZE, shake.data ? shake.data : "");
         /* (no a * b + c in one rounding: the VM's two) */
 #if defined(__APPLE__)
@@ -2357,7 +2357,7 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
 #ifdef _WIN32
             sb_putc(&c1, '"');
 #endif
-            sb_printf(&c1, "\"%s\" -O3 -std=c99 %s%s -I\"%s\" -c \"%s\" -o \"%s\"%s%s", cc && *cc ? cc : dflt,
+            sb_printf(&c1, "\"%s\" -O3 -std=c99 -w %s%s -I\"%s\" -c \"%s\" -o \"%s\"%s%s", cc && *cc ? cc : dflt,
                       fast ? "-ffp-contract=fast -fassociative-math -fno-signed-zeros -fno-trapping-math -fwrapv" : "-ffp-contract=off",
                       shake.data ? shake.data : "", srcdir, gen.data, obj.data, extra ? " " : "", extra ? extra : "");
 #ifdef _WIN32
