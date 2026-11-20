@@ -1,0 +1,7 @@
+ff000000 ffffffff ff000000 ffffffff ff000000 ffffffff ff000000 ffffffff ff000000
+ffffffff ff000000 ffffffff ff000000 ffffffff ff000000 ffffffff ff000000 ffffffff
+ff000000 ffffffff ff000000 ffffffff ff000000 ffffffff ff000000 ffffffff ff000000
+ffffffff ff000000 ffffffff ff000000 ffffffff ff000000 ffffffff ff000000 ffffffff
+ff000000 ffffffff ff000000 ffffffff ff000000 ffffffff ff000000 ffffffff ff000000
+ffffffff ff000000 ffffffff ff000000 ffffffff ff000000 ffffffff ff000000 ffffffff
+ff000000 ffffffff ff000000 ffffffff ff000000 ffffffff ff000000 ffffffff ff000000

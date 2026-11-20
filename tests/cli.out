@@ -1280,6 +1280,75 @@ script: from a script: hello, file 1
 1
 -- done
 [exit 0]
+--- embed: a program that shows the windows itself (lube_gfx.h)
+fit 320x180 into 1920x1080: at 0,0, 6 times
+fit 320x180 into 1000x1000: at 20,230, 3 times
+fit 400x400 into 300x200: at 50,0, 0.5 times
+fit nothing into 300x200: at 150,100, 1 times
+[host] opened 8x6 'Hosted' (the host's own)
+[host] frame 1: 8x6, corner ff0a141e, middle ffffffff
+keys, text, the mouse, the wheel:
+  {kind: "key_down", key: "left", repeat: false}
+  {kind: "text", text: "é"}
+  {kind: "mouse_move", x: 3.5, y: 2}
+  {kind: "mouse_down", x: 3.5, y: 2, button: 2}
+  {kind: "mouse_down", x: 3.5, y: 2, button: 1}
+  {kind: "wheel", dx: 0, dy: -1}
+true false {x: 3.5, y: 2, left: true, right: true, middle: false}
+let go of; fingers (the first also the mouse):
+  {kind: "key_up", key: "left"}
+  {kind: "mouse_up", x: 4, y: 2, button: 2}
+  {kind: "touch_down", id: 7, x: 1, y: 1}
+  {kind: "mouse_down", x: 1, y: 1, button: 1}
+  {kind: "touch_down", id: 8, x: 6, y: 5}
+  {kind: "touch_move", id: 7, x: 2, y: 1}
+  {kind: "mouse_move", x: 2, y: 1}
+  {kind: "touch_move", id: 8, x: 6, y: 4}
+  {kind: "touch_up", id: 8, x: 6, y: 4}
+  {kind: "touch_up", id: 7, x: 2, y: 1}
+  {kind: "mouse_up", x: 2, y: 1, button: 1}
+false {x: 2, y: 1, left: false, right: false, middle: false}
+held, then away (every key let go of):
+  {kind: "key_down", key: "right", repeat: false}
+  {kind: "key_down", key: "right", repeat: true}
+  {kind: "blur"}
+false
+back, a key no one knows, a long text:
+  {kind: "focus"}
+  {kind: "text", text: "abcdefghijklmé"}
+5000 at once:
+2952 2048 4999
+closed by the host:
+[host] closed
+  {kind: "close"}
+false Window(8 x 6, closed)
+[]
+[host] opened 2x2 'Lube' (the host's own)
+[{kind: "key_down", key: "b", repeat: false}]
+[host] closed
+[] true
+[exit 0]
+--- gfx: a window, shown nowhere
+Window(16 x 8) true 16 8 true Window true
+[] false false {x: 0, y: 0, left: false, right: false, middle: false}
+Image(16 x 8) true true true
+true
+true
+3 frames at 20 a second: true
+after falling behind, no rush: true
+error: window(): there is a window open already (one at a time: close it first)
+error: key_down(): 'nope' is not a key's name ("a", "left", "space"...: see keys())
+error: key_down(): a Number is not a key's name ("a", "left", "space"...: see keys())
+error: set_fps(): frames a second, from 0 (no waiting) to 1000
+error: set_fps(): frames a second, from 0 (no waiting) to 1000
+error: set_title() expects a str, got Number
+error: window(): its scale is from 1 to 16
+error: window(): a size is whole Numbers of pixels, from 1 to 16384
+Window(16 x 8, closed) false []
+true
+Window(4 x 2)
+2 Window(3 x 3)
+[exit 0]
 --- audio: playing, in silence
 none
 Voice(playing) true

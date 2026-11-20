@@ -1,0 +1,194 @@
+// gfx: drawing on images, shown here as text (# for a pixel); PNG files (windows: tests/cli/gfx_window.lube)
+import gfx.*
+import fs.*
+
+fn tries(f) { try { f() } catch e { print("error:", e) } }
+fn show(img) {
+    for y in 0..img.height() {
+        var row = ""
+        for x in 0..img.width() {
+            if img.pixel(x, y) == 0 { row += "." } else { row += "#" }
+        }
+        print(row)
+    }
+    print()
+}
+let white = color("white")
+
+// shapes
+var a = image(13, 9)
+a.circle(6, 4, 4, white)
+show(a)
+a.clear()
+a.fill_circle(6, 4, 4, white)
+a.fill_circle(0, 0, 0, white)  // (a single pixel)
+show(a)
+var b = image(12, 8)
+b.line(0, 0, 11, 7, white)
+b.line(11, 0, 8, 3, white)
+b.rect(0, 0, 12, 8, white)
+b.rect(5, 5, 1, 1, white)
+show(b)
+var t = image(12, 9)
+t.fill_triangle(1, 1, 11, 4, 3, 8, white)
+t.fill_triangle(0, 0, 0, 4, 4, 0, white)  // (clockwise: the same)
+t.fill_triangle(5, 5, 5, 5, 6, 6, white)  // (no area: nothing)
+show(t)
+var edges = image(6, 4)  // (shapes past the edges: what is inside)
+edges.fill_rect(-3, -3, 5, 5, white)
+edges.fill_circle(6, 4, 2, white)
+edges.line(-100, 3, 100, 3, white)
+edges.line(-1000000, -1000000, 1000000, 1000000, white)
+show(edges)
+
+// text
+var words = image(48, 20)
+words.text("Lube 1\n" + '{x}?', 0, 0, white)
+show(words)
+var big_text = image(12, 16)
+big_text.text("A", 0, 0, white, 2)
+show(big_text)
+var odd = image(18, 8)
+odd.text("é~", 0, 0, white)  // (past ASCII: a box)
+show(odd)
+print(text_size("ab\ncde"), text_size("", 3), text_size("x", 0.5))
+
+// images on images: as they are, a part, scaled, flipped, turned, faded
+var s = image(6, 3)
+s.fill_rect(0, 0, 2, 3, white)
+s.set_pixel(5, 0, white)
+var c = image(10, 9)
+c.draw(s, 1, 1)
+c.draw(s, 3, 5, {part: [0, 0, 3, 2]})
+show(c)
+var scaled = image(14, 8)
+scaled.draw(s, 0, 0, {scale: 2, flip_x: true})
+show(scaled)
+var stretched = image(14, 8)
+stretched.draw(s, 1, 1, {scale_x: 2, scale_y: 1, flip_y: true})
+show(stretched)
+for angle in [90, 180, 270, -90, 45] {
+    var r = image(9, 9)
+    r.draw(s, 1.5, 3, {rotate: angle})
+    print("turned", angle)
+    show(r)
+}
+var faded = image(1, 1, rgb(0, 0, 0))
+faded.draw(image(1, 1, rgb(255, 255, 255)), 0, 0, {alpha: 0.5})
+print(faded.pixel(0, 0) == rgb(128, 128, 128))
+var own = image(4, 1)
+own.set_pixel(0, 0, white)
+own.draw(own, 1, 0)  // (onto itself: from what it was)
+show(own)
+var nothing = image(3, 3)
+nothing.draw(s, 0, 0, {part: [0, 0, 0, 0]})
+nothing.draw(s, 0, 0, {scale: 0})
+nothing.draw(s, 10, 10)
+print(nothing.pixel(0, 0), nothing.pixel(-1, 0), nothing.pixel(3, 0))
+
+// colors, and drawing them over each other
+print(rgb(255, 128, 0), rgba(1, 2, 3, 4), rgb(300, -5, 127.6), color("orange"), color("transparent"))
+print(color("#ff8000") == rgb(255, 128, 0), color("#f80") == rgb(255, 136, 0), color("#ff800080") == rgba(255, 128, 0, 128))
+var over = image(1, 1, rgb(255, 0, 0))
+over.fill_rect(0, 0, 1, 1, rgba(0, 0, 255, 128))
+print(over.pixel(0, 0) == rgb(127, 0, 128))
+var clear = image(1, 1)
+clear.fill_rect(0, 0, 1, 1, rgba(0, 0, 255, 128))
+clear.fill_rect(0, 0, 1, 1, rgba(255, 0, 0, 128))
+print(clear.pixel(0, 0) == rgba(170, 0, 85, 192), clear.pixel(0, 0))
+clear.fill_rect(0, 0, 1, 1, rgba(9, 9, 9, 0))  // (nothing)
+clear.fill_rect(0, 0, 1, 1, color("transparent"))
+print(clear.pixel(0, 0) == rgba(170, 0, 85, 192))
+
+// copies, parts, sizes
+let copy = c.copy()
+c.clear(white)
+print(copy.pixel(1, 1) == white, copy.pixel(0, 0), c.pixel(0, 0) == white)
+show(copy.crop(1, 1, 6, 3))
+show(copy.crop(-1, -1, 3, 3))
+print(copy, type(copy), copy is Image, Image(2, 3), Image(2, 3, white).pixel(1, 1) == white)
+print(copy.width(), copy.height(), len(keys()), keys()[0], keys()[36])
+
+// PNG: written and read back; files of every kind
+let png = s.to_png()
+let back = load_image(png)
+print(len(png), back, back.pixel(5, 0) == white, back.pixel(4, 0))
+make_dir("build")
+s.save_png("build/gfx-test.png")
+print(load_image("build/gfx-test.png").pixel(1, 2) == white)
+remove_file("build/gfx-test.png")
+var alpha = image(3, 1)
+alpha.set_pixel(0, 0, rgba(10, 20, 30, 40))
+alpha.set_pixel(2, 0, rgba(250, 251, 252, 253))
+let again = load_image(alpha.to_png())
+print(again.pixel(0, 0) == rgba(10, 20, 30, 40), again.pixel(1, 0), again.pixel(2, 0) == rgba(250, 251, 252, 253))
+var noisy = image(64, 48)  // (bigger, with runs and noise: the compression's matches)
+for y in 0..48 {
+    for x in 0..64 { noisy.set_pixel(x, y, rgb((x * 7) % 256, (y * 13 + x) % 256, ((x * y) % 5) * 60)) }
+}
+let noisy_back = load_image(noisy.to_png())
+var same = true
+for y in 0..48 {
+    for x in 0..64 {
+        if noisy_back.pixel(x, y) != noisy.pixel(x, y) { same = false }
+    }
+}
+print("64x48 back the same:", same)
+var ok = 0
+var files = 0
+for name in list_dir("tests/gfx") {  // (made by tests/gfx/make_pngs.py, each with its pixels in a .txt)
+    if !name.ends_with(".png") { continue }
+    files += 1
+    let img = load_image("tests/gfx/" + name)
+    let rows = read_file("tests/gfx/" + name.slice(0, len(name) - 4) + ".txt").trim().split("\n")
+    var right = true
+    for y in 0..len(rows) {
+        let want = rows[y].split(" ")
+        for x in 0..len(want) {
+            if img.pixel(x, y) != Number("0x" + want[x]) { right = false }
+        }
+    }
+    if right { ok += 1 } else { print("wrong:", name) }
+}
+print(ok, "of", files, "PNG files read right")
+
+// damaged and unusual files
+let good = s.to_png()
+var bad_crc = Bytes(good)
+bad_crc[20] = (bad_crc[20] + 1) % 256  // (a byte of the header)
+var truncated = good.slice(0, len(good) - 20)
+tries(fn() { load_image(Bytes("not a png")) })
+tries(fn() { load_image(bad_crc) })
+tries(fn() { load_image(truncated) })
+tries(fn() { load_image("tests/gfx/none.png") })
+tries(fn() { load_image("tests/gfx/gray1.txt") })
+tries(fn() { load_image(5) })
+for name in list_dir("tests/gfx/bad") {  // (each damaged in its own way: see make_pngs.py)
+    try { load_image("tests/gfx/bad/" + name); print(name, "read!") } catch e { print(name + ":", e.slice(e.index_of(" is ") + 4)) }
+}
+
+// mistakes
+tries(fn() { image(0, 5) })
+tries(fn() { image(1.5, 2) })
+tries(fn() { image(20000, 1) })
+tries(fn() { image("a", 2) })
+tries(fn() { image(2, 2, "red") })
+tries(fn() { image(2, 2, -1) })
+tries(fn() { a.fill_rect(0, 0, 1, 1, "red") })
+tries(fn() { a.line(0, 0, "x", 1, white) })
+tries(fn() { a.draw(5, 0, 0) })
+tries(fn() { a.draw(s, 0, 0, [1]) })
+tries(fn() { a.draw(s, 0, 0, {part: [0, 0, 1]}) })
+tries(fn() { a.draw(s, 0, 0, {part: [0, "a", 1, 1]}) })
+tries(fn() { a.draw(s, 0, 0, {scale: "big"}) })
+tries(fn() { a.text(5, 0, 0) })
+tries(fn() { a.crop(0, 0, 0, 1) })
+tries(fn() { a.save_png(5) })
+tries(fn() { a.save_png("build/no/such/dir/x.png") })
+tries(fn() { color(5) })
+tries(fn() { color("chartreuse-ish") })
+tries(fn() { color("#12345") })
+tries(fn() { color("#gg0000") })
+tries(fn() { text_size(5) })
+tries(fn() { rgb(1, 2, "3") })
+tries(fn() { Window(10, 10, 5) })

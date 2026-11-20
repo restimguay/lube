@@ -12,7 +12,7 @@ CFLAGS  += -std=c99 -Wall -Wextra -Wno-unused-parameter -pedantic
 LDLIBS  += -lm -lpthread
 UNAME   := $(shell uname -s 2>/dev/null)
 EXE     :=
-PLUGINS := fs net audio
+PLUGINS := fs net audio gfx
 
 # Give the interpreter a 64 MB stack on macOS and Windows so deep recursion
 # works. (On Linux the main thread's stack is set by `ulimit -s`, usually
@@ -30,12 +30,14 @@ else ifneq (,$(filter MINGW% MSYS% CYGWIN%,$(UNAME)))
   PLUGIN_EXT   := .dll
   PLUGIN_FLAGS := -shared -static-libgcc  # (a DLL that needs no other of gcc's)
   PLUGIN_LIBS_net := -lws2_32  # sockets: Winsock
+  PLUGIN_LIBS_gfx := -lgdi32 -luser32  # windows
 else
   PLUGIN_EXT   := .so
   PLUGIN_FLAGS := -shared -fPIC
   ifeq ($(UNAME),Linux)
     LDLIBS += -ldl  # plugins (dlopen is in libdl before glibc 2.34)
     PLUGIN_LIBS_audio := -ldl  # sound: ALSA, opened when the first sound plays
+    PLUGIN_LIBS_gfx := -ldl  # windows: X11, opened when the first window opens
   endif
 endif
 ifdef STACK
@@ -48,7 +50,7 @@ ifdef STATIC_PLUGINS
   SRC    += $(PLUGIN_SRC)
   CFLAGS += -DLUBE_STATIC_PLUGINS
   ifneq (,$(filter MINGW% MSYS% CYGWIN%,$(UNAME)))
-    LDLIBS += -lws2_32
+    LDLIBS += -lws2_32 -lgdi32 -luser32
   endif
   PLUGIN_FILES :=
 else
@@ -61,7 +63,7 @@ PREFIX ?= /usr/local
 
 # The checking builds have the plugins inside, so the sanitizers watch them too.
 CHECK_SRC := $(wildcard src/*.c) $(PLUGIN_SRC)
-CHECK_LIBS := $(LDLIBS) $(PLUGIN_LIBS_net)
+CHECK_LIBS := $(LDLIBS) $(PLUGIN_LIBS_net) $(PLUGIN_LIBS_gfx)
 
 all: lube$(EXE) $(PLUGIN_FILES) liblube.a
 
@@ -89,6 +91,8 @@ build:
 # A plugin: a shared library that needs nothing of lube's (lube_plugin.h).
 plugins/%$(PLUGIN_EXT): src/plugins/%.c src/lube_plugin.h | plugins
 	$(CC) $(CFLAGS) $(PLUGIN_FLAGS) -o $@ $< -lm $(PLUGIN_LIBS_$*)
+
+plugins/gfx$(PLUGIN_EXT): $(wildcard src/plugins/gfx/*.c) src/lube_gfx.h  # (its parts)
 
 plugins:
 	mkdir -p plugins

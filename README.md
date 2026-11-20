@@ -680,17 +680,18 @@ while running {
 }
 ```
 
-### Plugins: files, sockets and sound
+### Plugins: files, sockets, sound and graphics
 
-Some of Lube comes as plugins: packages written in C, loaded when a program imports them, so a program that uses none of them doesn't load them. `make` builds the three that come with Lube into `plugins/` next to `lube`: `fs` for files and folders, `net` for sockets and `audio` for sound. They are imported as any package is:
+Some of Lube comes as plugins: packages written in C, loaded when a program imports them, so a program that uses none of them doesn't load them. `make` builds the four that come with Lube into `plugins/` next to `lube`: `fs` for files and folders, `net` for sockets, `audio` for sound and `gfx` for graphics. They are imported as any package is:
 
 ```lube
 import fs.*                // open, exists, list_dir...: their names, bare
 import net                 // net.tcp_listen(7777), net.Socket
 import audio as sfx        // sfx.Sound("jump.wav")
+import gfx.*               // window(320, 180), image(16, 16), rgb(255, 128, 0)...
 ```
 
-A plugin's types (`File`, `Socket`, `Sound`, `Voice`) work as classes do: `x is Socket`, `fn send_all(s: Socket)`, `class_of(x)`, `methods(x)`. Their objects are the plugin's: a copy shares the one file or socket, and they stay in the isolate that made them. Anyone can write a plugin: see Writing a plugin below.
+A plugin's types (`File`, `Socket`, `Sound`, `Voice`, `Image`, `Window`) work as classes do: `x is Socket`, `fn send_all(s: Socket)`, `class_of(x)`, `methods(x)`. Their objects are the plugin's: a copy shares the one file or socket, and they stay in the isolate that made them. Anyone can write a plugin: see Writing a plugin below.
 
 ### Files and folders: `fs`
 
@@ -785,6 +786,37 @@ write_bytes("ping.wav", ping.to_wav())  // a 16-bit WAV file of it
 - Sound needs no library to build Lube: it uses what the system has, loaded when the first sound plays (so a program that plays none never touches it). That is Audio Queue on macOS, ALSA on Linux and the Raspberry Pi, and waveOut on Windows. Without one (a server, no sound card, or `LUBE_AUDIO=none`), sounds play in silence, taking their time and ending as they would. The static Linux binary from the releases is always silent (its plugins are inside it, and a static program cannot load ALSA): build Lube with `make` to have sound there.
 - When the program ends, its sounds stop: a script that only plays a sound should wait for it with `sleep(s.duration())`. Sounds and voices belong to the isolate that made them, but any isolate can play sounds.
 
+### Graphics: `gfx`
+
+2D graphics drawn by Lube itself, pixel by pixel: shapes, images (scaled, flipped, turned, faded), text in a built-in pixel font, and PNG files read and written. An `Image` is pixels in memory, so a server with no screen can draw too. A `Window` is an image the screen shows: on a computer, in a window of its own; on a phone, filling the screen (see Phones below).
+
+```lube
+import gfx.*
+let win = window(320, 180, "Space", 3)               // 320 by 180 pixels, each shown as 3 by 3
+let ship = load_image("ship.png")                    // or load_image(bytes)
+var x = 160
+while win.is_open() {
+  for e in win.events() {                            // what happened since the last frame
+    if e.kind == "key_down" and e.key == "escape" { win.close() }
+    if e.kind == "mouse_down" { x = e.x }            // a click, or a finger on a phone
+  }
+  if win.key_down("left") { x -= 2 }                 // held down now
+  win.clear()                                        // black
+  win.draw(ship, x, 80, {rotate: 90, scale: 2})
+  win.fill_circle(40, 40, 10, color("orange"))
+  win.text("score: 10", 4, 4, rgb(255, 255, 0))
+  win.present()                                      // shows the frame, then waits for the next (60 a second)
+}
+```
+
+- Colors are Numbers, `0xAARRGGBB`: `rgb(255, 128, 0)`, `rgba(255, 128, 0, 128)` (half transparent), or `color("orange")` (black, white, red, green, blue, yellow, cyan, magenta, gray, orange, purple, brown, pink, transparent) and `color("#ff8000")` (`#rgb`, `#rrggbb` or `#rrggbbaa`). What is drawn goes over what is there, as its transparency says.
+- `image(w, h, color?)` makes an image (transparent, unless given a color). Images and windows draw the same way: `clear(color?)`, `pixel(x, y)` (0 outside the edges), `set_pixel(x, y, color)`, `line`, `rect` and `fill_rect(x, y, w, h, color)`, `circle` and `fill_circle(x, y, r, color)`, `fill_triangle(x1, y1, x2, y2, x3, y3, color)`, and `text(s, x, y, color?, scale?)` (white, 1). What falls outside the edges is left out.
+- `draw(img, x, y, options?)` draws an image (or a window) with its top left at `x, y`. The options: `part: [x, y, w, h]` (a sprite of a sheet), `scale`, `scale_x`, `scale_y`, `flip_x`, `flip_y`, `rotate` (degrees, clockwise, around its middle) and `alpha` (0 to 1).
+- `copy()`, `crop(x, y, w, h)`, `width()` and `height()`; `to_png()` gives the PNG file's `Bytes`, and `save_png(path)` writes it. `load_image` reads every kind of PNG (gray, RGB, palette, with alpha, 1 to 16 bits, interlaced), and says what is wrong with one it can't. `text_size(s, scale?)` is `[width, height]` in pixels (6 by 10 a letter).
+- One window at a time: `window(w, h, title?, scale?)`. `win.events()` is a list of `{kind, ...}`: `key_down` (`key`, `repeat`), `key_up`, `text` (`text`, what was typed), `mouse_move`, `mouse_down` and `mouse_up` (`x`, `y` in the window's pixels, `button`: 1 left, 2 right, 3 middle), `wheel` (`dx`, `dy`), `touch_down`, `touch_move` and `touch_up` (`id`, `x`, `y`: on a phone the first finger works the mouse too), `focus`, `blur` and `close` (the close button: the window closes). `win.key_down(name)` and `win.mouse()` (`{x, y, left, right, middle}`) say what is held now, and `keys()` lists the keys' names.
+- `win.present()` keeps to 60 frames a second (`win.set_fps(n)`; 0 for no waiting). `win.set_title(s)`, `win.close()`, `win.is_open()`. A window is drawn by the program, so it stays sharp at any scale: the screen shows each pixel as a square of whole pixels where it can.
+- Windows need no library to build Lube: they use what the system has, loaded when the first window opens. That is Cocoa on macOS, X11 on Linux and the Raspberry Pi, and Win32 on Windows. With `LUBE_GFX=none` a window is shown nowhere (on a server, or in tests: everything works but the screen), and the static Linux binary from the releases has no windows (it can still draw images and save them).
+
 ### Writing a plugin
 
 A plugin is a shared library with one entry point. It includes `lube_plugin.h` (in Lube's `src/`), which is all it needs: everything goes through the API table that Lube passes it, so it links against no part of Lube.
@@ -823,7 +855,7 @@ print(maths.twice(21))   // 42
 - A function gets its arguments borrowed and returns a new value, or `lube->error(vm, ...)` to raise an error. The API reads values (`kind`, `number`, `str`, `bytes`, `list_get`, `object_get`...) and makes them (`new_str`, `new_bytes`, `new_list`, `new_object`...).
 - `lube->type(plugin, "Counter", size, release, describe)` declares a type whose objects carry `size` bytes of the plugin's own data: `release` lets go of what that data holds when the last owner lets go, and `describe` says how it prints. `lube->method(...)` adds its methods and `lube->constructor(...)` makes `Counter(...)` work.
 - The entry point runs once per process; its functions can run in any isolate, so shared state goes under a lock (`lube->lock_new()`). `LUBE_PLUGIN_API` is the version of the API the plugin was made for: a newer Lube loads it, and an older one says it needs a newer Lube.
-- `src/lube_plugin.h` describes every function, and Lube's own plugins (`src/plugins/fs.c`, `net.c` and `audio.c`) are complete examples.
+- `src/lube_plugin.h` describes every function, and Lube's own plugins (`src/plugins/fs.c`, `net.c`, `audio.c` and `gfx.c`) are complete examples.
 
 ### Errors
 
@@ -1050,7 +1082,8 @@ int main(void) {
 ```
 
 ```sh
-cc game.c -I lube/src lube/liblube.a -lm -lpthread   # Linux: add -ldl. Windows: -lm (and -lws2_32 with net inside)
+cc game.c -I lube/src lube/liblube.a -lm -lpthread   # Linux: add -ldl. Windows: -lm (and with the plugins
+                                                     # inside: -lws2_32 -lgdi32 -luser32)
 ```
 
 - Code runs as files do, one after another in the same interpreter, so what one run defines the next can use. `lube_run(vm, code, name)` runs text and `lube_run_script(vm, path)` a file. Both return `LUBE_OK`, `LUBE_ERROR` or `LUBE_EXIT`.
@@ -1081,6 +1114,33 @@ try {
 ```
 
 A C++ exception thrown in a function given with `def` becomes a Lube error, which the script can catch. `tests/embed/host.c` and `host.cpp` use every part of the API.
+
+A program can also show Lube's windows itself, on a surface of its own (a game engine's texture, a phone's screen): with `src/lube_gfx.h`, `window()` opens on the host, which is given each frame's pixels and gives the script its events. The `gfx` plugin must be inside the program.
+
+```c
+#include "lube_gfx.h"
+
+static void show(void *user, const uint32_t *pixels, int w, int h) { /* 0xAARRGGBB, rows top first */ }
+
+LubeGfxHost host = {0};
+host.present = show;               // also: pump (called for events), opened and closed (optional)
+lube_gfx_set_host(&host);          // window() now opens here
+
+LubeGfxEvent e = {LUBE_GFX_TOUCH_DOWN};
+e.x = 10, e.y = 20;                // in the window's pixels: lube_gfx_fit(...) says where it is on the surface
+lube_gfx_post(&e);                 // from any thread
+```
+
+`tests/embed/gfx_host.c` uses all of it.
+
+## Phones: Android and iOS
+
+`mobile/` has a template app for each: a Lube program that fills the screen, with touches as its input. Both run `mobile/game/main.lube` (a sample: tap to add a ball), which also runs on a computer as it is (`lube mobile/game/main.lube`). Put your program there, as `main.lube`, with the files it reads beside it.
+
+- **Android** (`mobile/android`): a NativeActivity, with no Java. Open the folder in Android Studio, or build it with Gradle (`gradle -p mobile/android assembleDebug`, or `installDebug` for a phone plugged in); it needs the NDK. The program's files are copied to the app's own storage, where it runs, and what it prints goes to the log (`adb logcat -s lube`). The back button is the `escape` key.
+- **iOS** (`mobile/ios`): `cmake -G Xcode -S mobile/ios -B build/ios -DCMAKE_SYSTEM_NAME=iOS`, then open `build/ios/LubeApp.xcodeproj` and run it (on a phone, after choosing a signing team). What it prints goes to Xcode's console.
+- The program's window is shown as large as fits, in whole pixels where it can, with black around it: 180 by 320 fills a phone held upright. Touches come as `touch_down`, `touch_move` and `touch_up`, the first finger as the mouse too, so a program written for a mouse works with a finger. A hardware keyboard's keys come as keys. When the app goes to the background, the program gets `blur`, and on Android it waits there until the app comes back.
+- Lube and its plugins are built into the app from `src/` (the templates find it from where they are: elsewhere, give its path with `-DLUBE_SRC=...`). Files, sockets and graphics work as on a computer. Sound works on iOS; on Android it plays in silence for now.
 
 ## How the interpreter works
 

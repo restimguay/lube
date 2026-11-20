@@ -31,16 +31,17 @@ FLAGS=""
 if [ "$(uname -s)" = Darwin ]; then FLAGS="-DLUBE_STACK_SIZE=0x3F00000 -Wl,-stack_size,0x3F00000"; fi
 # shellcheck disable=SC2086
 # atomic counters: isolates run on several threads at once
-# LUBE_SILENT: no sound device (the tests play sounds in silence, and make no sound). The plugins that come
-# with Lube are inside it (LUBE_STATIC_PLUGINS), so they are measured too; loading one from a file is
+# LUBE_SILENT: no sound device (the tests play sounds in silence, and make no sound). LUBE_NO_DISPLAY: no
+# windows of the system's (the tests' are shown nowhere, or by a host program of their own). The plugins that
+# come with Lube are inside it (LUBE_STATIC_PLUGINS), so they are measured too; loading one from a file is
 # measured with the tests' own (tests/plugins/).
-${CC:-cc} -std=c99 -O0 -g -fprofile-instr-generate -fcoverage-mapping -fprofile-update=atomic -DLUBE_SILENT -DLUBE_STATIC_PLUGINS $FLAGS -o "$OUT/lube" src/*.c src/plugins/*.c -lm -lpthread
+${CC:-cc} -std=c99 -O0 -g -fprofile-instr-generate -fcoverage-mapping -fprofile-update=atomic -DLUBE_SILENT -DLUBE_NO_DISPLAY -DLUBE_STATIC_PLUGINS $FLAGS -o "$OUT/lube" src/*.c src/plugins/*.c -lm -lpthread
 
 # Programs built with lube --build --native are measured too: they run the
 # part of the interpreter that calls machine code.
-export LUBE_NATIVE_CFLAGS="-O0 -fprofile-instr-generate -fcoverage-mapping -fprofile-update=atomic -DLUBE_SILENT"
+export LUBE_NATIVE_CFLAGS="-O0 -fprofile-instr-generate -fcoverage-mapping -fprofile-update=atomic -DLUBE_SILENT -DLUBE_NO_DISPLAY"
 # The embedding tests' host programs too: Lube compiled into them the same way (tests/cli.sh adds the -Ds).
-export LUBE_EMBED_CFLAGS="-O0 -fprofile-instr-generate -fcoverage-mapping -fprofile-update=atomic $FLAGS"
+export LUBE_EMBED_CFLAGS="-O0 -fprofile-instr-generate -fcoverage-mapping -fprofile-update=atomic -DLUBE_NO_DISPLAY $FLAGS"
 
 # An absolute path (some tests run lube, and programs built with it, from
 # other folders), and a pool of files every run merges into under a lock (%8m):
@@ -52,8 +53,12 @@ fi
 echo "tests:      $(tail -1 "$OUT/tests.log")"
 
 "$PROFDATA" merge -sparse "$OUT"/run-*.profraw -o "$OUT/lube.profdata"
-"$COV" report "$OUT/lube" -instr-profile="$OUT/lube.profdata" src/*.c src/plugins/*.c >"$OUT/report.txt"
-"$COV" show "$OUT/lube" -instr-profile="$OUT/lube.profdata" src/*.c src/plugins/*.c >"$OUT/lines.txt"
+# (the graphics plugin's parts that every system has: its windows of each system's are built by CI)
+SOURCES="src/*.c src/plugins/*.c src/plugins/gfx/draw.c src/plugins/gfx/font.c src/plugins/gfx/png.c"
+# shellcheck disable=SC2086
+"$COV" report "$OUT/lube" -instr-profile="$OUT/lube.profdata" $SOURCES >"$OUT/report.txt"
+# shellcheck disable=SC2086
+"$COV" show "$OUT/lube" -instr-profile="$OUT/lube.profdata" $SOURCES >"$OUT/lines.txt"
 
 # Totals from llvm-cov: regions, functions and branches.
 awk '/^TOTAL/ {
