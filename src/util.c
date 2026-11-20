@@ -95,6 +95,48 @@ void arena_free(Arena *a) {
 
 /* ---------- string buffer ---------- */
 
+/* Why `name` (of this origin) cannot change: the resolver's error, and the VM's. */
+void unchangeable_message(char *buf, size_t size, const char *name, Origin origin) {
+    switch (origin) {
+    case ORIGIN_LET:
+        snprintf(buf, size, "cannot change '%s': it was declared with let (use var for a variable that changes)", name);
+        break;
+    case ORIGIN_PARAM:
+        snprintf(buf, size,
+                 "cannot change parameter '%s' (write 'var %s' for a changeable copy, or '&%s' to change the "
+                 "caller's variable)", name, name, name);
+        break;
+    case ORIGIN_LOOP:
+        snprintf(buf, size, "cannot change loop variable '%s'", name);
+        break;
+    case ORIGIN_CATCH:
+        snprintf(buf, size, "cannot change '%s', the caught error (copy it into a var first)", name);
+        break;
+    case ORIGIN_FN:
+        snprintf(buf, size, "cannot change '%s': it is a function declared with fn", name);
+        break;
+    case ORIGIN_BUILTIN:
+        snprintf(buf, size, "cannot change '%s': it is a built-in (declare your own with let or var to replace it)",
+                 name);
+        break;
+    case ORIGIN_CAPTURE:
+        snprintf(buf, size,
+                 "cannot change '%s' here: it belongs to an enclosing function, and closures only get a "
+                 "read-only copy of it", name);
+        break;
+    case ORIGIN_THIS:
+        snprintf(buf, size, "cannot change '%s' here: the method was called on something that cannot change "
+                            "(a let, or a value that is not in a variable)", name);
+        break;
+    case ORIGIN_CLASS:
+        snprintf(buf, size, "cannot change '%s': it is a class", name);
+        break;
+    default:  /* ORIGIN_SELF (ORIGIN_VAR never gets here: it can change) */
+        snprintf(buf, size, "cannot change '%s' inside its own body", name);
+        break;
+    }
+}
+
 /* x to the nearest whole number, halves up (2.5 is 3, -2.5 is -2), -0 to 0.
  * (floor(x + 0.5) is not it: x + 0.5 rounds when x is past 2^52, or is
  * 0.49999999999999994.) x - floor(x) is exact. */

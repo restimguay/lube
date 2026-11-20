@@ -3166,8 +3166,19 @@ static Value run_top(Interp *I, FuncDecl *d) {
 }
 
 /* Parses, checks and compiles a source; NULL (with the error reported) if
- * it has errors. */
+ * it has errors. (A program built with --small has no compiler: it loads
+ * the file as compiled when it was built.) */
 static FuncDecl *compile_source(Interp *I, Source *src, const char *name, int mode) {
+#ifdef LUBE_RUNTIME
+    FuncDecl *d = lube_image_load(I, src, mode);
+    if (!d) {  /* LCOV_EXCL_START: a damaged executable */
+        fprintf(stderr, "lube: this executable has no compiled code for '%s'\n", src->path);
+        return NULL;
+    }  /* LCOV_EXCL_STOP */
+    d->name = lube_intern(I, name, strlen(name));
+    lube_native_attach(I, d, src);
+    return d;
+#else
     Arena *arena;
     Node *program = parse_program(I, src, &arena);
     if (!program) return NULL;
@@ -3179,6 +3190,11 @@ static FuncDecl *compile_source(Interp *I, Source *src, const char *name, int mo
     FuncDecl *d = compile_program(I, program, src, arena, name, mode);
     lube_native_attach(I, d, src);  /* (lube --build --native: machine code for some of its fns) */
     return d;
+#endif
+}
+
+FuncDecl *lube_compile_source(Interp *I, Source *src, const char *name, int mode) {
+    return compile_source(I, src, name, mode);
 }
 
 /* Drops "." segments and folds "dir/.." in a path, so that one file always
@@ -3329,6 +3345,7 @@ static char *package_text(Interp *I, const char *path, size_t *len) {
 /* The top-level names package pkg declares, as a map name -> true (cached),
  * or NULL when there is no such package. *bad: one of its files has errors
  * (reported). */
+#ifndef LUBE_RUNTIME  /* (the resolver's, and --check's: not in a program built with --small, which has no compiler) */
 ObjMap *lube_package_names(Interp *I, ObjString *pkg, int *bad) {
     Value cached;
     *bad = 0;
@@ -3378,6 +3395,7 @@ ObjMap *lube_package_names(Interp *I, ObjString *pkg, int *bad) {
     map_set(I->pkg_names, retain(OBJ_VAL(pkg)), names ? OBJ_VAL(names) : BOOL_VAL(0));
     return names;
 }
+#endif
 
 /* import a.b...: loads package pkg (once): every file in its folder. With
  * `bind` (import a.b), the package itself goes in that global. */
@@ -3604,6 +3622,7 @@ int lube_run_declarations(Interp *I, const char *path, const char *text, size_t 
 
 /* Checks a program without running any of it: syntax and resolver errors
  * (the same ones that stop a run with status 65). Returns 0 or 65. */
+#ifndef LUBE_RUNTIME
 int lube_check_source(Interp *I, Source *src) {
     Arena *arena;
     Node *program = parse_program(I, src, &arena);
@@ -3612,6 +3631,7 @@ int lube_check_source(Interp *I, Source *src) {
     arena_free(arena);
     return ok ? 0 : 65;
 }
+#endif
 
 Source *lube_add_source(Interp *I, const char *path, char *text, size_t length) {
     Source *s = xmalloc(sizeof(Source));

@@ -1328,7 +1328,11 @@ Node *parse_program(Interp *I, Source *src, Arena **arena) {
     for (;;) {
         skip_newlines(&P);
         if (check(&P, T_EOF)) break;
-        list_add(&program->as.block.stmts, statement(&P));
+        Node *s = statement(&P);
+        int last = P.pos - 1;  /* (its last token, newlines and ; aside) */
+        while (last > 0 && (P.toks[last].type == T_NEWLINE || P.toks[last].type == T_SEMI)) last--;
+        s->end_line = P.toks[last].line;
+        list_add(&program->as.block.stmts, s);
     }
     free(toks.items);
     *arena = tree;

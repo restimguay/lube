@@ -31,8 +31,8 @@ static void usage(FILE *out) {
             "                        compiles its fns that compute only with Numbers and Bools to machine\n"
             "                        code (needs a C compiler, and Lube's sources: LUBE_SRC); --fast lets\n"
             "                        that code use 64-bit integers that wrap around and reorder sums;\n"
-            "                        --small makes it as small as it can be: only the parts of Lube the\n"
-            "                        program uses (needs a C compiler too)\n"
+            "                        --small makes it as small as it can be: only what of Lube and of the\n"
+            "                        program can run, compiled (needs a C compiler too)\n"
             "  lube -v, --version    print the version\n"
             "  lube -h, --help       show this help\n",
             LUBE_VERSION);

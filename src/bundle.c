@@ -9,7 +9,9 @@
  *
  *   [the lube executable] [payload] [trailer]
  *   payload:  u32 file count, then for each file
- *             u32 path length, path, u32 text length, text
+ *             u32 path length, path, u32 text length, text;
+ *             then, built with --small, u32 length and the files compiled
+ *             (image.c), which it runs (it has no compiler)
  *   trailer:  u64 payload length, then the 8 bytes "LUBEPACK"
  *
  * Numbers are little-endian. The first file is the program; paths are
@@ -190,8 +192,10 @@ int lube_build(Interp *I, const char *argv0, const char *main_path, const char *
 #ifdef _WIN32
     sb_puts(&compiled, ".exe");
 #endif
+    StrBuf image;  /* --small: the files compiled */
+    sb_init(&image);
     if (native && !status) {
-        status = lube_native_build(I, fs.count, fs.keys, fs.texts, fs.lens, argv0, compiled.data, flags);
+        status = lube_native_build(I, fs.count, fs.keys, fs.texts, fs.lens, argv0, compiled.data, flags, &image);
         if (status < 0) native = status = 0;  /* nothing could be native: this lube as it is */
     }
     char *self = status ? NULL : native ? xstrndup(compiled.data, compiled.len) : find_self(argv0);
@@ -210,6 +214,10 @@ int lube_build(Interp *I, const char *argv0, const char *main_path, const char *
             sb_puts(&payload, fs.keys[i]);
             put_u32(&payload, fs.lens[i]);
             sb_putn(&payload, fs.texts[i], fs.lens[i]);
+        }
+        if (image.len) {
+            put_u32(&payload, image.len);
+            sb_putn(&payload, image.data, image.len);
         }
         size_t size = payload.len;  /* (a built program never builds, so exe is plain lube) */
         for (int i = 0; i < 8; i++) sb_putc(&payload, (char)((size >> (8 * i)) & 0xff));
@@ -241,6 +249,7 @@ int lube_build(Interp *I, const char *argv0, const char *main_path, const char *
     sb_free(&compiled);
     free(self);
     free(exe);
+    sb_free(&image);
     return status;
 }
 #endif
@@ -291,6 +300,14 @@ int lube_run_bundle(Interp *I, const char *argv0, int argc, char **argv) {
         Value key = OBJ_VAL(new_string(path, plen));
         if (i == 0) first = retain(key);
         map_set(I->bundle, key, OBJ_VAL(new_string(text, tlen)));
+    }
+    const char *image;
+    size_t ilen;
+    static unsigned char *kept;  /* (the files compiled, by --small: for as long as the program runs, in every isolate) */
+    if (!kept && take(&p, end, &image, &ilen)) {
+        kept = malloc(ilen ? ilen : 1);
+        if (kept) memcpy(kept, image, ilen);
+        lube_image_set(kept, kept ? ilen : 0);
     }
     free(payload);
     if (IS_NIL(first)) {  /* LCOV_EXCL_START: a damaged executable */

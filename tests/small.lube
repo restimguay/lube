@@ -18,7 +18,10 @@ fn describe(a, loud = false) {
   if loud { return upper(s) }
   return s
 }
-fn never_called() => tan(1)  // nothing reaches it (find_class below could: classes by name)
+fn never_called() => tan(1)  // nothing reaches it: left out (find_class below reaches classes only)
+class Ghost {  // named nowhere: found by name, so it stays
+  fn boo() => "boo"
+}
 var total = 0
 on total {
   if total > 100 { print("over 100") }
@@ -40,6 +43,14 @@ let twice = fn(x) => x * 2
 let d = Dog("rex")
 print(describe(d), describe(Animal("cat"), true), d is Animal, not (d is Point))
 print(sort(xs), ys, twice(21), -n, total, n > 2 and total > 0 or false)
-print(shapes.len(Point(3, 4)), shapes.count, find_class("Dog") == class_of(d))
+print(shapes.len(Point(3, 4)), shapes.count, find_class("Dog") == class_of(d), find_class("Gh" + "ost")().boo())
 try { throw "oops" } catch e { print("caught", e) }
+fn counter(start: Number) {  // a closure with a copy of a variable, and a block watching one
+  var n = start
+  let step = 2
+  on n (old, new) { print("n:", old, "->", new, "by", step) }
+  n += step
+  return fn() => n * 10
+}
+print(counter(1)())
 print(join(map(xs, fn(x) => "{x}"), "-"))
