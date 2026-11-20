@@ -2095,7 +2095,7 @@ static int shake_uses(Interp *I, ObjMap *used, const char *name) {
     return map_get(used, OBJ_VAL(lube_intern(I, name, strlen(name))), NULL);
 }
 
-static int shake_program(Interp *I, Node **trees, int nfiles, ObjMap *used) {
+static int shake_program(Interp *I, Node **trees, int nfiles, ObjMap *used, unsigned char **keep) {
     Shake k;
     memset(&k, 0, sizeof k);
     k.used = used;
@@ -2125,14 +2125,23 @@ static int shake_program(Interp *I, Node **trees, int nfiles, ObjMap *used) {
             shake_run(&k);
         }
     }
-    int by_name = shake_uses(I, used, "globals");
+    int by_name = shake_uses(I, used, "globals");  /* (any global by name: every fn and class can run) */
     if (by_name || shake_uses(I, used, "find_class") || shake_uses(I, used, "classes")) {
-        for (int i = 0; i < k.n; i++)  /* (classes and fns found by name: all of them can run) */
-            if (!k.reached[i]) {
+        for (int i = 0; i < k.n; i++)  /* (classes by name: all of them can run) */
+            if (!k.reached[i] && (by_name || k.nodes[i]->kind == N_CLASS)) {
                 k.reached[i] = 1;
                 k.work[k.nwork++] = i;
             }
         shake_run(&k);
+    }
+    for (int i = 0, d = 0; i < nfiles; i++) {  /* keep[file][statement]: it can run */
+        NodeList *stmts = &trees[i]->as.block.stmts;
+        keep[i] = xmalloc((size_t)stmts->count + 1);
+        for (int j = 0; j < stmts->count; j++) {
+            Node *st = stmts->items[j];
+            keep[i][j] = !((st->kind == N_LET && st->as.let.is_fn) || st->kind == N_CLASS) || k.reached[d];
+            d += (st->kind == N_LET && st->as.let.is_fn) || st->kind == N_CLASS;
+        }
     }
     free(k.names);
     free(k.nodes);
@@ -2141,11 +2150,42 @@ static int shake_program(Interp *I, Node **trees, int nfiles, ObjMap *used) {
     return by_name;
 }
 
+/* The text of file `text` (len) with the lines of the top-level statements
+ * that cannot run (keep[j] 0) emptied, newlines kept: what of the program
+ * goes in the executable (its line numbers as they were). A statement that
+ * shares a line with another stays. Returns the new length. */
+static size_t shake_text(char *text, size_t len, NodeList *stmts, const unsigned char *keep, int *left_out) {
+    int nlines = 1;
+    for (size_t i = 0; i < len; i++) nlines += text[i] == '\n';
+    unsigned char *blank = xmalloc((size_t)nlines + 2);
+    memset(blank, 0, (size_t)nlines + 2);
+    for (int j = 0; j < stmts->count; j++) {  /* (its own lines only: none another statement is on) */
+        int from = stmts->items[j]->line, to = stmts->items[j]->end_line;
+        if (keep[j] || (j > 0 && stmts->items[j - 1]->end_line >= from) ||
+            (j + 1 < stmts->count && stmts->items[j + 1]->line <= to))
+            continue;
+        for (int l = from; l <= to && l <= nlines; l++) blank[l] = 1;
+        (*left_out)++;
+    }
+    size_t o = 0;
+    int line = 1;
+    for (size_t i = 0; i < len; i++) {
+        if (text[i] == '\n') {
+            text[o++] = '\n';
+            line++;
+        } else if (!blank[line]) {
+            text[o++] = text[i];
+        }
+    }
+    free(blank);
+    return o;
+}
+
 /* Compiles the program (its files: keys and texts, read from dir) into the
  * executable exe_out: Lube itself, with the functions that can be native
  * compiled to machine code. Returns 0, or an exit status after a message. */
 int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *lens, const char *argv0,
-                      const char *exe_out, int flags) {
+                      const char *exe_out, int flags, StrBuf *image) {
     int fast = flags & LUBE_BUILD_FAST, small = flags & LUBE_BUILD_SMALL, natives = flags & LUBE_BUILD_NATIVE;
     Gen g;
     memset(&g, 0, sizeof g);
@@ -2162,11 +2202,32 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
         for (int j = 0; j < stmts->count; j++) note_declared(&g, stmts->items[j]);
     }
     ObjMap *used = new_map();  /* --small: the globals the program uses (before loops' are made locals) */
-    int every_builtin = small ? shake_program(I, trees, nfiles, used) : 1;
+    unsigned char **canrun = xmalloc(sizeof(unsigned char *) * (size_t)nfiles);
+    int every_builtin = small ? shake_program(I, trees, nfiles, used, canrun) : 1;
+    int fns = 0, left_out = 0;
+    for (int i = 0; small && i < nfiles; i++) {  /* what cannot run stays behind: its lines emptied */
+        NodeList *stmts = &trees[i]->as.block.stmts;
+        for (int j = 0; j < stmts->count; j++)
+            fns += (stmts->items[j]->kind == N_LET && stmts->items[j]->as.let.is_fn) || stmts->items[j]->kind == N_CLASS;
+        lens[i] = shake_text(texts[i], lens[i], stmts, canrun[i], &left_out);
+    }
+    int unbuilt = 0;
+    if (small) {  /* its files compiled (it has no compiler), for isolates too when it starts them */
+        int isolates = every_builtin || map_get(used, OBJ_VAL(lube_intern(I, "spawn", 5)), NULL) ||
+                       map_get(used, OBJ_VAL(lube_intern(I, "parallel_map", 12)), NULL);
+        for (int mode = RUN_FILE; mode <= (isolates ? RUN_ISOLATE : RUN_FILE); mode += RUN_ISOLATE - RUN_FILE)
+            for (int i = 0; i < nfiles; i++) {
+                Source *src = lube_add_source(I, keys[i], xstrndup(texts[i], lens[i]), lens[i]);
+                FuncDecl *d = lube_compile_source(I, src, i ? "<module>" : "<script>", mode);
+                if (d) lube_image_add(image, keys[i], mode, d);  /* (each was checked when it was packed) */
+                else unbuilt = 1;  /* LCOV_EXCL_LINE: leaving out what cannot run broke it (a bug) */
+            }
+    }
     for (int i = 0; natives && i < nfiles; i++) {
         NodeList *stmts = &trees[i]->as.block.stmts;
         uint64_t hash = lube_hash_text(texts[i], lens[i]);
-        for (int j = 0; j < stmts->count; j++) consider(&g, stmts->items[j], hash);
+        for (int j = 0; j < stmts->count; j++)
+            if (!small || canrun[i][j]) consider(&g, stmts->items[j], hash);
     }
     for (int i = 0; natives && i < nfiles; i++) {  /* the methods of classes declared once */
         NodeList *stmts = &trees[i]->as.block.stmts;
@@ -2174,7 +2235,9 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
         for (int j = 0; j < stmts->count; j++) {
             Node *s = stmts->items[j];
             Value n;
-            if (s->kind != N_CLASS || !map_get(g.declared, OBJ_VAL(s->as.klass.var.name), &n) || n.as.number > 1) continue;
+            if (s->kind != N_CLASS || !map_get(g.declared, OBJ_VAL(s->as.klass.var.name), &n) || n.as.number > 1 ||
+                (small && !canrun[i][j]))
+                continue;
             int k = 0;
             while (g.classes[k].node != s) k++;
             for (int m = 0; m < s->as.klass.methods.count; m++) consider_method(&g, I, k, s->as.klass.methods.items[m], hash);
@@ -2285,7 +2348,7 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
     }
     sb_printf(&c, "    {0, 0, 0, 0, 0, 0}\n};\nconst int lube_nnatives = %d;\n", count);
 
-    int status = count || small ? 0 : -1;  /* -1: nothing to compile (a plain build will do) */
+    int status = unbuilt ? 70 : count || small ? 0 : -1;  /* -1: nothing to compile (a plain build will do) */
     char *srcdir = !status ? find_sources(argv0) : NULL;
     if (!status && !srcdir) {
         fprintf(stderr, "lube: --%s needs Lube's C sources: set LUBE_SRC to the folder that has lube.h\n",
@@ -2322,6 +2385,8 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
         sb_free(&h);
     }
     release(OBJ_VAL(used));
+    for (int i = 0; small && i < nfiles; i++) free(canrun[i]);
+    free(canrun);
     FILE *f = status ? NULL : fopen(gen.data, "wb");
     if (!status && (!f || fwrite(c.data, 1, c.len, f) != c.len)) {
         fprintf(stderr, "lube: cannot write '%s'\n", gen.data);
@@ -2369,8 +2434,10 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
         }
         int n;
         char **files = os_files(srcdir, ".c", &n);
-        for (int i = 0; i < n; i++) {
-            if (strcmp(files[i], "nativetab.c")) sb_printf(&cmd, " \"%s/%s\"", srcdir, files[i]);
+        for (int i = 0; i < n; i++) {  /* (--small: no compiler, its files go compiled) */
+            int front = !strcmp(files[i], "lexer.c") || !strcmp(files[i], "parser.c") || !strcmp(files[i], "resolver.c") ||
+                        !strcmp(files[i], "compile.c");
+            if (strcmp(files[i], "nativetab.c") && !(small && front)) sb_printf(&cmd, " \"%s/%s\"", srcdir, files[i]);
             free(files[i]);
         }
         free(files);
@@ -2400,7 +2467,7 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
     }
     if (status <= 0 && natives)
         printf("native: %s\n", count ? names.data : small ? "none of its functions can be" : "none of its functions can be (a plain build)");
-    if (!status && small) printf("small: %d of %d built-ins\n", kept, builtins);
+    if (!status && small) printf("small: %d of %d built-ins, %d of %d fns and classes\n", kept, builtins, fns - left_out, fns);
     StrBuf not;  /* the typed fns that are not, and where translating them stopped */
     sb_init(&not);
     for (int i = 0; i < g.ncands && status <= 0; i++) {

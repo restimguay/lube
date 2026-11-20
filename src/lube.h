@@ -686,6 +686,8 @@ struct FuncDecl {
 struct Node {
     NodeKind kind;
     int line;
+    int end_line;           /* a top-level statement: its last line (lube --build --small leaves out the lines of
+                               those that cannot run) */
     union {
         Value literal;                                            /* N_LITERAL */
         NodeList items;                                           /* N_INTERP, N_LIST */
@@ -982,6 +984,12 @@ int resolve_debug(Interp *I, FuncDecl *d, Source *src, Arena *arena, Source *hom
 
 /* compile.c: the program's code; mode is RUN_FILE, RUN_REPL or RUN_HOT */
 enum { RUN_FILE, RUN_REPL, RUN_HOT, RUN_ISOLATE };
+FuncDecl *lube_compile_source(Interp *I, Source *src, const char *name, int mode);
+
+/* image.c: compiled files saved as bytes (lube --build --small) and loaded back */
+void lube_image_add(StrBuf *image, const char *path, int mode, FuncDecl *d);
+void lube_image_set(const unsigned char *data, size_t size);
+FuncDecl *lube_image_load(Interp *I, Source *src, int mode);
 FuncDecl *compile_program(Interp *I, Node *program, Source *src, Arena *arena, const char *name, int mode);
 FuncDecl *compile_debug(Interp *I, FuncDecl *d, Arena *arena);
 
@@ -1038,7 +1046,7 @@ char **os_files(const char *dir, const char *ext, int *n);  /* sorted; free each
 
 /* native.c */
 int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *lens, const char *argv0,
-                      const char *exe_out, int flags);
+                      const char *exe_out, int flags, StrBuf *image);
 void lube_native_attach(Interp *I, FuncDecl *program, Source *src);
 int lube_native_loop(Source *src, int index);
 int lube_global_watched(Interp *I, ObjString *name);

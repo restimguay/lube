@@ -110,13 +110,19 @@ It needs a C compiler (`cc`, or `CC`; `gcc` on Windows) when building, not when 
 
 ```sh
 ./lube --build --small app.lube -o app
-small: 12 of 117 built-ins
-built app: 3 files, 193321 bytes
+small: 10 of 117 built-ins, 7 of 13 fns and classes
+built app: 3 files, 162557 bytes
 ```
 
-For small machines such as a Raspberry Pi, `--small` builds an executable with only the parts of Lube the program uses. It leaves out what only the `lube` command needs (the REPL, the debugger, the tools that build programs and compile them to machine code) and every built-in function the program never names, and it optimizes the rest for size. On macOS (Apple silicon), the examples come out about half the size of a plain build: `hello.lube` is 191 KB instead of 371 KB.
+For small machines such as a Raspberry Pi, `--small` builds an executable with only the parts of Lube, and of the program, that can run:
+- The program goes in compiled, so the executable has no lexer, parser or compiler, and starts without compiling anything.
+- The functions and classes that nothing can reach are left out.
+- Of Lube's built-in functions, only those the program names go in.
+- What only the `lube` command needs (the REPL, the debugger, the tools that build programs and compile them to machine code) stays out, and the rest is optimized for size.
 
-The build finds the built-ins a program needs by name, in the code that can run: its top-level statements and the functions and classes they reach. A program that calls `globals()` (which reaches any global by name) keeps them all. Lube's own code is compiled for size, so it runs a little slower; with `--native` too, the compiled functions keep their speed.
+On macOS (Apple silicon), `hello.lube` is 142 KB instead of 388 KB. A 15,000-line program that calls one of its 3,000 functions is 156 KB instead of 653 KB, and it starts 8 times faster, in 1.7 MB of memory instead of 24.5 MB.
+
+The build finds what can run by name: the files' top-level statements, and the functions and classes they reach (a class with all its methods). A program that calls `globals()` (which reaches any global by name) keeps everything; one that calls `find_class` or `classes()` keeps every class. The sources go in too, without the lines of what was left out, so error messages show the lines they point at. Lube's own code is compiled for size, so it runs a little slower; with `--native` too, the compiled functions keep their speed.
 
 Like `--native`, it needs a C compiler when building (Raspberry Pi OS comes with `gcc`) and Lube's C sources (the `src` folder next to `lube`, or `LUBE_SRC`).
 
