@@ -406,10 +406,26 @@ typedef struct OnList OnList;
 typedef int (*LubeNativeFn)(const double *args, double *out, int depth_left);
 typedef struct LubeNative {
     const char *key;            /* the fn's global */
-    const char *sig;            /* its parameters' types, ':', its return type: N (Number), B (Bool), or none */
+    const char *sig;            /* its parameters' types, ':', its return type: N (Number), B (Bool), or none;
+                                   L, O: a list of records, a record (then fnv takes the arguments as they are) */
     uint64_t src_hash;          /* of the source file it was compiled from (natives fit only that text) */
     LubeNativeFn fn;
+    int (*fnv)(Interp *I, Value *args, double *out, int depth_left);
 } LubeNative;
+
+/* Records (native.c): the Number fields of an object, copied to and from an array. */
+#define LUBE_REC_MAX 16
+typedef struct {  /* per Interp, and per class: where the fields are */
+    Interp *I;
+    ObjString *names[LUBE_REC_MAX];
+    struct ObjClass *klass;
+    int pos[LUBE_REC_MAX];
+} LubeRecCache;
+int lube_rec_load(Interp *I, LubeRecCache *c, Value v, const char *const *fields, int nf, double *out);
+int lube_reclist_load(Interp *I, LubeRecCache *c, Value v, const char *const *fields, int nf, double **out, int64_t *n,
+                      double *buf, size_t bufsize);
+void lube_rec_store(Interp *I, LubeRecCache *c, Value *slot, int nf, const double *vals, const double *orig);
+void lube_reclist_store(Interp *I, LubeRecCache *c, Value *list, int nf, const double *vals, const double *orig);
 extern const LubeNative lube_natives[];  /* (nativetab.c, or the native build's own) */
 extern const int lube_nnatives;
 

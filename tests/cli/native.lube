@@ -127,6 +127,52 @@ fn many(n: Number): Number {
   return len(xs)
 }
 
+// records: untyped parameters used as objects whose fields are Numbers
+class Ball {
+  var x = 0
+  var v = 1
+  var name = "ball"
+}
+fn step(&balls, dt: Number) {  // a list of records, changed through &
+  for i in 0..len(balls) {
+    balls[i].x += balls[i].v * dt
+    if balls[i].x > 10 { balls[i].v = -balls[i].v }
+  }
+}
+fn total_x(balls): Number {  // read only, with copies of records
+  var t = 0
+  for b in balls {
+    if b.x > 0 { t += b.x }
+    var w = 0
+    while w < 1 { w += 1 }
+    for k in 0..1 { t += k }
+  }
+  for i, b in balls { t += i * b.v }
+  let first = balls[0]
+  return t + first.x + balls[-1].v
+}
+fn push_one(&p, by: Number) {  // one record, through &
+  p.x += by
+}
+fn moved(var p, by: Number): Number {  // one record, a changeable copy: the caller's is not changed
+  p.x += by
+  return p.x
+}
+fn local_copy(balls): Number {
+  var b = balls[0]
+  b.x = 100
+  return b.x + balls[0].x
+}
+fn by_number(balls, i: Number): Number => balls[i].x
+fn halve(&balls) {
+  balls[0].x /= 2
+  balls[0].v %= 3
+}
+fn then_fails(&balls, n: Number) {  // changes, then an error: the VM's changes so far stay, as without native code
+  balls[0].x = 50
+  balls[1].x = 60 / n
+}
+
 // these give up, and the VM runs the call: its errors, its limits
 fn zero_div(n: Number): Number => n / (n - n)
 fn zero_mod(n: Number): Number => n % 0
@@ -180,6 +226,13 @@ fn statement(n: Number): Number {
   return n
 }
 fn negate_bool(b: Bool): Number => -b
+fn record_passed(&balls) { step(&balls, 1) }
+fn bool_row(balls): Number => balls[true].x
+fn bad_field(&balls, b: Bool) { balls[0].x = b }
+fn loop_writes(&balls) {
+  for b in balls { balls[0].x = b.x }
+}
+fn many_fields(p): Number => p.a + p.b + p.c + p.d + p.e + p.f + p.g + p.h + p.i + p.j + p.k + p.l + p.m + p.n + p.o + p.q + p.r
 fn makes_closure(n: Number): Number {
   let f = fn(x) => x
   return f(n)
@@ -254,6 +307,30 @@ try { print(bool_list_add(1)) } catch e { print(e) }
 try { print(repeat_bool(1)) } catch e { print(e) }
 try { print(index_number(1)) } catch e { print(e) }
 try { print(push_value(1)) } catch e { print(e) }
+var balls = [Ball(), Ball(), {x: 5, v: 2}]
+balls[1].x = 9
+let kept = balls[1]  // shares the record until one of them changes
+var dots = balls
+for t in 0..3 { step(&balls, 1) }
+print(balls, kept, dots[1].x)
+print(total_x(balls), local_copy(balls), balls[0].x)
+var one = Ball()
+push_one(&one, 4)
+print(one.x, moved(one, 3), one.x)
+try { then_fails(&balls, 0) } catch e { print(e) }
+print(balls[0].x, balls[1].x)
+try { print(total_x([])) } catch e { print(e) }
+try { print(total_x([{x: 1}])) } catch e { print(e) }
+try { print(total_x([{x: "a", v: 1}])) } catch e { print(e) }
+try { print(total_x(5)) } catch e { print(e) }
+record_passed(&balls)
+loop_writes(&balls)
+halve(&balls)
+print(by_number(balls, 1), by_number(balls, -1.0), balls[0])
+try { print(by_number(balls, 0.5)) } catch e { print(e) }
+try { print(bool_row(balls)) } catch e { print(e) }
+try { bad_field(&balls, true) } catch e { print(e) }
+print(balls[0].x, many_fields({a: 1, b: 1, c: 1, d: 1, e: 1, f: 1, g: 1, h: 1, i: 1, j: 1, k: 1, l: 1, m: 1, n: 1, o: 1, q: 1, r: 1}))
 print(sets_global(7), counter, has_list(2), inner_fn(3), num_cond(0), while_num(4), for_call(1), with_try(2), statement(5))
 try { print(negate_bool(true)) } catch e { print(e) }
 print(makes_closure(3))

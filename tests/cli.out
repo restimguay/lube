@@ -204,6 +204,20 @@ unsupported operand types for '+': Bool and Number
 unsupported operand types for '*': List and Bool
 cannot index into a Number
 push_value() must return a Number, but it ended without returning a value
+[Ball {x: 3, v: 1, name: "ball"}, Ball {x: 10, v: -1, name: "ball"}, {x: 11, v: -2}] Ball {x: 9, v: 1, name: "ball"} 9
+20 103 3
+4 7 4
+division by zero
+50 10
+list index 0 is out of range (length 0)
+the object has no field 'v' (check with has() first, or use get(object, key, default))
+unsupported operand types for '>': str and Number
+cannot loop over a Number (expected a List, Range, str, Object or Channel)
+9 9 Ball {x: 4.5, v: 2, name: "ball"}
+list index must be a whole number, got 0.5
+list index must be a Number, not a Bool
+field 'x' of Ball is a Number, so it cannot hold a Bool
+4.5 17
 7 7 2 6 1 4 4 2 5
 cannot negate a Bool
 3
@@ -216,8 +230,8 @@ stack overflow: too much recursion
 300
 [exit 0]
 --- native: the program built
-native: fib, sum_mod, mixed, ops, compare, flags, maths, nothing, halves, neg, calls, is_even, evens, by_fraction, sieve, lists, bad_index, bad_repeat, many, zero_div, zero_mod, deep, no_return, big, neg_zero, has_list, statement, bool_add
-not native: uses_list (line 144), returns_any (line 147), calls_untyped (line 148), sets_global (line 151), inner_fn (line 159), num_cond (line 163), while_num (line 167), for_call (line 172), with_try (line 176), negate_bool (line 182), makes_closure (line 184), list_leaves (line 190), empty_list (line 193), mixed_list (line 197), list_retyped (line 207), index_bool (line 212), push_bool (line 216), text_list (line 220), bool_list_add (line 225), repeat_bool (line 229), index_number (line 232), push_value (line 235), contains (line 237)
+native: fib, sum_mod, mixed, ops, compare, flags, maths, nothing, halves, neg, calls, is_even, evens, by_fraction, sieve, lists, bad_index, bad_repeat, many, step, total_x, push_one, moved, local_copy, by_number, halve, then_fails, zero_div, zero_mod, deep, no_return, big, neg_zero, has_list, statement, bool_add
+not native: uses_list (line 190), returns_any (line 193), calls_untyped (line 194), sets_global (line 197), inner_fn (line 205), num_cond (line 209), while_num (line 213), for_call (line 218), with_try (line 222), negate_bool (line 228), bool_row (line 230), bad_field (line 231), many_fields (line 235), makes_closure (line 237), list_leaves (line 243), empty_list (line 246), mixed_list (line 250), list_retyped (line 260), index_bool (line 265), push_bool (line 269), text_list (line 273), bool_list_add (line 278), repeat_bool (line 282), index_number (line 285), push_value (line 288), contains (line 290)
 built TMP/native_app: 1 file, N bytes
 6765 2997 18.5 23.5 59.66666666666667 58.5 35.33333333333333
 true true true true 1 0
@@ -236,6 +250,20 @@ unsupported operand types for '+': Bool and Number
 unsupported operand types for '*': List and Bool
 cannot index into a Number
 push_value() must return a Number, but it ended without returning a value
+[Ball {x: 3, v: 1, name: "ball"}, Ball {x: 10, v: -1, name: "ball"}, {x: 11, v: -2}] Ball {x: 9, v: 1, name: "ball"} 9
+20 103 3
+4 7 4
+division by zero
+50 10
+list index 0 is out of range (length 0)
+the object has no field 'v' (check with has() first, or use get(object, key, default))
+unsupported operand types for '>': str and Number
+cannot loop over a Number (expected a List, Range, str, Object or Channel)
+9 9 Ball {x: 4.5, v: 2, name: "ball"}
+list index must be a whole number, got 0.5
+list index must be a Number, not a Bool
+field 'x' of Ball is a Number, so it cannot hold a Bool
+4.5 17
 7 7 2 6 1 4 4 2 5
 cannot negate a Bool
 3
@@ -265,6 +293,20 @@ unsupported operand types for '+': Bool and Number
 unsupported operand types for '*': List and Bool
 cannot index into a Number
 push_value() must return a Number, but it ended without returning a value
+[Ball {x: 3, v: 1, name: "ball"}, Ball {x: 10, v: -1, name: "ball"}, {x: 11, v: -2}] Ball {x: 9, v: 1, name: "ball"} 9
+20 103 3
+4 7 4
+division by zero
+50 10
+list index 0 is out of range (length 0)
+the object has no field 'v' (check with has() first, or use get(object, key, default))
+unsupported operand types for '>': str and Number
+cannot loop over a Number (expected a List, Range, str, Object or Channel)
+9 9 Ball {x: 4.5, v: 2, name: "ball"}
+list index must be a whole number, got 0.5
+list index must be a Number, not a Bool
+field 'x' of Ball is a Number, so it cannot hold a Bool
+4.5 17
 7 7 2 6 1 4 4 2 5
 cannot negate a Bool
 3
@@ -294,6 +336,20 @@ unsupported operand types for '+': Bool and Number
 unsupported operand types for '*': List and Bool
 cannot index into a Number
 push_value() must return a Number, but it ended without returning a value
+[Ball {x: 3, v: 1, name: "ball"}, Ball {x: 10, v: -1, name: "ball"}, {x: 11, v: -2}] Ball {x: 9, v: 1, name: "ball"} 9
+20 103 3
+4 7 4
+division by zero
+50 10
+list index 0 is out of range (length 0)
+the object has no field 'v' (check with has() first, or use get(object, key, default))
+unsupported operand types for '>': str and Number
+cannot loop over a Number (expected a List, Range, str, Object or Channel)
+9 9 Ball {x: 4.5, v: 2, name: "ball"}
+list index must be a whole number, got 0.5
+list index must be a Number, not a Bool
+field 'x' of Ball is a Number, so it cannot hold a Bool
+4.5 17
 7 7 2 6 1 4 4 2 5
 cannot negate a Bool
 3

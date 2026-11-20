@@ -1444,14 +1444,18 @@ static int call_native(Interp *I, FuncDecl *d, int base, int argc, Value *out) {
     const char *sig = d->native->sig;
     double args[8], result;
     if (I->dbg || argc != d->nparams) return 0;
-    for (int i = 0; i < argc; i++) {
-        Value v = I->stack[base + i];
-        if (sig[i] == 'N' && IS_NUM(v)) args[i] = v.as.number;
-        else if (sig[i] == 'B' && IS_BOOL(v)) args[i] = v.as.boolean;
-        else return 0;
-    }
     int left = LUBE_MAX_FRAMES - I->depth < NATIVE_DEPTH ? LUBE_MAX_FRAMES - I->depth : NATIVE_DEPTH;
-    if (d->native->fn(args, &result, left)) return 0;
+    if (d->native->fnv) {  /* records: its wrapper takes the arguments as they are */
+        if (d->native->fnv(I, &I->stack[base], &result, left)) return 0;
+    } else {
+        for (int i = 0; i < argc; i++) {
+            Value v = I->stack[base + i];
+            if (sig[i] == 'N' && IS_NUM(v)) args[i] = v.as.number;
+            else if (sig[i] == 'B' && IS_BOOL(v)) args[i] = v.as.boolean;
+            else return 0;
+        }
+        if (d->native->fn(args, &result, left)) return 0;
+    }
     char ret = sig[argc + 1];
     *out = ret == 'N' ? NUM_VAL(result) : ret == 'B' ? BOOL_VAL(result != 0) : NIL_VAL;
     return 1;
@@ -1741,7 +1745,9 @@ static Value new_instance(Interp *I, ObjClass *cls, int argc, ObjFunction **ctor
 static int start_call(Interp *I, int ci, int argc, Loan *loans, int nloans, int this_locked, Value *out) {
     Value callee = I->stack[ci], r;
     int base = ci + 1;
-    if (IS_FUNCTION(callee)) {
+    if (IS_FUNCTION(callee) && AS_FUNCTION(callee)->decl->native && call_native(I, AS_FUNCTION(callee)->decl, base, argc, &r)) {
+        /* its machine code did it (with what was lent: given back below) */
+    } else if (IS_FUNCTION(callee)) {
         Frame *f = enter(I, AS_FUNCTION(callee), base, argc);
         if (f) {
             f->this_locked = this_locked;
