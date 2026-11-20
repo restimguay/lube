@@ -98,9 +98,11 @@ ObjString *lube_intern(Interp *I, const char *chars, size_t length) {
 
 long str_find(const char *hay, size_t hlen, const char *needle, size_t nlen, size_t from) {
     if (nlen == 0) return from <= hlen ? (long)from : -1;
-    if (nlen > hlen) return -1;
-    for (size_t i = from; i + nlen <= hlen; i++) {
-        if (hay[i] == needle[0] && memcmp(hay + i, needle, nlen) == 0) return (long)i;
+    if (nlen > hlen || from > hlen - nlen) return -1;
+    const char *p = hay + from, *end = hay + (hlen - nlen) + 1;  /* (the first byte by memchr: quick) */
+    while (p < end && (p = memchr(p, needle[0], (size_t)(end - p))) != NULL) {
+        if (memcmp(p, needle, nlen) == 0) return (long)(p - hay);
+        p++;
     }
     return -1;
 }

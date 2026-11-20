@@ -29,16 +29,29 @@ size_t lube_max_bytes = LUBE_DEFAULT_MAX_BYTES;
 #define POOL_CLASSES 8
 #endif
 static LUBE_THREAD_LOCAL void *pool[POOL_CLASSES + 1];  /* each free block holds the next */
+static LUBE_THREAD_LOCAL void *slabs;  /* the memory they come from, 32 KB at a time (each holds the next first) */
+#define SLAB 32768
 
 static void *pool_get(size_t size, unsigned char *cls) {
     size_t c = (size + 15) / 16;
-    if (c > POOL_CLASSES) {
+    if (c == 0 || c > POOL_CLASSES) {
         *cls = 0;
         return xmalloc(size);
     }
     *cls = (unsigned char)c;
     void *p = pool[c];
-    if (!p) return xmalloc(c * 16);
+    if (!p) {  /* a new slab, cut into blocks of this size (its first 16 bytes: the list of slabs) */
+        char *slab = xmalloc(SLAB);
+        *(void **)slab = slabs;
+        slabs = slab;
+        size_t size_c = c * 16, n = (SLAB - 16) / size_c;
+        for (size_t i = n; i > 1; i--) {
+            void *b = slab + 16 + (i - 1) * size_c;
+            *(void **)b = pool[c];
+            pool[c] = b;
+        }
+        return slab + 16;
+    }
     pool[c] = *(void **)p;
     return p;
 }
@@ -72,14 +85,15 @@ void *lube_block_realloc(void *p, size_t old, size_t size) {
     return n;
 }
 
-/* Frees this thread's free blocks (when its interpreter ends). */
+/* Frees this thread's slabs (when its interpreter ends: none of its
+ * objects is left, and none went to another thread: isolates send copies). */
 void lube_pool_drain(void) {
-    for (int c = 1; c <= POOL_CLASSES; c++)
-        while (pool[c]) {
-            void *next = *(void **)pool[c];
-            free(pool[c]);
-            pool[c] = next;
-        }
+    for (int c = 1; c <= POOL_CLASSES; c++) pool[c] = NULL;
+    while (slabs) {
+        void *next = *(void **)slabs;
+        free(slabs);
+        slabs = next;
+    }
 }
 
 Obj *alloc_object(size_t size, ObjType type) {

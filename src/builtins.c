@@ -608,9 +608,27 @@ NATIVE(n_join) {
     if (argc > 1) NEED_STR(1);
     LIST_ARG(l, 0);
     ObjString *sep = argc > 1 ? text_of(argv[1]) : NULL;
+    size_t total = 0, i = 0;
+    for (; i < l->count && IS_TEXT(l->items[i]) && total <= LUBE_MAX_BYTES; i++)  /* only text: its length first */
+        total += text_of(l->items[i])->length + (i && sep ? sep->length : 0);
+    if (i == l->count && total <= LUBE_MAX_BYTES) {
+        ObjString *out = alloc_string(total);
+        char *at = out->chars;
+        for (i = 0; i < l->count; i++) {
+            ObjString *t = text_of(l->items[i]);
+            if (i && sep) {
+                memcpy(at, sep->chars, sep->length);
+                at += sep->length;
+            }
+            memcpy(at, t->chars, t->length);
+            at += t->length;
+        }
+        release(OBJ_VAL(l));
+        return OBJ_VAL(out);
+    }
     StrBuf sb;
     sb_init(&sb);
-    for (size_t i = 0; i < l->count; i++) {
+    for (i = 0; i < l->count; i++) {
         if (i && sep) sb_putn(&sb, sep->chars, sep->length);
         append_value(&sb, l->items[i], 0);
     }
@@ -993,8 +1011,14 @@ NATIVE(n_split) {
         if (sep->length == 0) {
             push_chars(I, out, s);
         } else {
-            size_t start = 0;
+            size_t start = 0, pieces = 1;
             long pos;
+            while ((pos = str_find(s->chars, s->length, sep->chars, sep->length, start)) >= 0) {  /* (how many first) */
+                pieces++;
+                start = (size_t)pos + sep->length;
+            }
+            list_reserve(out, pieces);
+            start = 0;
             while ((pos = str_find(s->chars, s->length, sep->chars, sep->length, start)) >= 0) {
                 list_push(out, OBJ_VAL(new_string(s->chars + start, (size_t)pos - start)));
                 start = (size_t)pos + sep->length;
