@@ -109,7 +109,8 @@ typedef char value_sizes_match[sizeof(Value) == sizeof(LubeValue) ? 1 : -1];  /*
 /* Every plugin function is called through this native: it finds which in I->calling. */
 static Value plugin_call(Interp *I, int argc, Value *argv) {
     const Fn *f = (const Fn *)I->calling->plugin_fn;
-    LubeValue small[8], *args = argc <= 8 ? small : (LubeValue *)xmalloc(sizeof(LubeValue) * (size_t)argc);
+    LubeValue small[8] = {{{0}}};  /* (zeroed: gcc would rather it were, with no arguments) */
+    LubeValue *args = argc <= 8 ? small : (LubeValue *)xmalloc(sizeof(LubeValue) * (size_t)argc);
     if (argc) memcpy(args, argv, sizeof(LubeValue) * (size_t)argc);
     LubeValue r = f->fn((LubeVM *)I, argc, args);
     if (args != small) free(args);

@@ -166,7 +166,9 @@ int lube_call_value(LubeVM *vm, LubeValue fn, int argc, const LubeValue *argv, L
         sb_printf(&((Hosted *)I->hosted)->error, "error: lube_call: %s is not a function\n", a_type(f));
         return leave(I, was, 1);
     }
-    Value small[8], *args = argc <= 8 ? small : (Value *)xmalloc(sizeof(Value) * (size_t)argc);
+    Value small[8];
+    memset(small, 0, sizeof small);  /* (zeroed: gcc would rather it were, with no arguments) */
+    Value *args = argc <= 8 ? small : (Value *)xmalloc(sizeof(Value) * (size_t)argc);
     for (int i = 0; i < argc; i++) args[i] = value_from_lube(argv[i]);
     ObjNative *calling = I->calling;  /* (the program's function that called this finds its data after) */
     r = lube_call(I, f, argc, args);

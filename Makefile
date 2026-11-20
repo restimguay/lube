@@ -63,7 +63,7 @@ PREFIX ?= /usr/local
 CHECK_SRC := $(wildcard src/*.c) $(PLUGIN_SRC)
 CHECK_LIBS := $(LDLIBS) $(PLUGIN_LIBS_net)
 
-all: lube$(EXE) $(PLUGIN_FILES)
+all: lube$(EXE) $(PLUGIN_FILES) liblube.a
 
 lube$(EXE): $(EXE_OBJ)
 	$(CC) $(LDFLAGS) -o $@ $(EXE_OBJ) $(LDLIBS)
