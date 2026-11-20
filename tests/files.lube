@@ -1,0 +1,135 @@
+// Files and folders (in build/, which the tests may use)
+import fs.*  // the plugin fs: files and folders
+
+fn tries(f) { try { f() } catch e { print("error:", e) } }
+
+let dir = "build/files-test"
+if exists(dir) {  // (left over from a run that stopped)
+    for name in list_dir(dir + "/a/b") { remove_file(dir + "/a/b/" + name) }
+    for name in list_dir(dir + "/a") { remove_file(dir + "/a/" + name) }
+    for name in list_dir(dir) { remove_file(dir + "/" + name) }
+    remove_file(dir)
+}
+
+// folders
+make_dir(dir + "/a/b")
+make_dir(dir + "/a/b")  // already there: fine
+print(exists(dir), is_dir(dir + "/a"), is_dir(dir + "/nope"), exists(dir + "/nope"), list_dir(dir + "/a"))
+
+// writing: text and bytes, and how many bytes went
+let path = dir + "/a/b/save.bin"
+var f = open(path, "w")
+print(f.write("line one\r\nline two\n"), f.write(Bytes([0, 255])), f.write(""), f.tell())
+f.close()
+f.close()  // again: nothing
+print(f, file_size(path), exists(path))
+
+// reading: lines, then bytes; where it is; the end
+f = open(path)
+print(f, f.size(), f.eof())
+print(f.read_line(), "|", f.read_line(), f.tell())
+print(f.read(1), f.read(), f.read(), f.eof())
+f.seek(0)
+print(f.read(4).decode())
+f.seek(-2, "end")
+print(f.read(1), f.tell())
+f.seek(-6, "current")
+print(f.read(3).decode())
+f.close()
+
+// a save file: a header, then records
+fn save(name: str, scores: Number[]) {
+    var out = Bytes("SAVE")
+    out.pack("u16", len(scores))
+    for s in scores { out.pack("f64", s) }
+    write_bytes(name, out)
+}
+fn load(name: str): Number[] {
+    let data = read_bytes(name)
+    if data.slice(0, 4) != Bytes("SAVE") { throw "not a save file" }
+    var scores = Number[]
+    for i in 0..data.unpack("u16", 4) { push(&scores, data.unpack("f64", 6 + i * 8)) }
+    return scores
+}
+save(dir + "/scores.sav", Number[10, 2.5, -7])
+write_bytes(dir + "/0-first", Bytes())
+print(list_dir(dir))  // (sorted)
+remove_file(dir + "/0-first")
+print(load(dir + "/scores.sav"), file_size(dir + "/scores.sav"))
+
+// adding to the end, then reading and writing one file
+f = open(dir + "/log.txt", "a")
+f.write("one\n")
+f.close()
+f = open(dir + "/log.txt", "a+")
+f.write("two\n")
+f.seek(0)
+print(f.read().decode())
+f.close()
+f = open(dir + "/log.txt", "r+")
+f.seek(1)
+f.write("NE")
+f.flush()
+f.seek(0)
+print(f.read_line(), f.read_line())
+f.close()
+print(read_file(dir + "/log.txt"))
+f = open(dir + "/log.txt", "w+")
+print(f.size(), f.read())
+f.close()
+
+// as a type: of parameters and lists
+fn size_of(x: File): Number => x.size()
+let both = [open(dir + "/scores.sav"), open(dir + "/log.txt")]
+print(size_of(both[0]), len(both), type(both))
+for x in both { x.close() }
+
+// one file, two owners: it closes when both are done (or at close())
+var g = open(path)
+var h = g
+g.close()
+tries(fn() { h.read() })
+
+// renaming, removing
+rename_file(path, dir + "/a/b/moved.bin")
+print(exists(path), exists(dir + "/a/b/moved.bin"))
+write_bytes(dir + "/a/b/other.bin", Bytes("x"))
+rename_file(dir + "/a/b/other.bin", dir + "/a/b/moved.bin")  // replaces it
+print(read_bytes(dir + "/a/b/moved.bin"), list_dir(dir + "/a/b"))
+
+// mistakes
+tries(fn() { open(dir + "/nope/x.bin") })
+tries(fn() { open(path, "rw") })
+tries(fn() { open(5) })
+tries(fn() { var x = open(dir + "/scores.sav"); x.seek(0, "middle") })
+tries(fn() { var x = open(dir + "/scores.sav"); x.seek(0.5) })
+tries(fn() { var x = open(dir + "/scores.sav"); x.read(-1) })
+tries(fn() { var x = open(dir + "/scores.sav"); x.read(); x.read_line() })
+tries(fn() { var x = open(dir + "/scores.sav"); x.write([1]) })
+tries(fn() { var x = open(dir + "/scores.sav"); x.close(); x.tell() })
+tries(fn() { list_dir(dir + "/nope") })
+tries(fn() { file_size(dir + "/nope") })
+tries(fn() { remove_file(dir + "/nope") })
+tries(fn() { remove_file(dir + "/a") })
+tries(fn() { make_dir(dir + "/scores.sav/inside") })
+tries(fn() { size_of("scores.sav") })
+tries(fn() { rename_file(dir + "/nope", dir + "/x") })
+tries(fn() { read_bytes(dir + "/nope") })
+tries(fn() { write_bytes(dir + "/x", "text") })
+tries(fn() { sleep(-1) })
+tries(fn() { len(open(dir + "/scores.sav")) })
+
+// sleep: a frame's wait
+let t = now()
+sleep(0.02)
+print(now() - t >= 0.015, now() >= t)
+sleep(0)
+
+// cleaning up
+remove_file(dir + "/a/b/moved.bin")
+remove_file(dir + "/a/b")
+remove_file(dir + "/a")
+remove_file(dir + "/scores.sav")
+remove_file(dir + "/log.txt")
+remove_file(dir)
+print(exists(dir))

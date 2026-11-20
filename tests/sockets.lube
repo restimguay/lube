@@ -1,0 +1,178 @@
+// Sockets: TCP and UDP on this machine (127.0.0.1)
+import net.*  // the plugin net
+
+fn tries(f, port = 0) {
+    try { f() } catch e {
+        var said = str(e)
+        if port > 0 { said = replace(said, "{port}", "PORT") }
+        print("error:", said)
+    }
+}
+fn shown(x, port: Number) => replace(str(x), "{port}", "PORT")  // (ports differ from run to run)
+
+// a server and a connection
+let server = tcp_listen(0, "127.0.0.1")  // port 0: the system chooses one
+let port = server.port()
+print(port > 0, server.is_open(), shown(server, port), server.accept())  // nothing yet: []
+let client = tcp_connect("127.0.0.1", port)
+let conns = server.accept(5)  // waits (up to 5 seconds) for the connection
+let conn = conns[0]
+print(len(conns), type(conns), client.peer() == "127.0.0.1:{port}", conn.peer() == "127.0.0.1:{client.port()}")
+
+// sending: Bytes or a str; receiving: what has arrived, as Bytes
+print(client.send("hello"), client.send(Bytes([0, 1])))
+var got = Bytes()
+while len(got) < 7 { got += conn.receive(5) }
+print(got, conn.receive(), poll([conn, client]))  // all read: nothing more, nothing ready
+conn.send("back")
+let ready = poll([server, conn, client], 5)
+print(len(ready), ready[0] == client, client.receive(5).decode())
+
+// a bigger message comes in parts: keep what has arrived until it is all there
+var big = Bytes(200000)
+big[199999] = 9
+client.send(big)
+var parts = Bytes()
+while len(parts) < len(big) { parts += conn.receive(5) }
+print(len(parts), parts == big)
+
+// waiting, when nothing comes: an empty answer after the time
+print(server.accept(0.01), conn.receive(0.01), poll([conn], 0.01))
+
+// closing: the other side sees an empty receive, and is_open() turns false
+client.close()
+client.close()  // again: nothing
+print(client.is_open(), shown(client, port))
+print(conn.receive(5), conn.is_open(), poll([conn], INF) == [conn])
+print(conn.send("anyone?") || true, conn.is_open())
+
+// sending to one that has gone (without reading what it said first): false, soon
+let leaver = tcp_connect("127.0.0.1", port)
+let left = server.accept(5)[0]
+leaver.close()
+var still = true
+var tries_left = 200
+while still && tries_left > 0 {
+    still = left.send("hello?")
+    tries_left -= 1
+    sleep(0.01)
+}
+print(still, left.is_open())
+
+// as a type
+fn port_of(s: Socket): Number => s.port()
+print(port_of(server) == port)
+
+// a game server's loop: accept, read, reply, wait for the next frame
+let players = [tcp_connect("127.0.0.1", port), tcp_connect("127.0.0.1", port)]
+var clients = []
+var said = []
+var frames = 0
+while len(said) < 2 && frames < 500 {
+    for c in server.accept() { push(&clients, c) }
+    if len(clients) == 2 && frames == 0 {
+        players[0].send("hi")
+        players[1].send("yo")
+    }
+    for c in clients {
+        let msg = c.receive()
+        if len(msg) > 0 {
+            push(&said, msg.decode())
+            c.send("ok " + msg.decode())
+        }
+    }
+    if len(clients) == 2 { frames += 1 }
+    poll(clients + [server], 0.01)
+}
+print(len(clients), sort(said), players[0].receive(5).decode(), players[1].receive(5).decode())
+
+// UDP: packets, each with who sent it
+let a = udp_open(0, "127.0.0.1")
+let b = udp_open(0, "127.0.0.1")
+print(a.send_to("127.0.0.1", b.port(), Bytes("ping")), a.send_to("127.0.0.1", b.port(), ""))
+let ps = b.packets(5)
+print(len(ps), ps[0].data, ps[1].data, ps[0].host, ps[0].port == a.port())
+b.send_to(ps[0].host, ps[0].port, "pong")
+print(a.receive(5).decode(), a.receive(), b.packets(), b.packets(0.01))
+var position = Bytes()
+position.pack("u8", 3)
+position.pack("f32", 1.5)
+position.pack("f32", -2)
+a.send_to("127.0.0.1", b.port(), position)
+let p = b.packets(5)[0].data
+print(p.unpack("u8"), p.unpack("f32", 1), p.unpack("f32", 5))
+
+// IPv6, where the machine has it
+fn on_ipv6(): Bool {
+    try {
+        let six = udp_open(0, "::1")
+        let other = udp_open(0, "::1")
+        other.send_to("::1", six.port(), "6")
+        let got = six.packets(5)
+        return str(six).starts_with("Socket(udp [::1]:") && got[0].host == "::1" && got[0].data == Bytes("6")
+    } catch e {
+        return true  // (no IPv6 here)
+    }
+}
+print(on_ipv6())
+
+// waiting: poll with nothing ready waits its time
+let t = now()
+print(poll([a, b], 0.05), now() - t >= 0.04, poll([], 0.01))
+
+// an isolate can wait as long as it likes
+fn echo_server(ports: Channel): Number {
+    let s = tcp_listen(0, "127.0.0.1")
+    ports.send(s.port())
+    let c = s.accept(INF)[0]
+    var total = 0
+    while c.is_open() {
+        let d = c.receive(INF)
+        total += len(d)
+        if len(d) > 0 { c.send(d) }
+    }
+    return total
+}
+let ports = channel()
+let echo = spawn(echo_server, ports)
+let e = tcp_connect("127.0.0.1", ports.receive())
+e.send("echo me")
+var back = Bytes()
+while len(back) < 7 { back += e.receive(5) }
+print(back.decode())
+e.close()
+print(echo.join())
+
+// mistakes
+let taken = server.port()
+tries(fn() { tcp_listen(taken, "127.0.0.1") }, taken)
+let gone = tcp_listen(0, "127.0.0.1")
+let gone_port = gone.port()
+gone.close()
+tries(fn() { tcp_connect("127.0.0.1", gone_port) }, gone_port)
+tries(fn() { tcp_listen(70000) })
+tries(fn() { tcp_listen(1.5) })
+tries(fn() { tcp_listen("80") })
+tries(fn() { tcp_connect(5, 80) })
+tries(fn() { tcp_connect("127.0.0.1", 80, -1) })
+tries(fn() { server.receive() })
+tries(fn() { server.send("x") })
+tries(fn() { server.packets() })
+tries(fn() { server.peer() })
+tries(fn() { server.accept("soon") })
+tries(fn() { a.send("x") })
+tries(fn() { a.accept() })
+tries(fn() { conn.packets() })
+tries(fn() { conn.send_to("127.0.0.1", 9, "x") })
+tries(fn() { a.send_to("127.0.0.1", 9, [1]) })
+tries(fn() { a.send_to("::1", 9, "x") })
+tries(fn() { a.send_to("127.0.0.1", 9, Bytes(70000)) })
+tries(fn() { poll([server, 5]) })
+tries(fn() { poll(server) })
+tries(fn() { poll([], INF) })
+tries(fn() { channel().send(server) })
+tries(fn() { port_of(5) })
+a.close()
+tries(fn() { a.packets() })
+tries(fn() { a.port() })
+print(a.is_open(), poll([a], 0))

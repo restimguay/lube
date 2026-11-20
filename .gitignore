@@ -6,3 +6,5 @@ lube-check.dSYM/
 *.profraw
 lube-tsan
 lube-tsan.dSYM/
+/plugins/
+/liblube.a

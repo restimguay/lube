@@ -1,0 +1,49 @@
+// A plugin of one's own (tests/plugins/greet.c, found through LUBE_PLUGINS)
+import greet
+import greet.Counter as Count
+fn tries(f) { try { f() } catch e { print("error:", e) } }
+
+print(greet.hello("you"), greet.fmt(1.5), greet.fmt(1e21))
+print(greet.kind(1), greet.kind(int8(1)), greet.kind("s"), greet.kind(String("s")), greet.kind(true), greet.kind(Bytes(1)))
+print(greet.kind([1]), greet.kind({a: 1}), greet.kind(Map()), greet.kind(greet.plain()), greet.kind(print), greet.kind(1..2))
+print(greet.kind())
+print(greet.look([7, 8]), greet.look(Bytes(3)), greet.look("x"), greet.look(false))
+print(greet.pick({x: 5}, "x"), greet.pick({x: 5}, "y"), greet.pick([1], "x"))
+let m = greet.made()
+print(m, m.sizes, type(m))
+print(greet.misuse([1], {}))
+
+// its types: made by calling them, with methods, printed by the plugin
+var c = greet.Counter(10, [1, 2])
+c.add(5)
+print(c, c.tag(), type(c), c is greet.Counter, c is Count, greet.is_counter(c), greet.is_counter(5))
+fn bump(x: Count): Count {
+    x.add(1)
+    return x
+}
+print(bump(c), class_of(c) == Count, methods(c), has_method(c, "add"), has_method(c, "nope"))
+print(call_method(c, "tag"), signature(Count), signature(Count, "add").builtin)
+let copy = c  // (copies share it: it is the plugin's)
+copy.add(100)
+print(c, copy == c, greet.Counter(1, 0) == greet.Counter(1, 0))
+print(greet.plain(), greet.Long(1, 2, 3), greet.Pair(1))
+
+// let go of: the plugin's release runs once per object
+let before = greet.released()
+var many = []
+for i in 0..5 { push(&many, greet.Counter(i, "tag {i}")) }
+many = []
+print(greet.released() - before)
+
+// mistakes
+tries(fn() { greet.hello(5) })
+tries(fn() { greet.fail(1, 2, 3) })
+tries(fn() { greet.Counter() })
+tries(fn() { greet.Long() })
+tries(fn() { greet.Pair(1, 2, 3) })
+tries(fn() { greet.Plain() })
+tries(fn() { c.nope() })
+tries(fn() { bump(5) })
+tries(fn() { greet.hello() })
+tries(fn() { channel().send(c) })
+tries(fn() { greet._private })

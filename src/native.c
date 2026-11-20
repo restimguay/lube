@@ -2029,6 +2029,7 @@ static void shake_walk(Shake *k, Node *n) {
         shake_list(k, &n->as.method.args);
         shake_name(k, n->as.method.name);
         shake_member(k, n->as.method.name);
+        map_set(k->used, retain(OBJ_VAL(n->as.method.name)), BOOL_VAL(1));  /* (also a method of Bytes or File) */
         if (n->as.method.fallback.name) shake_name(k, n->as.method.fallback.name);
         break;
     case N_INDEX:
@@ -2185,7 +2186,7 @@ static size_t shake_text(char *text, size_t len, NodeList *stmts, const unsigned
  * executable exe_out: Lube itself, with the functions that can be native
  * compiled to machine code. Returns 0, or an exit status after a message. */
 int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *lens, const char *argv0,
-                      const char *exe_out, int flags, StrBuf *image) {
+                      const char *exe_out, int flags, StrBuf *image, char **plugins, int nplugins, int *inside) {
     int fast = flags & LUBE_BUILD_FAST, small = flags & LUBE_BUILD_SMALL, natives = flags & LUBE_BUILD_NATIVE;
     Gen g;
     memset(&g, 0, sizeof g);
@@ -2355,6 +2356,27 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
                 natives ? "native" : "small");
         status = 69;
     }
+    /* the plugins it imports that come with Lube go inside it (srcdir/plugins/NAME.c); others stay files */
+    StrBuf plugin_src;
+    sb_init(&plugin_src);
+    sb_puts(&c, "\nstruct LubePlugin;\nstruct LubeAPI;\n");
+    for (int i = 0; i < nplugins; i++) {
+        StrBuf path;
+        sb_init(&path);
+        sb_printf(&path, "%s/plugins/%s.c", srcdir ? srcdir : ".", plugins[i]);
+        FILE *pf = srcdir ? fopen(path.data, "rb") : NULL;
+        inside[i] = pf != NULL;
+        if (pf) {
+            fclose(pf);
+            sb_printf(&plugin_src, " \"%s\"", path.data);
+            sb_printf(&c, "int lube_plugin_init_%s(struct LubePlugin *, const struct LubeAPI *);\n", plugins[i]);
+        }
+        sb_free(&path);
+    }
+    sb_puts(&c, "const LubeStaticPlugin lube_static_plugins[] = {\n");
+    for (int i = 0; i < nplugins; i++)
+        if (inside[i]) sb_printf(&c, "    {\"%s\", lube_plugin_init_%s},\n", plugins[i], plugins[i]);
+    sb_puts(&c, "    {0, 0}\n};\n");
     StrBuf gen, cmd, keep;
     sb_init(&gen);
     sb_init(&cmd);
@@ -2374,6 +2396,17 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
             sb_printf(&h, "#define LUBE_KEEP_%s(...)%s\n", AS_STRING(m->key)->chars, on ? " __VA_ARGS__" : "");
             kept += on;
             builtins++;
+        }
+        for (int t = 0; t < LUBE_TM_TYPES; t++) {  /* and the methods of Bytes and File: LUBE_KEEPM_<name> */
+            ObjMap *tm = I->tmethods[t];
+            for (size_t e = 0; tm && e < tm->used; e++) {
+                MapEntry *m = &tm->entries[e];
+                if (!m->live) continue;
+                int on = every_builtin || map_get(used, m->key, NULL);
+                sb_printf(&h, "#define LUBE_KEEPM_%s(...)%s\n", AS_STRING(m->key)->chars, on ? " __VA_ARGS__" : "");
+                kept += on;
+                builtins++;
+            }
         }
         sb_printf(&keep, "%.*s.keep.h", (int)base, exe_out);
         FILE *hf = fopen(keep.data, "wb");
@@ -2441,14 +2474,20 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
             free(files[i]);
         }
         free(files);
+        if (plugin_src.len) sb_puts(&cmd, plugin_src.data);
         sb_printf(&cmd, " \"%s\" -I\"%s\" -o \"%s\" -lm", fast || small ? obj.data : gen.data, srcdir, exe_out);
 #if defined(__APPLE__)
         if (small) sb_puts(&cmd, " -Wl,-dead_strip -Wl,-x -Wl,-S");  /* (what nothing calls goes, and symbols) */
 #else
         if (small) sb_puts(&cmd, " -Wl,--gc-sections -s");
 #endif
-#ifndef _WIN32
+#ifdef _WIN32
+        sb_puts(&cmd, " -lws2_32");  /* (sockets: plugins/net.c, when it is inside) */
+#else
         sb_puts(&cmd, " -lpthread");
+#endif
+#ifdef __linux__
+        sb_puts(&cmd, " -ldl");  /* (plugins from files; and plugins/audio.c opens ALSA at run time) */
 #endif
         if (extra) sb_printf(&cmd, " %s", extra);
 #ifdef _WIN32
@@ -2482,6 +2521,7 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
     sb_free(&gen);
     sb_free(&keep);
     sb_free(&cmd);
+    sb_free(&plugin_src);
     sb_free(&c);
     sb_free(&names);
     for (int i = 0; i < nfiles; i++) arena_free(arenas[i]);

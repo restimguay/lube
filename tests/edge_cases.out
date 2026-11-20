@@ -8,8 +8,8 @@ error: unsupported operand types for '<=': List and List
 error: unsupported operand types for '>': List and List
 error: unsupported operand types for '>=': List and List
 error: unsupported operand types for '*': Bool and Number
-error: cannot look inside a Number (expected a List, str, Object or Range)
-error: cannot look inside a Number (expected a List, str, Object or Range)
+error: cannot look inside a Number (expected a List, str, Object, Range or Bytes)
+error: cannot look inside a Number (expected a List, str, Object, Range or Bytes)
 error: cannot negate a str
 error: can only search text for text, not for a Number
 error: list index must be a Number, not a str
@@ -72,7 +72,7 @@ error: division by zero
 error: division by zero
 error: division by zero
 error: undefined variable 'NoSuchClass'
-error: cannot loop over a Number (expected a List, Range, str, Object or Channel)
+error: cannot loop over a Number (expected a List, Range, str, Object, Channel or Bytes)
 error: the object has no field 'missing' (add it first with an assignment)
 error: min() takes at least 1 argument but got 0
 error: 'f' is not a function (it is a Number)

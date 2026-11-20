@@ -206,6 +206,9 @@ static uint32_t hash_at(Value v, int depth) {
     } else if (IS_RANGE(v)) {
         ObjRange *r = AS_RANGE(v);
         h ^= hash_double(r->start) + 3u * hash_double(r->end) + 7u * hash_double(r->step) + (uint32_t)r->inclusive;
+    } else if (IS_BYTES(v)) {
+        ObjBytes *b = AS_BYTES(v);
+        h ^= hash_bytes((const char *)b->data, b->len);
     } else {
         h ^= mix64((uint64_t)(uintptr_t)v.as.obj);  /* functions: by identity */
     }
@@ -231,6 +234,7 @@ ObjMap *new_map(void) {
     m->index_cap = 0;
     m->dict = 0;
     m->ktype = m->vtype = TT_ANY;
+    m->internal = 0;
     m->klass = NULL;
     return m;
 }
@@ -258,8 +262,8 @@ static void map_resize(ObjMap *m, size_t want) {
     }
     m->used = j;
 
-    /* index entries are 32-bit, and sizes must not overflow */
-    if (want > ((size_t)1 << 30) || want > LUBE_MAX_ITEMS) lube_out_of_memory();
+    /* index entries are 32-bit, and sizes must not overflow (the limit is on items, not on room) */
+    if (want > ((size_t)1 << 30) || (m->count >= LUBE_MAX_ITEMS && !m->internal)) lube_out_of_memory();
     size_t cap = 8;
     while (cap < want) cap *= 2;
     m->entries = xrealloc(m->entries, cap * sizeof(MapEntry));
@@ -351,9 +355,17 @@ ObjMap *map_copy(ObjMap *src) {
 /* Copy-on-write: before changing a list or map in place, make sure this
  * slot is its only owner. If it is shared, the slot gets its own copy. */
 void make_unique(Value *slot) {
-    /* only lists and objects are ever changed in place */
-    if (!(IS_LIST(*slot) || IS_MAP(*slot)) || slot->as.obj->rc <= 1) return;
-    Value copy = IS_LIST(*slot) ? OBJ_VAL(list_copy(AS_LIST(*slot))) : OBJ_VAL(map_copy(AS_MAP(*slot)));
+    /* only lists, objects and bytes are ever changed in place */
+    if (!(IS_LIST(*slot) || IS_MAP(*slot) || IS_BYTES(*slot)) || slot->as.obj->rc <= 1) return;
+    Value copy;
+    if (IS_BYTES(*slot)) {
+        ObjBytes *b = AS_BYTES(*slot), *c = new_bytes(b->len);
+        if (b->len) memcpy(c->data, b->data, b->len);
+        c->len = b->len;
+        copy = OBJ_VAL(c);
+    } else {
+        copy = IS_LIST(*slot) ? OBJ_VAL(list_copy(AS_LIST(*slot))) : OBJ_VAL(map_copy(AS_MAP(*slot)));
+    }
     release(*slot);
     *slot = copy;
 }
@@ -414,11 +426,12 @@ double range_length(ObjRange *r) {
 
 static const char *TYPE_NAMES[TT_COUNT] = {
     "List", "str", "String", "Number", "Bool", "Object", "Map", "List", "Function", "Range", "Channel", "Isolate",
-    "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64",
+    "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64", "Bytes",
 };
 static const char *LIST_NAMES[TT_COUNT] = {
     "List", "str[]", "String[]", "Number[]", "Bool[]", "Object[]", "Map[]", "List[]", "Function[]", "Range[]",
     "Channel[]", "Isolate[]", "int8[]", "int16[]", "int32[]", "int64[]", "uint8[]", "uint16[]", "uint32[]", "uint64[]",
+    "Bytes[]",
 };
 
 /* The TypeTag of a type name such as "String" or "int32", or -1. */
@@ -469,6 +482,8 @@ TypeDesc desc_of(Value v) {
         case OBJ_RANGE: d.kind = TD_RANGE; break;
         case OBJ_CLASS: d.kind = TD_CLASSVAL; break;
         case OBJ_CHANNEL: d.kind = TD_CHANNEL; break;
+        case OBJ_BYTES: d.kind = TD_BYTES; break;
+        case OBJ_FOREIGN: d.kind = TD_CLASS; d.cls = AS_FOREIGN(v)->klass; break;
         case OBJ_ISOLATE: d.kind = TD_ISOLATE; break;
         case OBJ_PACKAGE: d.kind = TD_OBJECT; break;
         case OBJ_MAP:
@@ -501,9 +516,12 @@ int desc_accepts(TypeDesc d, Value v, Value *out) {
     case TD_FUNCTION: return IS_CALLABLE(v);
     case TD_RANGE: return IS_RANGE(v);
     case TD_CHANNEL: return IS_CHANNEL(v);
+    case TD_BYTES: return IS_BYTES(v);
     case TD_ISOLATE: return IS_ISOLATE(v);
     case TD_CLASSVAL: return IS_CLASS(v);
-    default: return IS_INSTANCE(v) && is_subclass(AS_MAP(v)->klass, d.cls);  /* TD_CLASS */
+    default:  /* TD_CLASS: an instance of it or of a subclass; or a plugin's object of its type */
+        if (d.cls->foreign) return IS_FOREIGN(v) && AS_FOREIGN(v)->klass->foreign == d.cls->foreign;
+        return IS_INSTANCE(v) && is_subclass(AS_MAP(v)->klass, d.cls);
     }
 }
 
@@ -520,6 +538,7 @@ const char *desc_name(TypeDesc d) {
     case TD_FUNCTION: return "Function";
     case TD_RANGE: return "Range";
     case TD_CHANNEL: return "Channel";
+    case TD_BYTES: return "Bytes";
     case TD_ISOLATE: return "Isolate";
     case TD_CLASSVAL: return "Class";
     default: return d.cls->name->chars;  /* TD_CLASS */
@@ -548,6 +567,7 @@ int value_has_type(Value v, int tag) {
     case TT_RANGE: return IS_RANGE(v);
     case TT_CHANNEL: return IS_CHANNEL(v);
     case TT_ISOLATE: return IS_ISOLATE(v);
+    case TT_BYTES: return IS_BYTES(v);
     default: return IS_INT(v) && v.ikind == tag - TT_INT8;
     }
 }
@@ -625,6 +645,11 @@ int values_equal(Value a, Value b) {
                     p->inclusive == q->inclusive;
             break;
         }
+        case OBJ_BYTES: {
+            ObjBytes *p = AS_BYTES(x), *q = AS_BYTES(y);
+            equal = p->len == q->len && (!p->len || !memcmp(p->data, q->data, p->len));
+            break;
+        }
         case OBJ_CHANNEL:  /* the same channel, held through two wrappers (an isolate's handle has just one) */
             equal = AS_CHANNEL(x)->ch == AS_CHANNEL(y)->ch;
             break;
@@ -654,6 +679,8 @@ const char *type_name(Value v) {
         if (AS_MAP(v)->klass) return AS_MAP(v)->klass->name->chars;
         return AS_MAP(v)->dict ? map_name(AS_MAP(v)->ktype, AS_MAP(v)->vtype) : "Object";
     case OBJ_RANGE: return "Range";
+    case OBJ_BYTES: return "Bytes";
+    case OBJ_FOREIGN: return AS_FOREIGN(v)->klass->name->chars;
     case OBJ_CLASS: return "Class";
     case OBJ_CHANNEL: return "Channel";
     case OBJ_ISOLATE: return "Isolate";
@@ -807,6 +834,17 @@ static void append_inner(StrBuf *sb, Value v, int quote, int depth) {
     }
     case OBJ_NATIVE:
         sb_printf(sb, "<builtin %s>", AS_NATIVE(v)->name);
+        return;
+    case OBJ_BYTES: {  /* Bytes(68 69): in hex, the first 64 */
+        ObjBytes *b = AS_BYTES(v);
+        sb_puts(sb, "Bytes(");
+        for (size_t i = 0; i < b->len && i < 64; i++) sb_printf(sb, i ? " %02x" : "%02x", b->data[i]);
+        if (b->len > 64) sb_printf(sb, " ... %lu bytes", (unsigned long)b->len);
+        sb_putc(sb, ')');
+        return;
+    }
+    case OBJ_FOREIGN:  /* as its plugin says: Socket(tcp 127.0.0.1:5000) */
+        lube_foreign_describe(sb, v);
         return;
     case OBJ_RANGE: {
         ObjRange *r = AS_RANGE(v);

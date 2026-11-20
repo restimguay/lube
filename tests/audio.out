@@ -1,0 +1,36 @@
+Sound(0.1 seconds, 44100 Hz, mono) 0.1 44100 1 4410 0
+Sound(0 seconds, 22050 Hz, stereo) 2 [0.5, -0.5, 0.25, -0.25, 1, -1]
+Sound(0 seconds, 44100 Hz, mono) 0 []
+0 Sound true
+8864 RIFF WAVEfmt  1 44100
+Sound(0.1 seconds, 44100 Hz, mono) true
+[0.5, -0.5, 0.25, -0.25, 0.999969482421875, -0.999969482421875] [0.999969482421875, -0.999969482421875]
+Sound(2 seconds, 44100 Hz, mono) 176444
+Sound(0.1 seconds, 44100 Hz, mono) true
+[-1, 0, 0.9921875]
+[-1, 0.5]
+[-1, 0.5]
+[-0.5]
+[0.25, -0.75] Sound(0 seconds, 48000 Hz, stereo)
+[0.125]
+[-1, 0.5]
+[-1, 0.5]
+[-1]
+error: Sound(): cannot open 'build/no-such.wav': No such file or directory
+error: Sound(): 'build/not.wav' is not a WAV file
+error: Sound(): these bytes are not a WAV file
+error: Sound(): these bytes are compressed or unusual: Sound plays PCM (8, 16, 24 or 32 bits) and float WAV files
+error: Sound(): these bytes are in more than two channels: Sound plays mono and stereo
+error: Sound(): these bytes are at a sample rate Sound does not play (it plays 1000 to 384000)
+error: Sound(): these bytes are compressed or unusual: Sound plays PCM (8, 16, 24 or 32 bits) and float WAV files
+error: Sound(): these bytes are not a WAV file (no format, or no samples)
+error: Sound(): a stereo sound's samples come in pairs (left, right), but there are 3
+error: Sound(samples, rate): the rate is samples a second, from 1000 to 384000
+error: Sound(samples, rate, channels): channels is 1 (mono) or 2 (stereo)
+error: Sound(): sample 1 is a str, not a Number
+error: Sound() expects a path, a WAV file's Bytes or a List of samples, got Number
+error: Sound() takes one argument for a WAV file (its path or its bytes)
+error: play(): a volume is a Number from 0 (silent) to 1 (as recorded), or up to 16 (louder)
+error: play(): pan is a Number from -1 (left) through 0 (both sides) to 1 (right)
+error: loop(): a volume is a Number from 0 (silent) to 1 (as recorded), or up to 16 (louder)
+error: a Sound cannot be sent to another isolate: only data can (numbers, text, bytes, lists, maps, instances and channels)

@@ -1,0 +1,147 @@
+// Bytes: a buffer of bytes, changed in place and copied when shared
+
+fn tries(f) { try { f() } catch e { print("error:", e) } }
+
+// making them
+print(Bytes(), Bytes(3), Bytes("hi"), Bytes([0, 127, 255]), Bytes(Bytes("x")))
+print(len(Bytes("héllo")), Bytes("é"), type(Bytes()), Bytes() is Bytes)
+var empty = Bytes  // the default: none yet
+print(empty, len(empty), empty == Bytes())
+
+// reading and changing bytes
+var b = Bytes("hey")
+print(b[0], b[-1], b.decode(), b.hex())
+b[0] = 72
+b[1] += 1
+b[-1] -= 32
+print(b, b.decode())
+
+// copies are values: changing one leaves the other
+var c = b
+c[0] = 0
+push(&c, 33, "!", Bytes([1, 2]))
+print(b, c)
+
+// joining, slicing, searching, comparing
+print(Bytes("ab") + Bytes("cd"), Bytes("abcdef").slice(2), Bytes("abcdef").slice(1, 3), Bytes("abcdef").slice(-2))
+print(Bytes("abc").slice(5), Bytes("abc").slice(2, 1), Bytes("abc").slice(-10, 10))
+print(98 in Bytes("abc"), 100 in Bytes("abc"), Bytes("bc") in Bytes("abc"), Bytes("ca") in Bytes("abc"), "x" in Bytes("x"))
+print(Bytes("a") == Bytes("a"), Bytes("a") == Bytes("b"), Bytes("a") == "a", Bytes() == Bytes(0))
+var d = Bytes("x")
+d += Bytes("yz")
+print(d)
+var cb = Bytes([10])
+cb[0] *= 3
+cb[0] /= 2
+cb[0] %= 7
+print(cb)
+var keys = Map()
+keys[Bytes("k")] = 1
+print(keys[Bytes("k")], has(keys, Bytes("k")), has(keys, Bytes("j")))
+
+// looping
+for x in Bytes([9, 8]) { print(x) }
+for i, x in Bytes([9, 8]) { print(i, x) }
+
+// typed reads and writes: little-endian unless the format ends in "be"
+var p = Bytes()
+p.pack("u8", 255)
+p.pack("i8", -1)
+p.pack("u16", 513)
+p.pack("u16be", 513)
+p.pack("i32", -2)
+p.pack("u32be", 4294967295)
+print(p)
+print(p.unpack("u8"), p.unpack("i8", 1), p.unpack("u8", 1), p.unpack("u16", 2), p.unpack("u16be", 4), p.unpack("u16le", 4))
+print(p.unpack("i32", 6), p.unpack("u32", 6), p.unpack("u32be", 10), p.unpack("i32be", 10))
+var f = Bytes()
+f.pack("f32", 1.5)
+f.pack("f32", 0.1)
+f.pack("f64be", -0.1)
+print(f, f.unpack("f32"), f.unpack("f32", 4), f.unpack("f64be", 8))
+var w = Bytes()
+w.pack("u64", uint64("18446744073709551615"))
+w.pack("i64be", int64("-9223372036854775808"))
+w.pack("i64", -5)
+w.pack("u64be", 7)
+print(w.unpack("u64"), w.unpack("i64be", 8), w.unpack("i64", 16), w.unpack("u64be", 24), type(w.unpack("u64be", 24)))
+var at = Bytes(2)
+at.pack("u16be", 258, 0)  // at a position: over what is there
+at.pack("u8", 9, 4)       // past the end: grows (with zeros)
+print(at)
+
+// a packet: header, then its fields
+fn packet(id: Number, x: Number, y: Number) {
+    var out = Bytes()
+    out.pack("u8", id)
+    out.pack("f32", x)
+    out.pack("f32", y)
+    return out
+}
+let pk = packet(7, 1.25, -3.5)
+print(len(pk), pk.unpack("u8"), pk.unpack("f32", 1), pk.unpack("f32", 5))
+
+// in typed lists, fields and maps
+class Frame {
+    var data = Bytes
+    var seq = 0
+}
+var fr = Frame()
+fr.data.pack("u16", 1)
+fr.data[1] = 9
+push(&fr.data, 3)
+print(fr)
+var frames = Bytes[Bytes("a"), Bytes(2)]
+frames[1][0] = 66
+frames[1].pack("u8", 67, 1)
+print(frames)
+var named = {"k": Bytes(1)}
+named["k"][0] = 5
+named.k.pack("u8", 6)
+print(named)
+
+// long ones print their first 64 bytes
+print(Bytes(70))
+
+// to isolates: copied, as everything sent is
+let ch = channel()
+ch.send(Bytes([1, 2]))
+ch.send(Bytes())
+print(ch.receive(), ch.receive())
+fn wants(b: Bytes): Number => len(b)
+print(wants(Bytes(4)))
+
+// mistakes
+tries(fn() { Bytes(-1) })
+tries(fn() { Bytes(1.5) })
+tries(fn() { Bytes([1, 256]) })
+tries(fn() { Bytes(true) })
+tries(fn() { var x = Bytes(1); x[0] = 256 })
+tries(fn() { var x = Bytes(1); x[0] = -1 })
+tries(fn() { var x = Bytes(1); x[0] = 1.5 })
+tries(fn() { var x = Bytes(1); x[0] = "a" })
+tries(fn() { var x = Bytes(1); x[0] += 255 })
+tries(fn() { var x = Bytes([1]); x[0] /= 4 })
+tries(fn() { wants(5) })
+tries(fn() { var x = Bytes(1); x[1] = 0 })
+tries(fn() { var x = Bytes(1); x[0.5] = 0 })
+tries(fn() { print(Bytes(1)[1]) })
+tries(fn() { print(Bytes(1)["a"]) })
+tries(fn() { Bytes(1).pack("u8", 1) })
+tries(fn() { var x = Bytes(); x.pack("u12", 1) })
+tries(fn() { var x = Bytes(); x.pack("q8", 1) })
+tries(fn() { var x = Bytes(); x.pack("u8", 256) })
+tries(fn() { var x = Bytes(); x.pack("i16", 32768) })
+tries(fn() { var x = Bytes(); x.pack("u8", 1.5) })
+tries(fn() { var x = Bytes(); x.pack("u8", "1") })
+tries(fn() { var x = Bytes(); x.pack("u8", 1, -1) })
+tries(fn() { print(Bytes(3).unpack("u32")) })
+tries(fn() { print(Bytes(3).unpack("u8", 3)) })
+tries(fn() { print(Bytes(3).unpack(8)) })
+tries(fn() { sleep("soon") })
+tries(fn() { var x = Bytes(); push(&x, 300) })
+tries(fn() { var x = Bytes(); push(&x, [1]) })
+tries(fn() { print(Bytes(1) + [1]) })
+tries(fn() { print(Bytes(1).nope()) })
+tries(fn() { frames = Bytes[1] })
+tries(fn() { print(Bytes(1).slice(0.5)) })

@@ -263,6 +263,10 @@ static int define_global(Interp *I, ObjString *name, Value v, int kind) {
     return 0;
 }
 
+/* A package's name that never changes, as a fn's (plugin.c's functions and types). Takes v. */
+int lube_define_global(Interp *I, ObjString *key, Value v) { return define_global(I, key, v, 2); }
+int lube_assign_global(Interp *I, ObjString *key, Value v) { return define_global(I, key, v, 0); }
+
 /* In an isolate, a global variable gets its value the first time it is
  * used. 1 = defined now, 0 = no such global waiting, -1 = its starting value
  * raised an error. */
@@ -488,6 +492,7 @@ static Value binary_op(Interp *I, TokenType op, Value a, Value b) {
         return in_op(I, a, b);
     case T_PLUS:
         if (IS_TEXT(a) || IS_TEXT(b)) return concat(a, b);
+        if (IS_BYTES(a) && IS_BYTES(b)) return lube_bytes_concat(a, b);
         if (IS_LIST(a) && IS_LIST(b)) {  /* keeps the left list's element type */
             ObjList *x = AS_LIST(a), *y = AS_LIST(b);
             ObjList *out = new_list();
@@ -542,7 +547,7 @@ static Value binary_op(Interp *I, TokenType op, Value a, Value b) {
  * becomes the integer type), or raises an error. */
 Value lube_check_elem(Interp *I, const char *holder, int tag, Value v) {
     if (value_has_type(v, tag)) return retain(v);
-    if (tag >= TT_INT8 && IS_NUM(v)) return int_from_whole(I, v.as.number, tag - TT_INT8);
+    if (TT_IS_INT(tag) && IS_NUM(v)) return int_from_whole(I, v.as.number, tag - TT_INT8);
     return lube_error(I, "this %s can only hold %s values, not %s", holder, tag_name(tag), a_type(v));
 }
 
@@ -579,7 +584,14 @@ int lube_contains(Interp *I, Value c, Value x) {
         double k = (numeric_value(x) - r->start) / r->step;
         return k >= 0 && k == floor(k) && k < range_length(r);
     }
-    lube_error(I, "cannot look inside %s (expected a List, str, Object or Range)", a_type(c));
+    if (IS_BYTES(c)) {  /* a byte, or a run of bytes (Bytes, or a str's) */
+        ObjBytes *b = AS_BYTES(c);
+        if (IS_BYTES(x)) return str_find((const char *)b->data, b->len, (const char *)AS_BYTES(x)->data, AS_BYTES(x)->len, 0) >= 0;
+        if (IS_TEXT(x)) return str_find((const char *)b->data, b->len, text_of(x)->chars, text_of(x)->length, 0) >= 0;
+        double d = IS_NUMERIC(x) ? numeric_value(x) : -1;
+        return d >= 0 && d <= 255 && d == floor(d) && b->len && memchr(b->data, (int)d, b->len) != NULL;
+    }
+    lube_error(I, "cannot look inside %s (expected a List, str, Object, Range or Bytes)", a_type(c));
     return -1;
 }
 
@@ -639,6 +651,10 @@ static Value index_get(Interp *I, Value obj, Value idx) {
         double k = d < 0 ? d + count : d;
         if (!(k >= 0 && k < count)) return lube_error(I, "range index %g is out of range (length %g)", d, count);
         return NUM_VAL(r->start + k * r->step);
+    }
+    if (IS_BYTES(obj)) {
+        ObjBytes *b = AS_BYTES(obj);
+        return list_index(I, idx, b->len, "bytes", &i) ? NUM_VAL(b->data[i]) : ERR_VAL;
     }
     return lube_error(I, "cannot index into %s", a_type(obj));
 }
@@ -1305,7 +1321,32 @@ LUBE_NOINLINE static Value do_assign(Interp *I, TokenType op, Place *place, Valu
     ObjMap *made = NULL;  /* the map that got a new, still empty key */
     if (check_changeable(I, &p) == 0) {
         Value *root = root_slot(I, &p);
-        if (root) slot = navigate(I, root, &p, op == T_ASSIGN ? &made : NULL, &elem, &holder, &ftype);
+        if (root && !whole && !p.is_field[p.nkeys - 1] && (p.nkeys > 1 || IS_BYTES(*root))) {  /* (b[i] = v: a
+                                                                          byte of Bytes has no slot of its own) */
+            Value *c = root;
+            if (p.nkeys > 1) {
+                p.nkeys--;
+                c = navigate(I, root, &p, NULL, &elem, &holder, &ftype);
+                p.nkeys++;
+            }
+            if (c && IS_BYTES(*c)) {
+                size_t k;
+                Value r = list_index(I, field, AS_BYTES(*c)->len, "bytes", &k) ? lube_bytes_assign(I, c, k, op, rhs)
+                                                                                : (release(rhs), ERR_VAL);
+                place_free(&p);
+                return r;
+            }
+            if (c) {
+                Place last;
+                last.root = p.root;
+                last.keys[0] = field;  /* (borrowed from p) */
+                last.is_field[0] = 0;
+                last.nkeys = 1;
+                slot = navigate(I, c, &last, op == T_ASSIGN ? &made : NULL, &elem, &holder, &ftype);
+            }
+        } else if (root) {
+            slot = navigate(I, root, &p, op == T_ASSIGN ? &made : NULL, &elem, &holder, &ftype);
+        }
     }
     if (!slot) {
         place_free(&p);
@@ -1342,6 +1383,16 @@ LUBE_NOINLINE static Value do_assign(Interp *I, TokenType op, Place *place, Valu
             ObjString *add = value_to_string(rhs);
             *slot = OBJ_VAL(string_append(AS_STRING(*slot), add->chars, add->length));
             release(OBJ_VAL(add));
+            release(rhs);
+            place_free(&p);
+            return retain(*slot);
+        }
+        if (IS_BYTES(*slot) && IS_BYTES(rhs)) {
+            ObjBytes *b = AS_BYTES(*slot), *add = AS_BYTES(rhs);
+            if (b->len + add->len > LUBE_MAX_BYTES) lube_out_of_memory();
+            bytes_reserve(b, b->len + add->len);
+            if (add->len) memcpy(b->data + b->len, add->data, add->len);
+            b->len += add->len;
             release(rhs);
             place_free(&p);
             return retain(*slot);
@@ -1783,6 +1834,8 @@ static int start_call(Interp *I, int ci, int argc, Loan *loans, int nloans, int 
             return 1;
         }
         r = ERR_VAL;
+    } else if (IS_CLASS(callee) && AS_CLASS(callee)->foreign) {  /* Sound(...): a plugin's type */
+        r = lube_foreign_construct(I, AS_CLASS(callee), argc, &I->stack[base]);
     } else if (IS_CLASS(callee)) {
         ObjFunction *ctor = NULL;
         r = new_instance(I, AS_CLASS(callee), argc, &ctor);
@@ -1803,7 +1856,7 @@ static int start_call(Interp *I, int ci, int argc, Loan *loans, int nloans, int 
         if (argc < nf->min_args || (nf->max_args >= 0 && argc > nf->max_args))
             r = arity_error(I, nf->name, nf->min_args, nf->max_args, argc);
         else
-            r = nf->fn(I, argc, &I->stack[base]);
+            r = (I->calling = nf)->fn(I, argc, &I->stack[base]);
     }
     if (loans) r = return_loans(I, base, loans, nloans, r);
     pop_to(I, ci);
@@ -1869,6 +1922,26 @@ LUBE_NOINLINE static int prep_method(Interp *I, MethodDesc *md, Value obj, Place
             return -1;
         }
         return push_call(I, callee, SELF_NONE, NIL_VAL, NULL);
+    }
+    Value tm;
+    if (IS_FOREIGN(obj) && map_get(AS_FOREIGN(obj)->klass->methods, OBJ_VAL(name), &tm)) {  /* sock.send(...) */
+        if (have_place) place_free(place);
+        return push_call(I, retain(tm), SELF_VALUE, obj, NULL);
+    }
+    /* bytes.pack(...): a method of its type (io.c) */
+    if (IS_OBJ(obj) && LUBE_TM(OBJ_TYPE(obj)) && map_get(I->tmethods[OBJ_TYPE(obj) - OBJ_BYTES], OBJ_VAL(name), &tm)) {
+        if (!AS_NATIVE(tm)->changes_first) {
+            if (have_place) place_free(place);
+            return push_call(I, retain(tm), SELF_VALUE, obj, NULL);
+        }
+        if (!have_place) {  /* (it changes it: lent, from its variable) */
+            lube_error(I, "%s.%s() changes it, so call it on a variable (or a field or index of one)", type_name(obj),
+                       name->chars);
+            release(obj);
+            return -1;
+        }
+        release(obj);
+        return push_call(I, retain(tm), SELF_LEND, NIL_VAL, place);
     }
     const VarRef *r = &md->fallback;
     if (r->kind == VAR_GLOBAL && !global_exists(I, r)) {
@@ -2030,6 +2103,7 @@ LUBE_NOINLINE static int class_begin(Interp *I, ClassDesc *cd) {
     c->field_types = xmalloc(sizeof(TypeDesc) * (size_t)(total ? total : 1));
     c->methods = new_map();
     c->constructor = NIL_VAL;
+    c->foreign = NULL;
     list_push(into ? I->hot_old : I->classes, OBJ_VAL(c));  /* keeps it alive until shutdown */
     for (int i = 0; i < inherited; i++, c->nfields++) {  /* the parent's fields come first */
         c->field_names[i] = parent->field_names[i];
@@ -2420,7 +2494,8 @@ static Value execute(Interp *I) {
                 release(v);
                 goto error;
             }
-            int t = IS_INSTANCE(v) && is_subclass(AS_MAP(v)->klass, AS_CLASS(c));
+            int t = AS_CLASS(c)->foreign ? IS_FOREIGN(v) && AS_FOREIGN(v)->klass->foreign == AS_CLASS(c)->foreign
+                                         : IS_INSTANCE(v) && is_subclass(AS_MAP(v)->klass, AS_CLASS(c));
             release(c);
             release(v);
             PUSH(BOOL_VAL(t));
@@ -2600,7 +2675,8 @@ static Value execute(Interp *I) {
                     push_call(I, retain(md->cache_method), SELF_LEND, NIL_VAL, &place);
                     break;
                 }
-                Value *fn = root && root->type == VAL_OBJ && !IS_MAP(*root) && !IS_PACKAGE(*root) && md->fallback.kind == VAR_GLOBAL
+                Value *fn = root && root->type == VAL_OBJ && !IS_MAP(*root) && !IS_PACKAGE(*root) && !LUBE_OWN_METHODS(OBJ_TYPE(*root)) &&
+                            md->fallback.kind == VAR_GLOBAL
                                 ? global_ref(I, &md->fallback, &failed) : NULL;
                 if (failed) goto error;
                 if (fn && IS_NATIVE(*fn)) {  /* xs.push(v), s.ends_with(t): a built-in, x first (as prep_method does) */
@@ -2736,7 +2812,7 @@ static Value execute(Interp *I) {
                         I->stack[ci + 1] = *root;
                         *root = rv->kind == VAR_GLOBAL ? LENT_VAL : NIL_VAL;
                     }
-                    r = nf->fn(I, argc, &I->stack[ci + 1]);
+                    r = (I->calling = nf)->fn(I, argc, &I->stack[ci + 1]);
                     if (lend) {
                         root = rv->kind == VAR_LOCAL ? &SLOT(rv->index) : global_ref(I, rv, &failed);
                         *root = I->stack[ci + 1];
@@ -2814,8 +2890,8 @@ static Value execute(Interp *I) {
             goto error;
         case OP_FOR_PREP: {  /* the loop owns what it iterates: changes to the variable go to a copy */
             Value it = TOP;
-            if (!IS_RANGE(it) && !IS_LIST(it) && !IS_TEXT(it) && !IS_MAP(it) && !IS_CHANNEL(it)) {
-                lube_error(I, "cannot loop over %s (expected a List, Range, str, Object or Channel)", a_type(it));
+            if (!IS_RANGE(it) && !IS_LIST(it) && !IS_TEXT(it) && !IS_MAP(it) && !IS_CHANNEL(it) && !IS_BYTES(it)) {
+                lube_error(I, "cannot loop over %s (expected a List, Range, str, Object, Channel or Bytes)", a_type(it));
                 goto error;
             }
             PUSH(NUM_VAL(IS_RANGE(it) ? range_length(AS_RANGE(it)) : 0));  /* position (in text: bytes; in a map:
@@ -2869,6 +2945,10 @@ static Value execute(Interp *I) {
                                       : OBJ_VAL(new_string(s->chars + i, len));
                     pos = (double)(i + len);
                 }
+            } else if (IS_BYTES(it)) {
+                ObjBytes *b = AS_BYTES(it);
+                if (k >= (double)b->len) done = 1;
+                else second = NUM_VAL(b->data[(size_t)k]);
             } else {  /* a map or object: keys (and values) */
                 ObjMap *m = AS_MAP(it);
                 size_t i = (size_t)pos;
@@ -3094,7 +3174,7 @@ static Value execute(Interp *I) {
             Handler *h = NULL;
             for (int i = 0; i < code->nhandlers && !h; i++)  /* inner tries come first */
                 if (at >= code->handlers[i].start && at < code->handlers[i].end) h = &code->handlers[i];
-            if (h) {
+            if (h && !I->exiting) {  /* (exit(), in a host program: no catch stops it) */
                 pop_pending(I, f->pending);
                 pop_to(I, f->opbase + h->sp);
                 clear_slots(I, h->clear_from, f->proto->nslots - h->clear_from);
@@ -3131,7 +3211,7 @@ static Value call_value(Interp *I, Value callee, int argc, int base) {
     ObjNative *nf = AS_NATIVE(callee);
     if (argc < nf->min_args || (nf->max_args >= 0 && argc > nf->max_args))
         return arity_error(I, nf->name, nf->min_args, nf->max_args, argc);
-    return nf->fn(I, argc, &I->stack[base]);
+    return (I->calling = nf)->fn(I, argc, &I->stack[base]);
 }
 
 /* Runs top-level code (a script, a module or a hot reload) in an entry frame. */
@@ -3386,6 +3466,8 @@ ObjMap *lube_package_names(Interp *I, ObjString *pkg, int *bad) {
             arena_free(arena);
         }
         free_names(files, n);
+    } else {  /* no such folder: perhaps a plugin */
+        names = lube_plugin_names(I, pkg, bad);
     }
     sb_free(&folder);
     if (*bad) {
@@ -3404,7 +3486,11 @@ static int import_package(Interp *I, ObjString *pkg, ObjString *bind) {
         map_set(I->packages, retain(OBJ_VAL(pkg)), BOOL_VAL(1));
         StrBuf folder;
         sb_init(&folder);
-        lube_find_package(I, pkg, &folder);  /* found when compiling the import */
+        if (!lube_find_package(I, pkg, &folder)) {  /* no folder: a plugin (found when compiling the import) */
+            sb_free(&folder);
+            if (lube_plugin_import(I, pkg) < 0) return -1;
+            goto bound;
+        }
         int n;
         char **files = lube_package_files(I, folder.data, &n);
         int failed = 0;
@@ -3429,6 +3515,7 @@ static int import_package(Interp *I, ObjString *pkg, ObjString *bind) {
         sb_free(&folder);
         if (failed) return -1;
     }
+bound:
     if (bind) {
         ObjPackage *o = (ObjPackage *)alloc_object(sizeof(ObjPackage), OBJ_PACKAGE);
         o->name = (ObjString *)retain(OBJ_VAL(pkg)).as.obj;
@@ -3492,13 +3579,19 @@ static int do_import(Interp *I, ObjString *rel) {
  * Running programs
  * ==================================================================== */
 
-LUBE_COLD static void report_uncaught(Interp *I) {
+LUBE_COLD void lube_report_uncaught(Interp *I) {
     fflush(stdout);
     Value e = I->error_val;
     I->error_val = NIL_VAL;
+    if (I->exiting) {  /* (hosted: exit() ended it, which is no error) */
+        release(e);
+        trace_reset(I);
+        return;
+    }
     ObjString *msg = IS_TEXT(e) ? (ObjString *)retain(OBJ_VAL(text_of(e))).as.obj : value_repr(e);
     Source *src = I->error_src;
-    lube_print(1, "%s:%d: error: %s\n", src ? src->path : "<input>", I->error_line, msg->chars);
+    if (src) lube_print(1, "%s:%d: error: %s\n", src->path, I->error_line, msg->chars);
+    else lube_print(1, "error: %s\n", msg->chars);  /* (raised with no Lube code running: a host program's call) */
     print_source_line(src, I->error_line, 0);
     trace_flush_repeats(I);
     if (I->trace_count > 1) {
@@ -3552,7 +3645,7 @@ static int hot_apply(Interp *I, Value path, ObjString *text) {
     Value r = run_top(I, d);
     I->hot_busy = 0;
     if (IS_ERR(r)) {
-        report_uncaught(I);
+        lube_report_uncaught(I);
         lube_print(1, "lube: %s reloaded only up to the error above\n", src->path);
         return 0;
     }
@@ -3603,7 +3696,7 @@ int lube_run_source(Interp *I, Source *src, int repl) {
     if (!d) return 65;
     lube_note_program(I, src->path, src->text, src->length);  /* what a spawned isolate loads */
     if (IS_ERR(run_top(I, d))) {
-        report_uncaught(I);
+        lube_report_uncaught(I);
         return 70;
     }
     return 0;
@@ -3689,10 +3782,13 @@ Interp *lube_new(char *stack_base) {
     I->constants = new_map();
     I->modules = new_map();
     I->global_type_index = new_map();
+    lube_plugins_start();
     I->classes = new_list();
     I->watch = new_map();
     I->hot_old = new_list();
     I->packages = new_map();
+    I->strings->internal = I->globals->internal = I->constants->internal = I->modules->internal = 1;
+    I->global_type_index->internal = I->watch->internal = I->packages->internal = 1;
     for (int c = 0; c < 256; c++) {
         char ch = (char)c;
         I->chars[c] = new_string(&ch, 1);
@@ -3700,6 +3796,7 @@ Interp *lube_new(char *stack_base) {
     register_builtins(I);
     register_reflection(I);
     register_isolates(I);
+    register_io(I);
     return I;
 }
 
@@ -3723,11 +3820,14 @@ size_t lube_free(Interp *I) {
     if (I->main_aliases) release(OBJ_VAL(I->main_aliases));
     free(I->root);
     release(OBJ_VAL(I->classes));  /* after every instance is gone */
+    free(I->foreign_classes);      /* (the classes were in I->classes) */
     if (I->bundle) release(OBJ_VAL(I->bundle));
     if (I->imports_found) release(OBJ_VAL(I->imports_found));
     free(I->global_types);
     free(I->decl);
     for (int c = 0; c < 256; c++) release(OBJ_VAL(I->chars[c]));
+    for (int t = 0; t < LUBE_TM_TYPES; t++)
+        if (I->tmethods[t]) release(OBJ_VAL(I->tmethods[t]));
     for (int i = 0; i < I->narenas; i++) arena_free(I->arenas[i]);
     free(I->arenas);
     release(OBJ_VAL(I->strings));  /* last: the syntax trees borrowed these */

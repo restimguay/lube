@@ -31,7 +31,7 @@
 /* The class an argument stands for: a class, or an instance's class. */
 static ObjClass *class_arg(Interp *I, const char *fn, Value v) {
     if (IS_CLASS(v)) return AS_CLASS(v);
-    if (IS_INSTANCE(v)) return AS_MAP(v)->klass;
+    if (CLASS_OF(v)) return CLASS_OF(v);  /* (an instance, or a plugin's object) */
     lube_error(I, "%s() needs a class or an instance of one, not %s", fn, a_type(v));
     return NULL;
 }
@@ -57,9 +57,9 @@ static ObjList *str_list(void) {
 
 NATIVE(n_class_of) {
     (void)argc;
-    if (!IS_INSTANCE(argv[0]))
-        return lube_error(I, "class_of() needs an instance of a class, not %s", a_type(argv[0]));
-    return retain(OBJ_VAL(AS_MAP(argv[0])->klass));
+    ObjClass *c = CLASS_OF(argv[0]);
+    if (!c) return lube_error(I, "class_of() needs an instance of a class, not %s", a_type(argv[0]));
+    return retain(OBJ_VAL(c));
 }
 
 NATIVE(n_parent_of) {
@@ -122,6 +122,12 @@ static Value describe_function(Interp *I, const char *name, FuncDecl *d, int ski
     return OBJ_VAL(sig);
 }
 
+static Value builtin_signature(Interp *I, const char *name) {
+    Value sig = describe_function(I, name, &(FuncDecl){0}, 0, "any");
+    put(I, AS_MAP(sig), "builtin", BOOL_VAL(1));
+    return sig;
+}
+
 NATIVE(n_signature) {
     Value f = argv[0];
     if (argc == 2) {  /* signature(Dog, "speak"): a method */
@@ -130,11 +136,13 @@ NATIVE(n_signature) {
         if (!name) return ERR_VAL;
         Value m = lube_find_method(c, name);
         if (IS_NIL(m)) return lube_error(I, "%s has no method '%s'", c->name->chars, name->chars);
+        if (IS_NATIVE(m)) return builtin_signature(I, name->chars);  /* (a plugin's) */
         return describe_function(I, name->chars, AS_FUNCTION(m)->decl, 1, NULL);
     }
     if (IS_CLASS(f)) {  /* a class: its constructor (its own or the nearest parent's) */
         ObjClass *c = AS_CLASS(f), *owner = c;
         while (owner && IS_NIL(owner->constructor)) owner = owner->parent;
+        if (owner && IS_NATIVE(owner->constructor)) return builtin_signature(I, c->name->chars);  /* (a plugin's) */
         if (owner) return describe_function(I, c->name->chars, AS_FUNCTION(owner->constructor)->decl, 1, c->name->chars);
         return describe_function(I, c->name->chars, &(FuncDecl){0}, 0, c->name->chars);  /* Dog(): no arguments */
     }
@@ -142,11 +150,7 @@ NATIVE(n_signature) {
         FuncDecl *d = AS_FUNCTION(f)->decl;
         return describe_function(I, d->name ? d->name->chars : "<lambda>", d, 0, NULL);
     }
-    if (IS_NATIVE(f)) {
-        Value sig = describe_function(I, AS_NATIVE(f)->name, &(FuncDecl){0}, 0, "any");
-        put(I, AS_MAP(sig), "builtin", BOOL_VAL(1));
-        return sig;
-    }
+    if (IS_NATIVE(f)) return builtin_signature(I, AS_NATIVE(f)->name);
     return lube_error(I, "signature() needs a function or a class, not %s", a_type(f));
 }
 
@@ -191,6 +195,16 @@ NATIVE(n_call_method) {
         Value m = lube_find_method(AS_MAP(self)->klass, name);
         if (!IS_NIL(m)) return lube_call_method(I, m, self, argc - 2, argv + 2);
     }
+    if (IS_FOREIGN(self)) {  /* a plugin's method: x first */
+        Value m = lube_find_method(AS_FOREIGN(self)->klass, name);
+        if (!IS_NIL(m)) {
+            Value saved = argv[1];
+            argv[1] = self;
+            Value r = lube_call(I, m, argc - 1, argv + 1);
+            argv[1] = saved;
+            return r;
+        }
+    }
     Value f;
     if (IS_MAP(self) && map_get(AS_MAP(self), OBJ_VAL(name), &f) && IS_CALLABLE(f))  /* a function in a field */
         return lube_call(I, f, argc - 2, argv + 2);
@@ -209,7 +223,7 @@ NATIVE(n_has_method) {
     ObjString *name = name_arg(I, FNAME, argv[1]);
     if (!name) return ERR_VAL;
     Value f;
-    if (IS_INSTANCE(argv[0]) && !IS_NIL(lube_find_method(AS_MAP(argv[0])->klass, name))) return BOOL_VAL(1);
+    if (CLASS_OF(argv[0]) && !IS_NIL(lube_find_method(CLASS_OF(argv[0]), name))) return BOOL_VAL(1);
     return BOOL_VAL(IS_MAP(argv[0]) && map_get(AS_MAP(argv[0]), OBJ_VAL(name), &f) && IS_CALLABLE(f));
 }
 

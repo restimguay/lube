@@ -1,0 +1,45 @@
+true true false false ["b"]
+19 2 0 21
+File(build/files-test/a/b/save.bin, closed) 21 true
+File(build/files-test/a/b/save.bin) 21 false
+line one | line two 19
+Bytes(00) Bytes(ff) Bytes() true
+line
+Bytes(00) 20
+ tw
+["0-first", "a", "scores.sav"]
+[10, 2.5, -7] 30
+one
+two
+
+oNE two
+oNE
+two
+
+0 Bytes()
+30 2 List
+error: read(): the file 'build/files-test/a/b/save.bin' is closed
+false true
+Bytes(78) ["moved.bin"]
+error: cannot open 'build/files-test/nope/x.bin': No such file or directory
+error: open(): the mode must be "r", "w", "a", "r+", "w+" or "a+", not "rw"
+error: open() expects a str as argument 1, got Number
+error: seek(): from must be "start", "current" or "end", not "middle"
+error: seek(): the position must be a whole Number
+error: read(n): n must be a whole Number, 0 or more
+error: read_line(): end of the file 'build/files-test/scores.sav'
+error: write() expects Bytes or a str as argument 2, got List
+error: tell(): the file 'build/files-test/scores.sav' is closed
+error: list_dir(): 'build/files-test/nope' is not a folder
+error: cannot find 'build/files-test/nope': No such file or directory
+error: cannot remove 'build/files-test/nope': No such file or directory
+error: cannot remove 'build/files-test/a': Directory not empty
+error: cannot make the folder 'build/files-test/scores.sav/inside': Not a directory
+error: parameter 'x' of size_of() is a File, so it cannot take a str
+error: cannot rename 'build/files-test/nope': No such file or directory
+error: cannot open 'build/files-test/nope': No such file or directory
+error: write_bytes() expects Bytes as argument 2, got str
+error: sleep(): seconds must be 0 or more
+error: len() expects a str, List, Object, Range or Bytes as argument 1, got File
+true true
+false

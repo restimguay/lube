@@ -19,7 +19,11 @@ trap 'rm -rf "$TMP"' EXIT
 
 # run LABEL COMMAND...: the label, the command's output, and its exit status.
 # Numbers that depend on the stack size are replaced by N.
-tidy() { sed -E 's/[0-9]+ more (times|calls)/N more \1/; s/, [0-9]+ bytes/, N bytes/' "$TMP/out" | sed "s|$TMP|TMP|g"; }
+tidy() {
+    sed -E 's/[0-9]+ more (times|calls)/N more \1/; s/, [0-9]+ bytes/, N bytes/; s/ of [0-9]+ built-ins/ of N built-ins/' "$TMP/out" |
+        sed "s|$TMP|TMP|g" |
+        sed -E "s/\\.(dylib|dll|so)([^A-Za-z]|\$)/.LIB\\2/g; s/(cannot load plugin '[a-z]+' from '[^']*'): .*/\\1: (the system's reason)/"
+}
 run() {
     echo "--- $1"
     shift
@@ -288,6 +292,67 @@ run "source too large" env LUBE_MAX_BYTES=1000 "$LUBE" -e "$(printf '# x\n%.0s' 
 run "syntax tree too large" env LUBE_MAX_BYTES=1500 "$LUBE" -e "[$(printf '0,%.0s' $(seq 1 300))0]"
 run "limits that are ignored" env LUBE_MAX_ITEMS=abc LUBE_MAX_BYTES=0 "$LUBE" -e 'print("ok")'
 run "limit above the default" env LUBE_MAX_ITEMS=999999999999 "$LUBE" -e 'print("ok")'
+
+# ---- plugins: packages in C, built here as anyone would build one (tests/plugins/) ----
+case "$(uname -s)" in
+    Darwin) PEXT=.dylib PFLAGS=-dynamiclib ;;
+    MINGW* | MSYS* | CYGWIN*) PEXT=.dll PFLAGS=-shared ;;
+    *) PEXT=.so PFLAGS="-shared -fPIC" ;;
+esac
+PCC=${CC:-cc}
+command -v "$PCC" >/dev/null 2>&1 || PCC=gcc
+mkdir -p "$TMP/plugins" "$TMP/inst/bin" "$TMP/inst/lib/lube/plugins" "$TMP/built" "$TMP/small"
+for p in greet old broken; do "$PCC" -std=c99 $PFLAGS -o "$TMP/plugins/$p$PEXT" "tests/plugins/$p.c"; done
+"$PCC" -std=c99 $PFLAGS -o "$TMP/plugins/noinit$PEXT" tests/plugins/other.c
+printf 'not a library' >"$TMP/plugins/junk$PEXT"
+cp "$ABS" "$TMP/inst/bin/" && cp "$TMP/plugins/greet$PEXT" "$TMP/inst/lib/lube/plugins/"
+run "plugin: one of one's own" env LUBE_PLUGINS="$TMP/plugins" "$LUBE" tests/cli/plugins.lube
+run "plugin: made for a later Lube" env LUBE_PLUGINS="$TMP/plugins" "$LUBE" -e 'import old'
+run "plugin: one that cannot start" env LUBE_PLUGINS="$TMP/plugins" "$LUBE" -e 'import broken'
+run "plugin: a library that is not one" env LUBE_PLUGINS="$TMP/plugins" "$LUBE" -e 'import noinit'
+run "plugin: a file that is not a library" env LUBE_PLUGINS="$TMP/plugins" "$LUBE" -e 'import junk'
+run "plugin: none of that name" env LUBE_PLUGINS="$TMP/plugins" "$LUBE" -e 'import nothing.of.the.kind'
+PSEP=':'  # (between folders: ';' on Windows, whose paths have colons)
+[ "$OS" = Windows ] && PSEP=';'
+run "plugin: empty folders in LUBE_PLUGINS" env LUBE_PLUGINS="$PSEP$TMP/nope$PSEP$TMP/plugins" "$LUBE" -e 'import greet.hello
+print(hello("found"))'
+run "plugin: in ../lib/lube/plugins from lube" env -u LUBE_PLUGINS "$TMP/inst/bin/$(basename "$ABS")" -e 'import greet
+print(greet.hello("installed"))'
+run "plugin: its names are known before it runs" env LUBE_PLUGINS="$TMP/plugins" "$LUBE" -e 'import greet.nope'
+run "plugin: built with a program (copied next to it)" sh -c 'LUBE_PLUGINS="$1" "$2" --build tests/cli/uses_greet.lube -o "$3/app" && cd / && env -u LUBE_PLUGINS "$3/app"' sh "$TMP/plugins" "$ABS" "$TMP/built"
+run "plugin: --small (Lube's inside it, others next to it)" sh -c 'LUBE_SRC="$4" LUBE_PLUGINS="$1" "$2" --build --small tests/cli/uses_plugins.lube -o "$3/app" && cd / && env -u LUBE_PLUGINS "$3/app"' sh "$TMP/plugins" "$ABS" "$TMP/small" "$SRC"
+
+# ---- embedding: Lube inside a C program and a C++ one (tests/embed/), built from Lube's sources ----
+# (LUBE_EMBED_CFLAGS: the checking builds and coverage compile Lube their way here too)
+ECFLAGS=${LUBE_EMBED_CFLAGS:--O1}
+case "$PCC" in  # (the C++ compiler that goes with the C one: their sanitizers must match)
+    *clang*) PCXX=${CXX:-clang++} ;;
+    *gcc*) PCXX=${CXX:-g++} ;;
+    *) PCXX=${CXX:-c++} ;;
+esac
+command -v "$PCXX" >/dev/null 2>&1 || PCXX=g++
+case "$(uname -s)" in
+    Darwin) ELIBS="-lm -lpthread" ;;
+    MINGW* | MSYS* | CYGWIN*) ELIBS="-lm -lws2_32" ;;
+    *) ELIBS="-lm -lpthread -ldl" ;;
+esac
+mkdir -p "$TMP/embed"
+(
+    for f in src/*.c src/plugins/*.c; do
+        [ "$f" = src/main.c ] && continue
+        "$PCC" -std=c99 $ECFLAGS -DLUBE_STATIC_PLUGINS -DLUBE_SILENT -c -o "$TMP/embed/$(basename "$f" .c).o" "$f" &
+    done
+    wait
+) >"$TMP/embed/build.log" 2>&1
+{ "$PCC" -std=c99 $ECFLAGS -Isrc -o "$TMP/embed/host" tests/embed/host.c "$TMP/embed/"*.o $ELIBS &&
+    "$PCXX" -std=c++11 $ECFLAGS -Isrc -o "$TMP/embed/host_cpp" tests/embed/host.cpp "$TMP/embed/"*.o $ELIBS; } \
+    >>"$TMP/embed/build.log" 2>&1 || cat "$TMP/embed/build.log"
+run "embed: in a C program" "$TMP/embed/host"
+run "embed: in a C++ program" "$TMP/embed/host_cpp"
+
+# ---- sound: played in silence (LUBE_AUDIO=none), so the tests are quiet and need no sound card ----
+run "audio: playing, in silence" env LUBE_AUDIO=none "$LUBE" tests/cli/audio_play.lube
+run "audio: the device, in silence" env LUBE_AUDIO=none "$LUBE" -e 'import audio; print(audio.device(), audio.Sound([0.5] * 44100).play().is_playing())'
 
 # ---- programs that stop with an error: one run each ----
 # tests/cli/stops.txt holds the programs, each after a "### name" line.

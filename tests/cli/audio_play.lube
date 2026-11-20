@@ -1,0 +1,78 @@
+// Playing sounds (run with LUBE_AUDIO=none: in silence, but on time)
+import audio.*
+print(device())
+var tone = Number[]
+for i in 0..8820 { push(&tone, sin(2 * PI * 440 * i / 44100) * 0.5) }
+let beep = Sound(tone)  // 0.2 seconds
+let v = beep.play()
+print(v, v.is_playing())
+v.set_volume(0.5)
+v.set_pan(-1)
+v.set_speed(2)          // (twice as fast: over in 0.1 seconds)
+sleep(0.6)
+print(v, v.is_playing())  // over by now
+v.stop()                  // (stopping one that ended: nothing)
+v.set_volume(1)
+print(type(v), type(beep))
+
+// stereo, and sounds as types
+fn quieter(x: Voice): Voice {
+    x.set_volume(0.1)
+    return x
+}
+fn length(s: Sound): Number => s.duration()
+let wide = Sound(Number[0.5, -0.5] * 4410, 44100, 2)
+let w = quieter(wide.play(1, 0.5))
+print(w.is_playing(), length(wide))
+sleep(0.3)
+print(w.is_playing())
+
+// a loop plays until stopped; held at speed 0 it stays where it is
+let music = beep.loop(0.5, 0.25)
+let held = beep.play(1, 0)
+held.set_speed(0)
+sleep(0.2)
+print(music.is_playing(), held.is_playing())
+music.stop()
+print(music.is_playing(), music)
+held.stop()
+let tick = Sound(Number[0.1] * 441).loop()  // 0.01 seconds, round and round
+sleep(0.1)
+print(tick.is_playing())
+tick.stop()
+
+// at most 64 at once: a new one takes the oldest one's place
+var many = []
+for i in 0..70 { push(&many, beep.loop(0.01)) }
+print(len(filter(many, fn(x) => x.is_playing())), many[0].is_playing(), many[69].is_playing())
+stop_all()
+print(len(filter(many, fn(x) => x.is_playing())))
+set_volume(0.5)
+
+// fire and forget: a voice plays on when nothing holds it
+beep.play()
+Sound().play()  // silence ends at once
+
+// isolates play sounds too (one mixer for the program)
+fn beeper(n: Number): Number {
+    var tone2 = Number[]
+    for i in 0..441 { push(&tone2, 0.1) }
+    let s = Sound(tone2)
+    var ended = 0
+    for i in 0..n {
+        let x = s.play(0.2)
+        sleep(0.1)
+        if !x.is_playing() { ended += 1 }
+    }
+    return ended
+}
+print(parallel_map([3, 3, 3], beeper))
+
+// mistakes
+fn tries(f) { try { f() } catch e { print("error:", e) } }
+tries(fn() { v.set_volume(17) })
+tries(fn() { v.set_pan(-2) })
+tries(fn() { v.set_speed(-1) })
+tries(fn() { set_volume("loud") })
+tries(fn() { quieter(beep) })
+tries(fn() { length(v) })

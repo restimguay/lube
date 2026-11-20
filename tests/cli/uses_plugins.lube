@@ -1,0 +1,4 @@
+// A program with plugins: Lube's own (net) and one of its own (greet)
+import net
+import greet
+print(type(net.udp_open()), greet.hello("built"))

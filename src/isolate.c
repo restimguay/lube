@@ -95,7 +95,7 @@ typedef struct Channel {
     int refs;                   /* wrappers (in any isolate) and messages holding it */
 } Channel;
 
-enum { M_NUM, M_TRUE, M_FALSE, M_INT, M_STR, M_STROBJ, M_LIST, M_MAP, M_INSTANCE, M_RANGE, M_CHANNEL };
+enum { M_NUM, M_TRUE, M_FALSE, M_INT, M_STR, M_STROBJ, M_LIST, M_MAP, M_INSTANCE, M_RANGE, M_CHANNEL, M_BYTES };
 
 static void put_u32(StrBuf *sb, size_t n) {
     uint32_t v = (uint32_t)n;
@@ -167,6 +167,10 @@ static int encode(Interp *I, Message *m, Value v, int depth) {
         sb_putn(sb, (const char *)&r->end, 8);
         sb_putn(sb, (const char *)&r->step, 8);
         sb_putc(sb, (char)r->inclusive);
+    } else if (IS_BYTES(v)) {
+        sb_putc(sb, M_BYTES);
+        put_u32(sb, AS_BYTES(v)->len);
+        if (AS_BYTES(v)->len) sb_putn(sb, (const char *)AS_BYTES(v)->data, AS_BYTES(v)->len);
     } else if (IS_CHANNEL(v)) {  /* a channel goes along as itself */
         Channel *ch = AS_CHANNEL(v)->ch;
         lock_acquire(world);
@@ -177,8 +181,8 @@ static int encode(Interp *I, Message *m, Value v, int depth) {
         sb_putc(sb, M_CHANNEL);
         put_u32(sb, (size_t)m->nchannels++);
     } else {
-        lube_error(I, "%s cannot be sent to another isolate: only data can (numbers, text, lists, maps, instances "
-                      "and channels)", with_article(type_name(v)));
+        lube_error(I, "%s cannot be sent to another isolate: only data can (numbers, text, bytes, lists, maps, "
+                      "instances and channels)", with_article(type_name(v)));
         return -1;
     }
     return 0;
@@ -242,6 +246,14 @@ static Value decode(Reader *r) {
     }
     case M_STR:
         return OBJ_VAL(get_text(r));
+    case M_BYTES: {
+        uint32_t n = get_u32(r);
+        ObjBytes *b = new_bytes((size_t)n);
+        if (n) memcpy(b->data, r->m->data.data + r->pos, n);
+        b->len = n;
+        r->pos += n;
+        return OBJ_VAL(b);
+    }
     case M_STROBJ:
         return OBJ_VAL(new_strobj(get_text(r)));
     case M_LIST: {

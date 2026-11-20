@@ -179,6 +179,11 @@ void obj_destroy(Obj *first) {
             free(c->field_names);
             free(c->field_defaults);
             free(c->field_types);
+        } else if (o->type == OBJ_BYTES) {
+            ObjBytes *b = (ObjBytes *)o;
+            lube_block_free(b->data, b->cap);
+        } else if (o->type == OBJ_FOREIGN) {  /* a plugin's: it lets go of what it holds (a file closes) */
+            lube_foreign_free((ObjForeign *)o);
         } else if (o->type == OBJ_CHANNEL) {  /* shared between isolates: counted apart */
             channel_release(((ObjChannel *)o)->ch);
         } else if (o->type == OBJ_ISOLATE) {

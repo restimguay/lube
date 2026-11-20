@@ -139,6 +139,7 @@ int main(int argc, char **argv) {
     _setmode(_fileno(stdout), _O_BINARY);
     _setmode(_fileno(stderr), _O_BINARY);
 #endif
+    lube_argv0 = argv[0];  /* (where to look for plugins, when the system cannot say where lube is) */
     lower_limit("LUBE_MAX_ITEMS", &lube_max_items);
     lower_limit("LUBE_MAX_BYTES", &lube_max_bytes);
     Interp *I = lube_new(&stack_marker);
