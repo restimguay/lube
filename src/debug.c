@@ -15,6 +15,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef LUBE_RUNTIME  /* (a program built with --small has no debugger: see the end) */
+
 /* Ctrl-C while the program runs under the terminal debugger: pause it. */
 static volatile sig_atomic_t interrupted;
 static void on_interrupt(int sig) {
@@ -584,3 +586,11 @@ void lube_debug_terminal(Interp *I) {
     signal(SIGINT, on_interrupt);
     printf("Lube debugger: h lists the commands (Ctrl-C pauses the program)\n");
 }
+
+#else
+/* LCOV_EXCL_START: never debugged (nothing starts the debugger), so never called */
+void debug_hook(Interp *I) { (void)I; }
+void debug_error(Interp *I) { (void)I; }
+void debug_left_frame(Interp *I) { (void)I; }
+/* LCOV_EXCL_STOP */
+#endif

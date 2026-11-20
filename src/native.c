@@ -36,6 +36,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef LUBE_RUNTIME  /* (translating to C: not in a program built with --small; its runtime part is at the end) */
+
 /* Types: NT_INT is a whole Number within 2^53 (held in an int64_t), NT_NUM
  * any Number (a double), NT_NONE a fn's result when it returns nothing.
  * NT_LNUM and NT_LBOOL are lists of Numbers and of Bools that the fn makes
@@ -128,11 +130,15 @@ static int writes_to(Node *n, int s);
 static int is_value(Gen *g, Node *n);
 static int gen_invoke(Gen *g, Cand *c, const char *fn, Node **argv, int argc, int self, char *res, int need);
 
+#endif
+
 uint64_t lube_hash_text(const char *text, size_t len) {
     uint64_t h = 1469598103934665603ull;  /* FNV-1a */
     for (size_t i = 0; i < len; i++) h = (h ^ (unsigned char)text[i]) * 1099511628211ull;
     return h;
 }
+
+#ifndef LUBE_RUNTIME
 
 static int ann_type(const TypeAnn *t) {
     if (!t->set) return NT_NONE;
@@ -1929,11 +1935,203 @@ static const char *const HEADER[] = {  /* (pieces: C99 promises string literals 
     "}\n\n",
     NULL};
 
+/* ---------- --small: what of Lube the program uses ---------- */
+
+/* The program's code that can run: its files' top-level statements, and
+ * the top-level fns and classes they reach by name (a class with all its
+ * methods: they are called by name), walked from a worklist. `used`: the
+ * other globals it names (the built-ins it needs) and its method names
+ * (x.f() is f(x) when x has no method f). */
+typedef struct {
+    ObjString **names;  /* the top-level fns and classes */
+    Node **nodes;
+    unsigned char *reached;
+    int n, *work, nwork;
+    ObjMap *used;
+} Shake;
+
+static void shake_walk(Shake *k, Node *n);
+
+static void shake_name(Shake *k, ObjString *name) {
+    int found = 0;
+    for (int i = 0; i < k->n; i++)
+        if (k->names[i] == name) {
+            found = 1;
+            if (!k->reached[i]) {
+                k->reached[i] = 1;
+                k->work[k->nwork++] = i;
+            }
+        }
+    if (!found) map_set(k->used, retain(OBJ_VAL(name)), BOOL_VAL(1));
+}
+
+/* x.name or x.name(...): a package's member too (pkg::name), when x is a package. */
+static void shake_member(Shake *k, ObjString *name) {
+    for (int i = 0; i < k->n; i++) {
+        ObjString *d = k->names[i];
+        if (d->length > name->length + 2 && !memcmp(d->chars + d->length - name->length - 2, "::", 2) &&
+            !memcmp(d->chars + d->length - name->length, name->chars, name->length) && !k->reached[i]) {
+            k->reached[i] = 1;
+            k->work[k->nwork++] = i;
+        }
+    }
+}
+
+static void shake_list(Shake *k, NodeList *l) {
+    for (int i = 0; i < l->count; i++) shake_walk(k, l->items[i]);
+}
+
+static void shake_func(Shake *k, FuncDecl *d) {
+    for (int i = 0; i < d->nparams; i++) shake_walk(k, d->defaults[i]);
+    shake_walk(k, d->body);
+}
+
+static void shake_walk(Shake *k, Node *n) {
+    if (!n) return;
+    switch (n->kind) {
+    case N_VAR: if (n->as.var.kind == VAR_GLOBAL) shake_name(k, n->as.var.name); break;
+    case N_INTERP: case N_LIST: shake_list(k, &n->as.items); break;
+    case N_TYPED_LIST: shake_list(k, &n->as.tlist.items); break;
+    case N_MAP:
+        shake_list(k, &n->as.map.keys);
+        shake_list(k, &n->as.map.values);
+        break;
+    case N_ASSIGN:
+        shake_walk(k, n->as.assign.target);
+        shake_walk(k, n->as.assign.value);
+        break;
+    case N_UNARY: shake_walk(k, n->as.unary.operand); break;
+    case N_BINARY: case N_AND: case N_OR:
+        shake_walk(k, n->as.binary.left);
+        shake_walk(k, n->as.binary.right);
+        break;
+    case N_CALL:
+        shake_walk(k, n->as.call.callee);
+        shake_list(k, &n->as.call.args);
+        break;
+    case N_METHOD:  /* (its name: a method, or the global fn of that name) */
+        shake_walk(k, n->as.method.object);
+        shake_list(k, &n->as.method.args);
+        shake_name(k, n->as.method.name);
+        shake_member(k, n->as.method.name);
+        if (n->as.method.fallback.name) shake_name(k, n->as.method.fallback.name);
+        break;
+    case N_INDEX:
+        shake_walk(k, n->as.index.object);
+        shake_walk(k, n->as.index.index);
+        break;
+    case N_FIELD:
+        shake_walk(k, n->as.field.object);
+        shake_member(k, n->as.field.name);
+        break;
+    case N_FUNC: shake_func(k, n->as.func); break;
+    case N_RANGE:
+        shake_walk(k, n->as.range.start);
+        shake_walk(k, n->as.range.end);
+        break;
+    case N_REF: case N_EXPR: case N_RETURN: case N_THROW: shake_walk(k, n->as.expr); break;
+    case N_SUPER: shake_list(k, &n->as.super_call.args); break;
+    case N_IS:
+        shake_walk(k, n->as.is.value);
+        shake_walk(k, n->as.is.cls);
+        break;
+    case N_LET: shake_walk(k, n->as.let.value); break;
+    case N_BLOCK: shake_list(k, &n->as.block.stmts); break;
+    case N_IF:
+        shake_walk(k, n->as.if_s.cond);
+        shake_walk(k, n->as.if_s.then_branch);
+        shake_walk(k, n->as.if_s.else_branch);
+        break;
+    case N_WHILE:
+        shake_walk(k, n->as.while_s.cond);
+        shake_walk(k, n->as.while_s.body);
+        break;
+    case N_FOR:
+        shake_walk(k, n->as.for_s.iter);
+        shake_walk(k, n->as.for_s.body);
+        break;
+    case N_TRY:
+        shake_walk(k, n->as.try_s.body);
+        shake_walk(k, n->as.try_s.handler);
+        break;
+    case N_CLASS:
+        shake_walk(k, n->as.klass.parent);
+        shake_list(k, &n->as.klass.fields);
+        shake_list(k, &n->as.klass.methods);
+        shake_walk(k, n->as.klass.ctor);
+        break;
+    case N_ON:
+        for (int i = 0; i < n->as.on.count; i++)
+            if (n->as.on.items[i].root.kind == VAR_GLOBAL) shake_name(k, n->as.on.items[i].root.name);
+        shake_func(k, n->as.on.func);
+        break;
+    default: break;  /* (literals, break, continue, import, Map types: nothing named) */
+    }
+}
+
+static void shake_run(Shake *k) {
+    while (k->nwork) shake_walk(k, k->nodes[k->work[--k->nwork]]);
+}
+
+/* The names of the globals the program's code that can run uses (into
+ * used). Returns 1 when it reaches for any global by name (globals()): then
+ * it may use every built-in. */
+static int shake_uses(Interp *I, ObjMap *used, const char *name) {
+    return map_get(used, OBJ_VAL(lube_intern(I, name, strlen(name))), NULL);
+}
+
+static int shake_program(Interp *I, Node **trees, int nfiles, ObjMap *used) {
+    Shake k;
+    memset(&k, 0, sizeof k);
+    k.used = used;
+    for (int i = 0; i < nfiles; i++) k.n += trees[i]->as.block.stmts.count;
+    k.names = xmalloc(sizeof(ObjString *) * (size_t)(k.n + 1));
+    k.nodes = xmalloc(sizeof(Node *) * (size_t)(k.n + 1));
+    k.reached = xmalloc((size_t)k.n + 1);
+    k.work = xmalloc(sizeof(int) * (size_t)(k.n + 1));
+    k.n = 0;
+    for (int i = 0; i < nfiles; i++) {  /* the declarations, waiting to be reached */
+        NodeList *stmts = &trees[i]->as.block.stmts;
+        for (int j = 0; j < stmts->count; j++) {
+            Node *st = stmts->items[j];
+            ObjString *name = st->kind == N_LET && st->as.let.is_fn ? st->as.let.var.name
+                            : st->kind == N_CLASS ? st->as.klass.var.name : NULL;
+            if (!name) continue;
+            k.names[k.n] = name;
+            k.nodes[k.n] = st;
+            k.reached[k.n++] = 0;
+        }
+    }
+    for (int i = 0; i < nfiles; i++) {  /* the rest runs: from there */
+        NodeList *stmts = &trees[i]->as.block.stmts;
+        for (int j = 0; j < stmts->count; j++) {
+            Node *st = stmts->items[j];
+            if (!((st->kind == N_LET && st->as.let.is_fn) || st->kind == N_CLASS)) shake_walk(&k, st);
+            shake_run(&k);
+        }
+    }
+    int by_name = shake_uses(I, used, "globals");
+    if (by_name || shake_uses(I, used, "find_class") || shake_uses(I, used, "classes")) {
+        for (int i = 0; i < k.n; i++)  /* (classes and fns found by name: all of them can run) */
+            if (!k.reached[i]) {
+                k.reached[i] = 1;
+                k.work[k.nwork++] = i;
+            }
+        shake_run(&k);
+    }
+    free(k.names);
+    free(k.nodes);
+    free(k.reached);
+    free(k.work);
+    return by_name;
+}
+
 /* Compiles the program (its files: keys and texts, read from dir) into the
  * executable exe_out: Lube itself, with the functions that can be native
  * compiled to machine code. Returns 0, or an exit status after a message. */
 int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *lens, const char *argv0,
-                      const char *exe_out, int fast) {
+                      const char *exe_out, int flags) {
+    int fast = flags & LUBE_BUILD_FAST, small = flags & LUBE_BUILD_SMALL, natives = flags & LUBE_BUILD_NATIVE;
     Gen g;
     memset(&g, 0, sizeof g);
     g.fast = fast;
@@ -1948,12 +2146,14 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
         NodeList *stmts = &trees[i]->as.block.stmts;
         for (int j = 0; j < stmts->count; j++) note_declared(&g, stmts->items[j]);
     }
-    for (int i = 0; i < nfiles; i++) {
+    ObjMap *used = new_map();  /* --small: the globals the program uses (before loops' are made locals) */
+    int every_builtin = small ? shake_program(I, trees, nfiles, used) : 1;
+    for (int i = 0; natives && i < nfiles; i++) {
         NodeList *stmts = &trees[i]->as.block.stmts;
         uint64_t hash = lube_hash_text(texts[i], lens[i]);
         for (int j = 0; j < stmts->count; j++) consider(&g, stmts->items[j], hash);
     }
-    for (int i = 0; i < nfiles; i++) {  /* the methods of classes declared once */
+    for (int i = 0; natives && i < nfiles; i++) {  /* the methods of classes declared once */
         NodeList *stmts = &trees[i]->as.block.stmts;
         uint64_t hash = lube_hash_text(texts[i], lens[i]);
         for (int j = 0; j < stmts->count; j++) {
@@ -1965,7 +2165,7 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
             for (int m = 0; m < s->as.klass.methods.count; m++) consider_method(&g, I, k, s->as.klass.methods.items[m], hash);
         }
     }
-    for (int i = 0; i < nfiles; i++) {  /* (after the fns: a loop calls them) */
+    for (int i = 0; natives && i < nfiles; i++) {  /* (after the fns: a loop calls them) */
         NodeList *stmts = &trees[i]->as.block.stmts;
         uint64_t hash = lube_hash_text(texts[i], lens[i]);
         for (int j = 0; j < stmts->count; j++) consider_loop(&g, I, stmts->items[j], j, hash, trees[i]->as.block.frame_slots);
@@ -2070,18 +2270,43 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
     }
     sb_printf(&c, "    {0, 0, 0, 0, 0, 0}\n};\nconst int lube_nnatives = %d;\n", count);
 
-    int status = count ? 0 : -1;  /* -1: nothing to compile (a plain build will do) */
-    char *srcdir = count ? find_sources(argv0) : NULL;
-    if (count && !srcdir) {
-        fprintf(stderr, "lube: --native needs Lube's C sources: set LUBE_SRC to the folder that has lube.h\n");
+    int status = count || small ? 0 : -1;  /* -1: nothing to compile (a plain build will do) */
+    char *srcdir = !status ? find_sources(argv0) : NULL;
+    if (!status && !srcdir) {
+        fprintf(stderr, "lube: --%s needs Lube's C sources: set LUBE_SRC to the folder that has lube.h\n",
+                natives ? "native" : "small");
         status = 69;
     }
-    StrBuf gen, cmd;
+    StrBuf gen, cmd, keep;
     sb_init(&gen);
     sb_init(&cmd);
+    sb_init(&keep);
     size_t base = strlen(exe_out);
     if (base > 4 && !strcmp(exe_out + base - 4, ".exe")) base -= 4;  /* (Windows) */
     sb_printf(&gen, "%.*s.c", (int)base, exe_out);
+    int kept = 0, builtins = 0;
+    if (small && !status) {  /* the built-ins it keeps: LUBE_KEEP_<name> (see LUBE_BUILTIN) */
+        StrBuf h;
+        sb_init(&h);
+        sb_puts(&h, "/* lube --build --small: the built-ins this program uses (the rest are left out) */\n");
+        for (size_t e = 0; e < I->globals->used; e++) {
+            MapEntry *m = &I->globals->entries[e];
+            if (!m->live || !IS_NATIVE(m->value)) continue;
+            int on = every_builtin || map_get(used, m->key, NULL);
+            sb_printf(&h, "#define LUBE_KEEP_%s(...)%s\n", AS_STRING(m->key)->chars, on ? " __VA_ARGS__" : "");
+            kept += on;
+            builtins++;
+        }
+        sb_printf(&keep, "%.*s.keep.h", (int)base, exe_out);
+        FILE *hf = fopen(keep.data, "wb");
+        if (!hf || fwrite(h.data, 1, h.len, hf) != h.len) {
+            fprintf(stderr, "lube: cannot write '%s'\n", keep.data);
+            status = 73;
+        }
+        if (hf) fclose(hf);
+        sb_free(&h);
+    }
+    release(OBJ_VAL(used));
     FILE *f = status ? NULL : fopen(gen.data, "wb");
     if (!status && (!f || fwrite(c.data, 1, c.len, f) != c.len)) {
         fprintf(stderr, "lube: cannot write '%s'\n", gen.data);
@@ -2097,25 +2322,29 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
 #else
         const char *dflt = "cc";
 #endif
-        sb_printf(&cmd, "\"%s\" -O3 -std=c99 -ffp-contract=off -DLUBE_STACK_SIZE=0x%lx", cc && *cc ? cc : dflt,
-                  (unsigned long)LUBE_STACK_SIZE);  /* (no a * b + c in one rounding: the VM's two) */
+        StrBuf shake;  /* --small: Lube's runtime only (not the tools that build), with the built-ins the program uses */
+        sb_init(&shake);
+        if (small) sb_printf(&shake, " -DLUBE_RUNTIME -DLUBE_SHAKE -include \"%s\" -ffunction-sections -fdata-sections", keep.data);
+        sb_printf(&cmd, "\"%s\" %s -std=c99 -ffp-contract=off -DLUBE_STACK_SIZE=0x%lx%s", cc && *cc ? cc : dflt,
+                  small ? "-Os" : "-O3", (unsigned long)LUBE_STACK_SIZE, shake.data ? shake.data : "");
+        /* (no a * b + c in one rounding: the VM's two) */
 #if defined(__APPLE__)
         sb_printf(&cmd, " -Wl,-stack_size,0x%lx", (unsigned long)LUBE_STACK_SIZE);
 #elif defined(_WIN32)
         sb_printf(&cmd, " -Wl,--stack,0x%lx", (unsigned long)LUBE_STACK_SIZE);
 #endif
-        StrBuf obj;  /* --fast: the machine code compiled apart, with its own flags (Lube's stay exact) */
+        StrBuf obj;  /* --fast, --small: the machine code compiled apart, with its own flags (quick; Lube's stay exact) */
         sb_init(&obj);
-        if (fast) {
+        if (fast || small) {
             StrBuf c1;
             sb_init(&c1);
             sb_printf(&obj, "%.*s.o", (int)base, exe_out);
 #ifdef _WIN32
             sb_putc(&c1, '"');
 #endif
-            sb_printf(&c1, "\"%s\" -O3 -std=c99 -ffp-contract=fast -fassociative-math -fno-signed-zeros -fno-trapping-math"
-                           " -fwrapv -I\"%s\" -c \"%s\" -o \"%s\"%s%s", cc && *cc ? cc : dflt, srcdir, gen.data, obj.data,
-                      extra ? " " : "", extra ? extra : "");
+            sb_printf(&c1, "\"%s\" -O3 -std=c99 %s%s -I\"%s\" -c \"%s\" -o \"%s\"%s%s", cc && *cc ? cc : dflt,
+                      fast ? "-ffp-contract=fast -fassociative-math -fno-signed-zeros -fno-trapping-math -fwrapv" : "-ffp-contract=off",
+                      shake.data ? shake.data : "", srcdir, gen.data, obj.data, extra ? " " : "", extra ? extra : "");
 #ifdef _WIN32
             sb_putc(&c1, '"');
 #endif
@@ -2130,7 +2359,12 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
             free(files[i]);
         }
         free(files);
-        sb_printf(&cmd, " \"%s\" -I\"%s\" -o \"%s\" -lm", fast ? obj.data : gen.data, srcdir, exe_out);
+        sb_printf(&cmd, " \"%s\" -I\"%s\" -o \"%s\" -lm", fast || small ? obj.data : gen.data, srcdir, exe_out);
+#if defined(__APPLE__)
+        if (small) sb_puts(&cmd, " -Wl,-dead_strip -Wl,-x -Wl,-S");  /* (what nothing calls goes, and symbols) */
+#else
+        if (small) sb_puts(&cmd, " -Wl,--gc-sections -s");
+#endif
 #ifndef _WIN32
         sb_puts(&cmd, " -lpthread");
 #endif
@@ -2144,10 +2378,14 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
             status = 70;
         }
         if (!getenv("LUBE_NATIVE_KEEP")) remove(gen.data);  /* (LUBE_NATIVE_KEEP: to read it) */
-        if (fast) remove(obj.data);
+        if (fast || small) remove(obj.data);
+        if (small && !getenv("LUBE_NATIVE_KEEP")) remove(keep.data);
         sb_free(&obj);
+        sb_free(&shake);
     }
-    if (status <= 0) printf("native: %s\n", count ? names.data : "none of its functions can be (a plain build)");
+    if (status <= 0 && natives)
+        printf("native: %s\n", count ? names.data : small ? "none of its functions can be" : "none of its functions can be (a plain build)");
+    if (!status && small) printf("small: %d of %d built-ins\n", kept, builtins);
     StrBuf not;  /* the typed fns that are not, and where translating them stopped */
     sb_init(&not);
     for (int i = 0; i < g.ncands && status <= 0; i++) {
@@ -2160,6 +2398,7 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
     sb_free(&not);
     free(srcdir);
     sb_free(&gen);
+    sb_free(&keep);
     sb_free(&cmd);
     sb_free(&c);
     sb_free(&names);
@@ -2188,6 +2427,8 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
     free(g.classes);
     return status;
 }
+
+#endif
 
 /* ---------- records: copying an object's Number fields in and out ---------- */
 

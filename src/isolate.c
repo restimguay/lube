@@ -931,20 +931,21 @@ static const struct {
     NativeFn fn;
     int min, max;
 } ISOLATES[] = {
-    {"channel", n_channel, 0, 1},
-    {"Channel", n_channel, 0, 1},
-    {"send", n_send, 2, 2},
-    {"receive", n_receive, 1, 1},
-    {"try_receive", n_try_receive, 2, 2},
-    {"close", n_close, 1, 1},
-    {"take", n_take, 2, 2},
-    {"spawn", n_spawn, 1, -1},
-    {"cores", n_cores, 0, 0},
-    {"parallel_map", n_parallel_map, 2, 2},
+    LUBE_BUILTIN(channel, n_channel, 0, 1)
+    LUBE_BUILTIN(Channel, n_channel, 0, 1)
+    LUBE_BUILTIN(send, n_send, 2, 2)
+    LUBE_BUILTIN(receive, n_receive, 1, 1)
+    LUBE_BUILTIN(try_receive, n_try_receive, 2, 2)
+    LUBE_BUILTIN(close, n_close, 1, 1)
+    LUBE_BUILTIN(take, n_take, 2, 2)
+    LUBE_BUILTIN(spawn, n_spawn, 1, -1)
+    LUBE_BUILTIN(cores, n_cores, 0, 0)
+    LUBE_BUILTIN(parallel_map, n_parallel_map, 2, 2)
+    {NULL, NULL, 0, 0}  /* (the end) */
 };
 
 void register_isolates(Interp *I) {
-    for (size_t i = 0; i < sizeof ISOLATES / sizeof ISOLATES[0]; i++)
+    for (size_t i = 0; ISOLATES[i].name; i++)
         lube_define(I, ISOLATES[i].name,
                     OBJ_VAL(new_native(ISOLATES[i].name, ISOLATES[i].fn, ISOLATES[i].min, ISOLATES[i].max, 0)));
 }

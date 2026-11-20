@@ -119,6 +119,10 @@ run "native: the program as a script" "$LUBE" tests/cli/native.lube
 run "native: the program built" sh -c 'LUBE_SRC="$3" "$1" --build --native tests/cli/native.lube -o "$2/native_app" && "$2/native_app"' sh "$ABS" "$TMP" "$SRC"
 run "native: a limit on items, as a script" env LUBE_MAX_ITEMS=200 "$LUBE" tests/cli/native.lube
 run "native: a limit on items, built" env LUBE_MAX_ITEMS=200 "$TMP/native_app"
+run "small: only the parts of Lube it uses, built" sh -c 'LUBE_SRC="$3" "$1" --build --small tests/small.lube -o "$2/small_app" && "$2/small_app"' sh "$ABS" "$TMP" "$SRC"
+run "small: natives too, built" sh -c 'LUBE_SRC="$3" "$1" --build --small --native tests/cli/native_fast.lube -o "$2/small_native" && "$2/small_native"' sh "$ABS" "$TMP" "$SRC"
+run "build: --fast needs --native" "$LUBE" --build --fast tests/small.lube
+run "small: an output folder that does not exist" env LUBE_SRC="$SRC" "$LUBE" --build --small tests/small.lube -o "$TMP/no/such/dir/app"
 run "native: --fast (wrapping whole numbers), built" sh -c 'LUBE_SRC="$3" "$1" --build --native --fast tests/cli/native_fast.lube -o "$2/fast_app" && "$2/fast_app"' sh "$ABS" "$TMP" "$SRC"
 run "native: top-level loops, as a script" "$LUBE" tests/cli/native_loops.lube
 run "native: top-level loops, built" sh -c 'LUBE_SRC="$3" "$1" --build --native tests/cli/native_loops.lube -o "$2/loops_app" && "$2/loops_app"' sh "$ABS" "$TMP" "$SRC"

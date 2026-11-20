@@ -32,9 +32,12 @@
 static const char MAGIC[8] = {'L', 'U', 'B', 'E', 'P', 'A', 'C', 'K'};
 #define TRAILER 16
 
+#ifndef LUBE_RUNTIME  /* (building: not in a program built with --small) */
 static void put_u32(StrBuf *sb, size_t n) {
     for (int i = 0; i < 4; i++) sb_putc(sb, (char)((n >> (8 * i)) & 0xff));
 }
+
+#endif
 
 static size_t get_uint(const unsigned char *p, int bytes) {
     size_t n = 0;
@@ -78,6 +81,7 @@ static char *find_self(const char *argv0) {
 }
 
 /* ---------- building ---------- */
+#ifndef LUBE_RUNTIME
 
 typedef struct {
     char **keys;     /* each file's name in the bundle, as the program's imports compute it */
@@ -172,7 +176,8 @@ static int add_file(Interp *I, Files *fs, const char *key, const char *real, con
 /* lube --build: the program, packed after a copy of this lube; native: after
  * a lube compiled for it, with machine code for the functions that can have
  * it (native.c). */
-int lube_build(Interp *I, const char *argv0, const char *main_path, const char *out_path, int native) {
+int lube_build(Interp *I, const char *argv0, const char *main_path, const char *out_path, int flags) {
+    int native = flags != 0;  /* (compiled from Lube's sources, for this program: native, small, or both) */
     Files fs = {0};
     const char *slash = strrchr(main_path, '/');
     fs.dir = main_path;
@@ -186,7 +191,7 @@ int lube_build(Interp *I, const char *argv0, const char *main_path, const char *
     sb_puts(&compiled, ".exe");
 #endif
     if (native && !status) {
-        status = lube_native_build(I, fs.count, fs.keys, fs.texts, fs.lens, argv0, compiled.data, native == 2);
+        status = lube_native_build(I, fs.count, fs.keys, fs.texts, fs.lens, argv0, compiled.data, flags);
         if (status < 0) native = status = 0;  /* nothing could be native: this lube as it is */
     }
     char *self = status ? NULL : native ? xstrndup(compiled.data, compiled.len) : find_self(argv0);
@@ -238,6 +243,7 @@ int lube_build(Interp *I, const char *argv0, const char *main_path, const char *
     free(exe);
     return status;
 }
+#endif
 
 /* ---------- running a built program ---------- */
 

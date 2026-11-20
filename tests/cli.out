@@ -17,11 +17,13 @@ usage:
                         run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build [--native [--fast]] FILE [-o OUT]
+  lube --build [--native [--fast]] [--small] FILE [-o OUT]
                         build FILE and its imports into a standalone executable; --native also
                         compiles its fns that compute only with Numbers and Bools to machine
                         code (needs a C compiler, and Lube's sources: LUBE_SRC); --fast lets
-                        that code use 64-bit integers that wrap around and reorder sums
+                        that code use 64-bit integers that wrap around and reorder sums;
+                        --small makes it as small as it can be: only the parts of Lube the
+                        program uses (needs a C compiler too)
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 0]
@@ -38,11 +40,13 @@ usage:
                         run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build [--native [--fast]] FILE [-o OUT]
+  lube --build [--native [--fast]] [--small] FILE [-o OUT]
                         build FILE and its imports into a standalone executable; --native also
                         compiles its fns that compute only with Numbers and Bools to machine
                         code (needs a C compiler, and Lube's sources: LUBE_SRC); --fast lets
-                        that code use 64-bit integers that wrap around and reorder sums
+                        that code use 64-bit integers that wrap around and reorder sums;
+                        --small makes it as small as it can be: only the parts of Lube the
+                        program uses (needs a C compiler too)
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 0]
@@ -61,11 +65,13 @@ usage:
                         run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build [--native [--fast]] FILE [-o OUT]
+  lube --build [--native [--fast]] [--small] FILE [-o OUT]
                         build FILE and its imports into a standalone executable; --native also
                         compiles its fns that compute only with Numbers and Bools to machine
                         code (needs a C compiler, and Lube's sources: LUBE_SRC); --fast lets
-                        that code use 64-bit integers that wrap around and reorder sums
+                        that code use 64-bit integers that wrap around and reorder sums;
+                        --small makes it as small as it can be: only the parts of Lube the
+                        program uses (needs a C compiler too)
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 64]
@@ -82,11 +88,13 @@ usage:
                         run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build [--native [--fast]] FILE [-o OUT]
+  lube --build [--native [--fast]] [--small] FILE [-o OUT]
                         build FILE and its imports into a standalone executable; --native also
                         compiles its fns that compute only with Numbers and Bools to machine
                         code (needs a C compiler, and Lube's sources: LUBE_SRC); --fast lets
-                        that code use 64-bit integers that wrap around and reorder sums
+                        that code use 64-bit integers that wrap around and reorder sums;
+                        --small makes it as small as it can be: only the parts of Lube the
+                        program uses (needs a C compiler too)
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 64]
@@ -135,11 +143,13 @@ usage:
                         run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build [--native [--fast]] FILE [-o OUT]
+  lube --build [--native [--fast]] [--small] FILE [-o OUT]
                         build FILE and its imports into a standalone executable; --native also
                         compiles its fns that compute only with Numbers and Bools to machine
                         code (needs a C compiler, and Lube's sources: LUBE_SRC); --fast lets
-                        that code use 64-bit integers that wrap around and reorder sums
+                        that code use 64-bit integers that wrap around and reorder sums;
+                        --small makes it as small as it can be: only the parts of Lube the
+                        program uses (needs a C compiler too)
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 64]
@@ -184,11 +194,13 @@ usage:
                         run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build [--native [--fast]] FILE [-o OUT]
+  lube --build [--native [--fast]] [--small] FILE [-o OUT]
                         build FILE and its imports into a standalone executable; --native also
                         compiles its fns that compute only with Numbers and Bools to machine
                         code (needs a C compiler, and Lube's sources: LUBE_SRC); --fast lets
-                        that code use 64-bit integers that wrap around and reorder sums
+                        that code use 64-bit integers that wrap around and reorder sums;
+                        --small makes it as small as it can be: only the parts of Lube the
+                        program uses (needs a C compiler too)
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 64]
@@ -403,6 +415,50 @@ parameter 'n' of fib() is a Number, so it cannot take a str
 stack overflow: too much recursion
 lube: out of memory
 [exit 70]
+--- small: only the parts of Lube it uses, built
+small: 12 of 117 built-ins
+built TMP/small_app: 3 files, N bytes
+over 100
+rex says woof, not ... CAT SAYS ... true true
+[1, 2, 3, 4, 5] [1.5, 2.5] 42 -3 113 true
+5 0 true
+caught oops
+3-1-2-4-5
+[exit 0]
+--- small: natives too, built
+native: cube, total, spin, mods, half, bad
+small: 1 of 117 built-ins
+built TMP/small_native: 1 file, N bytes
+1000000000 295 -1 -2 3.5
+2.7e+19 6.725369627399922e+29
+modulo by zero
+[exit 0]
+--- build: --fast needs --native
+Lube 0.1.0 - a small, smooth scripting language
+
+usage:
+  lube                  start the interactive REPL
+  lube FILE [ARGS...]   run a Lube script (ARGS are available as `args`)
+  lube -e CODE          run CODE and print the value of the last expression
+  lube -                read a script from standard input
+  lube --check FILE     report syntax errors without running anything (FILE may be -)
+  lube --debug FILE [ARGS...]
+                        run FILE in the debugger (h at its prompt lists the commands)
+  lube --hot FILE [ARGS...]
+                        run FILE, applying changes to its files while it runs
+  lube --build [--native [--fast]] [--small] FILE [-o OUT]
+                        build FILE and its imports into a standalone executable; --native also
+                        compiles its fns that compute only with Numbers and Bools to machine
+                        code (needs a C compiler, and Lube's sources: LUBE_SRC); --fast lets
+                        that code use 64-bit integers that wrap around and reorder sums;
+                        --small makes it as small as it can be: only the parts of Lube the
+                        program uses (needs a C compiler too)
+  lube -v, --version    print the version
+  lube -h, --help       show this help
+[exit 64]
+--- small: an output folder that does not exist
+lube: cannot write 'TMP/no/such/dir/app.native-tmp.keep.h'
+[exit 73]
 --- native: --fast (wrapping whole numbers), built
 native: cube, total, spin, mods, half, bad
 built TMP/fast_app: 1 file, N bytes
@@ -805,11 +861,13 @@ usage:
                         run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build [--native [--fast]] FILE [-o OUT]
+  lube --build [--native [--fast]] [--small] FILE [-o OUT]
                         build FILE and its imports into a standalone executable; --native also
                         compiles its fns that compute only with Numbers and Bools to machine
                         code (needs a C compiler, and Lube's sources: LUBE_SRC); --fast lets
-                        that code use 64-bit integers that wrap around and reorder sums
+                        that code use 64-bit integers that wrap around and reorder sums;
+                        --small makes it as small as it can be: only the parts of Lube the
+                        program uses (needs a C compiler too)
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 64]
@@ -868,11 +926,13 @@ usage:
                         run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build [--native [--fast]] FILE [-o OUT]
+  lube --build [--native [--fast]] [--small] FILE [-o OUT]
                         build FILE and its imports into a standalone executable; --native also
                         compiles its fns that compute only with Numbers and Bools to machine
                         code (needs a C compiler, and Lube's sources: LUBE_SRC); --fast lets
-                        that code use 64-bit integers that wrap around and reorder sums
+                        that code use 64-bit integers that wrap around and reorder sums;
+                        --small makes it as small as it can be: only the parts of Lube the
+                        program uses (needs a C compiler too)
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 64]

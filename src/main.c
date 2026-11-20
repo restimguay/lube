@@ -11,6 +11,7 @@
 #include <io.h>
 #endif
 
+#ifndef LUBE_RUNTIME  /* (a program built with --small: only what runs its packed program) */
 static void usage(FILE *out) {
     fprintf(out,
             "Lube %s - a small, smooth scripting language\n"
@@ -25,11 +26,13 @@ static void usage(FILE *out) {
             "                        run FILE in the debugger (h at its prompt lists the commands)\n"
             "  lube --hot FILE [ARGS...]\n"
             "                        run FILE, applying changes to its files while it runs\n"
-            "  lube --build [--native [--fast]] FILE [-o OUT]\n"
+            "  lube --build [--native [--fast]] [--small] FILE [-o OUT]\n"
             "                        build FILE and its imports into a standalone executable; --native also\n"
             "                        compiles its fns that compute only with Numbers and Bools to machine\n"
             "                        code (needs a C compiler, and Lube's sources: LUBE_SRC); --fast lets\n"
-            "                        that code use 64-bit integers that wrap around and reorder sums\n"
+            "                        that code use 64-bit integers that wrap around and reorder sums;\n"
+            "                        --small makes it as small as it can be: only the parts of Lube the\n"
+            "                        program uses (needs a C compiler too)\n"
             "  lube -v, --version    print the version\n"
             "  lube -h, --help       show this help\n",
             LUBE_VERSION);
@@ -112,6 +115,8 @@ static char *read_stdin(size_t *len) {
     return sb.data;
 }
 
+#endif
+
 /* LUBE_MAX_ITEMS / LUBE_MAX_BYTES can lower a size limit (never raise it). */
 static void lower_limit(const char *name, size_t *limit) {
     const char *s = getenv(name);
@@ -140,6 +145,12 @@ int main(int argc, char **argv) {
     int bundled = lube_run_bundle(I, argv[0], argc, argv);  /* a built program runs itself */
     int status = bundled >= 0 ? bundled : 0;
 
+#ifdef LUBE_RUNTIME
+    if (bundled < 0) {  /* (its program is not there: the file was changed) */
+        fprintf(stderr, "lube: this executable's program is missing\n");
+        status = 70;
+    }
+#else
     if (bundled >= 0) {
         /* done: every argument went to the program */
     } else if (argc < 2) {
@@ -195,19 +206,25 @@ int main(int argc, char **argv) {
             status = lube_run_file(I, argv[2]);
         }
     } else if (!strcmp(argv[1], "--build")) {
-        /* lube --build [--native [--fast]] app.lube [-o app]: the output is named after the file by default */
-        int native = argc > 2 && !strcmp(argv[2], "--native");
-        if (native && argc > 3 && !strcmp(argv[3], "--fast")) native = 2;
+        /* lube --build [--native [--fast]] [--small] app.lube [-o app]: the output is named after the file by default */
+        int flags = 0, k = 2;  /* LUBE_BUILD_NATIVE, _FAST, _SMALL */
+        for (; k < argc; k++) {
+            if (!strcmp(argv[k], "--native")) flags |= LUBE_BUILD_NATIVE;
+            else if (!strcmp(argv[k], "--fast")) flags |= LUBE_BUILD_FAST;
+            else if (!strcmp(argv[k], "--small")) flags |= LUBE_BUILD_SMALL;
+            else break;
+        }
+        int native = k - 2, rest = argc - native;  /* (the options) */
         char **a = argv + native;  /* a[2]: the file, a[4]: the output */
-        if (argc - native != 3 && !(argc - native == 5 && !strcmp(a[3], "-o"))) {
+        if ((rest != 3 && !(rest == 5 && !strcmp(a[3], "-o"))) || ((flags & LUBE_BUILD_FAST) && !(flags & LUBE_BUILD_NATIVE))) {
             usage(stderr);
             status = 64;
         } else {
             StrBuf out;
             sb_init(&out);
             lube_slashes(a[2]);
-            if (argc - native == 5) lube_slashes(a[4]);
-            if (argc - native == 5) {
+            if (rest == 5) lube_slashes(a[4]);
+            if (rest == 5) {
                 sb_puts(&out, a[4]);
             } else {
                 const char *name = strrchr(a[2], '/') ? strrchr(a[2], '/') + 1 : a[2];
@@ -221,7 +238,7 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "lube: the executable would replace '%s': name it with -o\n", a[2]);
                 status = 64;
             } else {
-                status = lube_build(I, argv[0], a[2], out.data, native);
+                status = lube_build(I, argv[0], a[2], out.data, flags);
             }
             sb_free(&out);
         }
@@ -239,6 +256,7 @@ int main(int argc, char **argv) {
         lube_slashes(argv[1]);
         status = lube_run_file(I, argv[1]);
     }
+#endif
 
     lube_wait_isolates();  /* the program ends when every isolate has */
     fflush(stdout);

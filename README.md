@@ -106,6 +106,20 @@ The machine code computes exactly what the VM would, down to the last bit of eve
 
 It needs a C compiler (`cc`, or `CC`; `gcc` on Windows) when building, not when running, and Lube's C sources: the `src` folder next to `lube`, or the folder `LUBE_SRC` names. On the benchmarks in `bench/vs_rust`, the native builds run `fib` 25 times faster than the VM, the arithmetic `loop` 11 times faster, the `sieve` (a list of Bools) 27 times faster in a twelfth of the memory, `nbody` (a list of class instances, stepped by a top-level loop) 58 times faster, `methods` (a method called five million times) 44 times faster, and `trees` (building and walking lists of lists) 6 times faster. That's 1.7, 2.2, 1.3, 1.3, 1.5 and 0.7 times the time of the same programs in Rust, and `sort` (a top-level loop filling a list of a million Numbers, then `sort()`) takes 1.2 times as long. Over all ten benchmarks, the geometric mean is 1.35 times Rust's time with `--native`, and 1.2 times with `--native --fast` (`python3 bench/vs_rust/run.py --native [--fast]`).
 
+### Small executables: `lube --build --small`
+
+```sh
+./lube --build --small app.lube -o app
+small: 12 of 117 built-ins
+built app: 3 files, 193321 bytes
+```
+
+For small machines such as a Raspberry Pi, `--small` builds an executable with only the parts of Lube the program uses. It leaves out what only the `lube` command needs (the REPL, the debugger, the tools that build programs and compile them to machine code) and every built-in function the program never names, and it optimizes the rest for size. On macOS (Apple silicon), the examples come out about half the size of a plain build: `hello.lube` is 191 KB instead of 371 KB.
+
+The build finds the built-ins a program needs by name, in the code that can run: its top-level statements and the functions and classes they reach. A program that calls `globals()` (which reaches any global by name) keeps them all. Lube's own code is compiled for size, so it runs a little slower; with `--native` too, the compiled functions keep their speed.
+
+Like `--native`, it needs a C compiler when building (Raspberry Pi OS comes with `gcc`) and Lube's C sources (the `src` folder next to `lube`, or `LUBE_SRC`).
+
 ## Memory: no garbage collector, no drama
 
 Lube gives every value **value semantics**, the way numbers already behave in every language:

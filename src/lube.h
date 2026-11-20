@@ -421,6 +421,16 @@ typedef struct LubeNative {
     int (*fnval)(Interp *I, Value *args, Value *out, int depth_left);  /* (returns a value of its own: the VM's now) */
 } LubeNative;
 
+/* A built-in's entry in its table: LUBE_BUILTIN(name, fn, min, max...). A
+ * program built with lube --build --small has only the built-ins it uses:
+ * its build defines LUBE_SHAKE and, for each built-in, LUBE_KEEP_<name> as
+ * its arguments (kept) or as nothing (left out, with all only it uses). */
+#ifdef LUBE_SHAKE
+#define LUBE_BUILTIN(name, ...) LUBE_KEEP_##name({#name, __VA_ARGS__},)
+#else
+#define LUBE_BUILTIN(name, ...) {#name, __VA_ARGS__},
+#endif
+
 /* Records (native.c): the Number fields of an object, copied to and from an array. */
 #define LUBE_REC_MAX 16
 typedef struct {  /* per Interp, and per class: where the fields are */
@@ -992,7 +1002,8 @@ size_t lube_free(Interp *I);
 Source *lube_add_source(Interp *I, const char *path, char *text, size_t length);
 int lube_check_source(Interp *I, Source *src);
 void lube_module_path(StrBuf *path, const char *importer, const char *rel);
-int lube_build(Interp *I, const char *self, const char *main_path, const char *out_path, int native);
+enum { LUBE_BUILD_NATIVE = 1, LUBE_BUILD_FAST = 2, LUBE_BUILD_SMALL = 4 };  /* lube --build's options */
+int lube_build(Interp *I, const char *self, const char *main_path, const char *out_path, int flags);
 int lube_run_bundle(Interp *I, const char *argv0, int argc, char **argv);
 ObjList *lube_hot_reload(Interp *I);
 Value lube_find_method(ObjClass *c, ObjString *name);
@@ -1027,7 +1038,7 @@ char **os_files(const char *dir, const char *ext, int *n);  /* sorted; free each
 
 /* native.c */
 int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *lens, const char *argv0,
-                      const char *exe_out, int fast);
+                      const char *exe_out, int flags);
 void lube_native_attach(Interp *I, FuncDecl *program, Source *src);
 int lube_native_loop(Source *src, int index);
 int lube_global_watched(Interp *I, ObjString *name);
