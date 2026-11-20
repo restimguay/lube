@@ -91,3 +91,11 @@ done
 2 6
 pad_left() takes 2 to 3 arguments but got 1
 5 -2 2 ["a!"]
+[2..inf, 5] [0..inf]
+a List takes one index, not 2
+a str takes one index, not 2
+an Object takes one index, not 2
+a List takes one index, not 2
+a List takes one index, not 2
+list index must be a Number, not a Range
+5 6

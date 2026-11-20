@@ -433,7 +433,7 @@ static void compile_expr(Comp *C, Node *n, int want_value) {
             Node *item = n->as.tlist.items.items[i];
             compile_expr(C, item, 1);
             C->line = item->line;
-            emit(C, OP_CHECK_ELEM, n->as.tlist.elem, 0);
+            if (n->as.tlist.elem != TT_TUPLE) emit(C, OP_CHECK_ELEM, n->as.tlist.elem, 0);  /* (x[i, j]: anything) */
         }
         C->line = n->line;
         emit2(C, OP_TYPED_LIST, n->as.tlist.items.count, n->as.tlist.elem, 1 - n->as.tlist.items.count);

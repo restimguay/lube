@@ -1,0 +1,205 @@
+3.141592653589793 2.718281828459045 6.283185307179586 inf -inf nan 3.141592653589793 true
+1.4142135623730951 4 0 inf 1e-150 0.5
+3 -2 1.25992105 0 inf
+2.718281828 0.082084999 1 0 0 true
+1024 1.414213562 0.125 0 1 1.718281828 -1
+1 2.302585093 0 inf 3 2 -1 0
+10 1.584962501 3 0.301029996 1 0.693147181 0
+1024 0.5 -8 1.414213562 2 1 0 -8
+1 nan 1 nan 1 1
+inf -inf inf inf 1 0 0 0
+inf 0 0 inf inf 0
+-1 -1
+0.5 0.5 1 0 -0.841470985 -0.416146837 1
+1.570796327 3.141592654 1.047197551 0.785398163 1.570796327 -1.570796327 0 0
+0.785398163 -2.35619449 3.141592654 0 1.570796327 0.785398163
+1.175201194 1.543080635 0.462117157 0.881373587 1.316957897 0.549306144 1 1 -inf
+180 57.29577951308232 3.141592653589793 0.017453292519943295 -90
+2 -3 5 3 -2 0 2 -2 1e+300
+[0.25, 3] [-0.5, -3] [0, 2] [0, inf] [0, -inf] [nan, nan]
+[0.5, 4] [-0.75, -1] [0.5752618031559393, -1029] [0, 0] [inf, 0] [nan, 0]
+8 4.94065645841247e-324 9.88131291682493e-324 9.88131291682493e-324 3 0 inf 0
+8.98846567431158e+307 0 9.88131291682493e-324
+1 -1 1 1.5 1 -1 nan 0.010000000000000009
+-1 1 1 1 -1 3
+nan nan -0.25 0 -0.25
+-3 3 0 2.5 inf 3
+5.551115123125783e-17 0 10 -inf nan 0
+1e+308 1 9.99999999999997e-311 0
+1.1102230246251563e-16 -inf -5.551115123125783e-17
+2 -1 nan 1 -1 -1 1
+1.0000000000000002 0.9999999999999999 -4.94065645841247e-324 1 nan nan
+1.0000000000000007 1 1 nan nan
+-9.88131291682493e-324 1.48219693752374e-323 -9.88131291682493e-324 1
+1.9999999999999996 1 1.0000000000000002 -1.0000000000000004
+1.0000000000000004 1.0000000000000002 0.9999999999999998 9.88131291682493e-324
+2.220446049250313e-16 2.220446049250313e-16 4.94065645841247e-324 1.487016908477783e+284 1.99584030953472e+292 inf nan 4.94065645841247e-324
+true false false true false true false
+true false false false true false false
+true false true false true
+true false true false
+true true false false false
+true true true
+1 1 0 6
+10000000000000002 2 inf -inf nan nan
+1e+308 0 0.5000000000000001 0.5000000000000001 0.9999999999999999
+8.98846567431158e+307 0 2.9961552247705263e+307
+24 1 6 1 5 0.0010000000000000002
+3.458764513820541e+18 3.074448912942457e+17 -15 -105
+0 0 0 0
+0 0 -9 inf nan 1
+9.9999999997e+32 8.112963841460672e+31 1.7293822569102705e+18
+32 0 3 1
+1 inf inf nan
+nan 38.72 1.329227995784916e+36
+5 0 5 1.4142135623730951 3 inf nan 0
+1.4142135623730951e+308 inf 4.94065645841247e-324 4.99994433591342e-320 0.5477225575051661
+5 0 3 1.7320508075688772 inf 0
+1 1 120 2.43290200817664e+18 1.1240007277776077e+21 1.5511210043330986e+25 7.257415615307999e+306
+10 2598960 1 1 0 1.008913445455642e+29 2.7028824094543655e+299 1030
+9.223372034707292e+18 4294967297 6.96898287454082e+41 1e+300 4.388012152856548e+63
+20 120 1 0 1 2.43290200817664e+18 1.8446744069414584e+19 1.7668470647783843e+72 1e+300
+6 3 0 0 6 7 3.6893488147419103e+19 2
+12 60 1 0 12 0 3.833759992447475e+21 7
+0 1 3 4 9 67108863 94906265 67108864
+1000000000000000 6369051672525772 6369051672525772 1e+150 9007199254740990
+24 1 1.1240007277776077e+21 1.772453851 -3.544907702 1.329340388 2.363271801 true
+-10.686287021 9.714806383 2.310582858 5.563454795 true 1 inf nan
+false false 0 0
+true false
+0 0 0.693147181 0.572364943 1.265512123 -0.056243716 359.13420537 69.07755279
+inf inf nan 13.940625219 -15.147270591 true
+0.842700793 -0.520499878 0 1 -1 0.157299207 1.842700793 1 0 2.088487584
+9223372036854775807 int64 -5 uint8 inf -inf nan
+3 120 6 4 5
+error: sqrt() of a negative number (-1): cmath.sqrt gives complex roots
+error: sqrt() of a negative number (-inf): cmath.sqrt gives complex roots
+error: sqrt() expects a Number as argument 1, got str
+error: log() expects a number above 0, got 0
+error: log() expects a number above 0, got -1
+error: log() expects a number above 0, got -inf
+error: log() expects a base above 0 and not 1, got 1
+error: log() expects a base above 0 and not 1, got 0
+error: log() expects a base above 0 and not 1, got -2
+error: log() expects a Number as argument 2, got str
+error: log() expects a Number as argument 1, got str
+error: log2() expects a number above 0, got 0
+error: log10() expects a number above 0, got -1
+error: log1p() expects a number above -1, got -1
+error: log1p() expects a number above -1, got -2
+error: acos() expects a number from -1 to 1, got 2
+error: asin() expects a number from -1 to 1, got -1.5
+error: acosh() expects a number of 1 or more, got 0.5
+error: atanh() expects a number between -1 and 1 (not either), got 1
+error: atanh() expects a number between -1 and 1 (not either), got -2
+error: sin() expects a finite number, got inf
+error: cos() expects a finite number, got -inf
+error: tan() expects a finite number, got inf
+error: exp(1000): the result is too large for a Number
+error: exp2(1025): the result is too large for a Number
+error: expm1(710): the result is too large for a Number
+error: cosh(1000): the result is too large for a Number
+error: sinh(-1000): the result is too large for a Number
+error: atan() expects a Number as argument 1, got str
+error: atan2() expects a Number as argument 2, got str
+error: atan2() expects a Number as argument 1, got List
+error: isfinite() expects a Number as argument 1, got str
+error: pow(0, -1): 0 to a negative power divides by zero
+error: pow(0, -2): 0 to a negative power divides by zero
+error: pow(-8, 0.3333333333333333): a negative number to a fractional power is complex (cmath's Complex ** gives it)
+error: pow(10, 400): the result is too large for a Number
+error: pow() expects a Number as argument 1, got str
+error: pow() expects a Number as argument 2, got Bool
+error: fmod(): modulo by zero
+error: fmod() expects a finite number as argument 1, got inf
+error: fmod() expects a Number as argument 2, got str
+error: remainder(): modulo by zero
+error: remainder() expects a finite number as argument 1, got -inf
+error: remainder() expects a finite number as argument 1, got inf
+error: remainder() expects a Number as argument 2, got str
+error: ldexp(1, 2000): the result is too large for a Number
+error: ldexp(1, 10000000000): the result is too large for a Number
+error: ldexp(1e+308, 1): the result is too large for a Number
+error: ldexp() expects a whole Number as argument 2, got 1.5
+error: ldexp() expects a whole Number as argument 2, got inf
+error: ldexp() expects a whole Number as argument 2, got str
+error: ldexp() expects a Number as argument 1, got str
+error: fma(inf, 0, 1): inf * 0, or inf - inf, has no value
+error: fma(inf, 1, -inf): inf * 0, or inf - inf, has no value
+error: fma(1e+308, 10, 0): the result is too large for a Number
+error: fma() expects a Number as argument 3, got str
+error: isclose() expects an object of options as argument 3 (such as {rel_tol: ...}), got Number
+error: isclose(): the option rel_tol is a str, not a Number
+error: isclose(): the tolerances must not be negative
+error: isclose(): the tolerances must not be negative
+error: isclose() expects a Number as argument 2, got str
+error: nextafter() expects an object of options as argument 3 (such as {steps: ...}), got Number
+error: nextafter(): steps must be a whole Number, 0 or more, not -1
+error: nextafter(): steps must be a whole Number, 0 or more, not 1.5
+error: nextafter(): steps must be a whole Number, 0 or more, not nan
+error: nextafter(): the option steps is a List, not a Number
+error: nextafter() expects a Number as argument 2, got str
+error: floor() expects a Number as argument 1, got str
+error: modf() expects a Number as argument 1, got List
+error: frexp() expects a Number as argument 1, got str
+error: ulp() expects a Number as argument 1, got str
+error: hypot() expects a Number as argument 2, got str
+error: dist(): the points have different numbers of dimensions (2 and 1)
+error: dist(): item 1 is a str, not a Number
+error: dist(): item 1 is a Bool, not a Number
+error: dist() expects a List as argument 1, got Number
+error: dist() expects a List as argument 2, got str
+error: fsum(): the sum grows too large for a Number
+error: fsum(): inf + -inf has no value
+error: fsum(): item 1 is a str, not a Number
+error: fsum() expects a List as argument 1, got Number
+error: prod(): item 1 is a str, not a Number
+error: prod() expects a List as argument 1, got Number
+error: prod() expects an object of options as argument 2 (such as {start: ...}), got Number
+error: prod(): the option start is a str, not a Number
+error: prod(): the product is too large for a Number
+error: prod(): the product is too large for a Number
+error: prod(): the product is too large for a Number
+error: prod(): the product is too large for a Number
+error: prod(): the product is too large for a Number
+error: sumprod(): the Lists have different lengths (2 and 1)
+error: sumprod(): item 1 is a str, not a Number
+error: sumprod(): item 1 is a str, not a Number
+error: sumprod() expects a List as argument 1, got Number
+error: sumprod() expects a List as argument 2, got Number
+error: factorial() expects n, a whole Number 0 or more, got -1
+error: factorial() expects a whole Number as argument 1, got 1.5
+error: factorial(171): the result is too large for a Number
+error: factorial() expects a whole Number as argument 1, got inf
+error: factorial() expects a whole Number as argument 1, got str
+error: comb() expects n, a whole Number 0 or more, got -1
+error: comb() expects k, a whole Number 0 or more, got -1
+error: comb() expects a whole Number as argument 2, got 2.5
+error: comb(2000, 1000): the result is too large for a Number
+error: comb(1100, 550): the result is too large for a Number
+error: comb(1e+300, 2): the result is too large for a Number
+error: comb(1.152921504606847e+18, 1.1529215046068467e+18): the result is too large for a Number
+error: perm() expects n, a whole Number 0 or more, got -1
+error: perm() expects k, a whole Number 0 or more, got -2
+error: perm(171): the result is too large for a Number
+error: perm(1e+300, 5): the result is too large for a Number
+error: perm(1000, 200): the result is too large for a Number
+error: gcd() expects a whole Number as argument 1, got 1.5
+error: gcd() expects a whole Number as argument 2, got str
+error: lcm() expects a whole Number as argument 2, got 0.5
+error: lcm(): the result is too large for a Number
+error: isqrt() expects n, a whole Number 0 or more, got -1
+error: isqrt() expects a whole Number as argument 1, got 2.5
+error: gamma() expects a number that is not 0 or a negative whole number, got 0
+error: gamma() expects a number that is not 0 or a negative whole number, got 0
+error: gamma() expects a number that is not 0 or a negative whole number, got -1
+error: gamma() expects a number that is not 0 or a negative whole number, got -inf
+error: gamma(200): the result is too large for a Number
+error: gamma(250.5): the result is too large for a Number
+error: gamma(180): the result is too large for a Number
+error: gamma(4.94065645841247e-324): the result is too large for a Number
+error: gamma() expects a Number as argument 1, got str
+error: lgamma() expects a number that is not 0 or a negative whole number, got 0
+error: lgamma() expects a number that is not 0 or a negative whole number, got -3
+error: lgamma(1e+308): the result is too large for a Number
+error: erf() expects a Number as argument 1, got str

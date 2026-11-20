@@ -1,0 +1,122 @@
+3.141592653589793 2.718281828459045 6.283185307179586 inf nan 3.141592653589793 infj nanj true
+(3+4j) (2+0j) 0j 2j -2j (-0-1j) -0j (-0+0j)
+(1-0j) (1.5+2.25j) (1e+20-1e-20j) (inf-infj) (nan+1j) (1+nanj) infj
+(1+2j) (-3+0j) (1e+16+1000000000000000j) (0.1+0.2j) (5+6j)
+(1+2j) (1-2500j) 1j -1j 1j (1+1j) (2-1j)
+(inf+nanj) (-inf-infj) (nan+0j) (10+20j) (3+0j) 100000j (0.5-5j)
+(100+0.3j) (4+0j) 0j (-0-0j) (7+0j) 1000000.0001j
+3 4 (3-4j) (1+2j) 0 5 2 inf inf
+nan 1.414213562 true 5 5 0 inf nan 2.5
+(4+2j) (2+6j) (11-2j) (-1+2j) (-3-4j) (-0-0j) (4+4j) (4+4j) (2+4j) (-2-4j) (6+8j) (6+8j) (1.5+2j) (0.24-0.32j)
+true false true true true false true false true
+(inf+2j) (inf+nanj) (nan+0j) (0.5-infj) (2+4j)
+(nan+infj) (nan+infj) (inf+infj) (nan+nanj)
+(inf+nanj) (-inf+nanj) (inf+nanj)
+(0.5+0.5j) (0.5-0.5j) (nan+nanj) (inf+nanj)
+0j (-0.17073170731707318+0.5365853658536587j) (inf+0j) (nan+nanj)
+-0.5j (0.16-0.12j) (nan+nanj) -0j -0j (-3-3e-300j)
+(-7+24j) (1+0j) (3+4j) (0.12-0.16j) (-0.0112-0.0384j) (-11+2j) (-1+0j) (1+0j) true
+(2+1j) (-1.62715904+1.124846341j) (0.769238901+0.638961276j) (1+1.732050808j) 0j 0j (1+0j)
+(nan+nanj) (-1125899906842634.5-1125899906842629.5j) 0j (4+0j) (1+0j) (1+0j) (-0+1j)
+1j (2+0j) (1+1j) -2j -0j (2+1j) (1.27201965-0.786151378j) (1+2j)
+(inf+0j) infj (inf+infj) (inf+infj) (nan+nanj) (nan+infj)
+(1.098684113+0.455089861j) (2.2227587494850775e-162+0j) true (1.039772472+1.442607244j)
+(-1+0j) (2.718281828+0j) (-13.128783081-15.200784463j) 0j (inf+infj) (-inf-infj) 0j
+(nan+0j) (inf+nanj) 0j (1.189112365+0.649615046j) (1-0j)
+3.141592654j (1.609437912+0.927295218j) 1.570796327j 0j 0.643501109j (709.542782232+0.785398163j) (-744.093498331+0.785398163j)
+(inf+0j) (inf+3.141592653589793j) (inf-1.5707963267948966j) (inf+nanj) (nan+nanj) (inf-2.356194490192345j)
+(3+0j) (0.143321514+1.349506484j) 1.364376354j (-inf+nanj) (2+0j) (1+0.682188177j) 1.364376354j
+(3.853738038-27.016813258j) (-27.034945603-3.851153335j) (-0.000187346+0.999355987j) (0.841470985+0j) (1.543080635+0j) 1j 1j
+(-6.548120041-7.61923172j) (-6.580663041-7.581552743j) (1.000709536+0.004908258j) (3.660511164+5.700908363j) (3.660511164-5.700908363j) (1+0j)
+(inf+infj) (-inf+infj) (-inf+infj) (-inf-infj) (1+0j) (-1-0j)
+(inf+0j) (nan+0j) (nan+0j) (nan+nanj) (nan-0j) (-0+nanj)
+(0.633983866+2.305509031j) (0.936812461-2.305509031j) (1.448306995+0.158997192j) (1.570796327+1.316957897j) -1.316957897j (1.570796327+0.549306144j) (0.785398163+710.235929413j) (0.785398163+710.235929413j)
+(2.299914041+0.917616853j) (2.305509031+0.936812461j) (0.117500907+1.40992105j) (710.235929413-0.785398163j) (-710.235929413+0.785398163j) (710.235929413+2.35619449j) (1.570796327-691.468675079j)
+1.570796327j (-0.549306144+0j) (230.60508289+0.785398163j) (230.60508289-0.785398163j) (0.549306144+1.570796327j) 1.047197551j
+-infj (nan+nanj) (-inf+0j) nanj (nan+infj) (1.5707963267948966+0j)
+(2.356194490192345+infj) (inf+1.5707963267948966j) (nan+0j) (nan+nanj) (1.5707963267948966+nanj) (nan-0j)
+0.927295218 3.141592653589793 -3.141592653589793 0 [1, 0] [5, 0.927295218] inf true
+(2+0j) (-2+0j) 2j (-1+0j) (inf+0j) (inf+infj) (inf-infj) 0j (nan+0j) (nan+nanj) (inf+nanj)
+true false true true false true true false true
+true false true true false
+true true false true
+z = (3+4j) (3+4j) (z) (3+4j) and (1-2j) [(3+4j), (1-2j)]
+307 307
+error: sqrt() expects a Number or a Complex as argument 1, got str
+error: exp() expects a Number or a Complex as argument 1, got List
+error: log() is not defined at 0
+error: log() is not defined at -0j
+error: log10() is not defined at 0
+error: log() is not defined at base 0
+error: log() is not defined for base 1 (log(1) is 0)
+error: log() expects a Number or a Complex as argument 2, got str
+error: log() expects a Number or a Complex as argument 1, got str
+error: atanh() is not defined at 1
+error: atanh() is not defined at (-1+0j)
+error: atan() is not defined at 1j
+error: exp(1000): the result is too large for a Complex
+error: exp() is not defined at (1+infj)
+error: exp() is not defined at (inf+infj)
+error: cos() is not defined at inf
+error: sin() is not defined at (inf+1j)
+error: tan() is not defined at inf
+error: cosh(1000+1j): the result is too large for a Complex
+error: sinh() is not defined at (1+infj)
+error: sinh(-1000+0j): the result is too large for a Complex
+error: tanh() is not defined at (1+infj)
+error: phase() expects a Number or a Complex as argument 1, got str
+error: polar(): the absolute value of (1.7e+308+1.7e+308j) is too large for a Number
+error: polar() expects a Number or a Complex as argument 1, got Bool
+error: rect(1, inf): an infinite angle has no direction
+error: rect(-2, -inf): an infinite angle has no direction
+error: rect() expects a Number as argument 1, got str
+error: rect() expects a Number as argument 2, got Complex
+error: abs(): the absolute value of (1.7e+308+1.7e+308j) is too large for a Number
+error: abs() expects a Number or a Complex as argument 1, got str
+error: isfinite() expects a Number or a Complex as argument 1, got str
+error: isinf() expects a Number or a Complex as argument 1, got List
+error: isnan() expects a Number or a Complex as argument 1, got Bool
+error: isclose() expects a Number or a Complex as argument 2, got str
+error: isclose() expects a Number or a Complex as argument 1, got str
+error: isclose() expects an object of options as argument 3 (such as {rel_tol: ...}), got Number
+error: isclose(): the option rel_tol is a str, not a Number
+error: isclose(): the option abs_tol is a List, not a Number
+error: isclose(): the tolerances must not be negative
+error: isclose(): the tolerances must not be negative
+error: Complex(re, im) expects two Numbers, got Number and str
+error: Complex(re, im) expects two Numbers, got Complex and Number
+error: Complex() expects a Number, a Complex or a str such as "1+2j", got List
+error: Complex() expects a Number, a Complex or a str such as "1+2j", got Bool
+error: Complex(): "1 + 2j" is not a complex number such as "1+2j"
+error: Complex(): "" is not a complex number such as "1+2j"
+error: Complex(): "0x10" is not a complex number such as "1+2j"
+error: Complex(): "1e" is not a complex number such as "1+2j"
+error: Complex(): "(1+2j" is not a complex number such as "1+2j"
+error: Complex(): "1+2" is not a complex number such as "1+2j"
+error: Complex(): "1+2jj" is not a complex number such as "1+2j"
+error: Complex(): "_1" is not a complex number such as "1+2j"
+error: Complex(): "1__0" is not a complex number such as "1+2j"
+error: Complex(): "1_" is not a complex number such as "1+2j"
+error: Complex(): "1_e5" is not a complex number such as "1+2j"
+error: Complex(): "x" is not a complex number such as "1+2j"
+error: Complex(): "1+xj" is not a complex number such as "1+2j"
+error: Complex(): "(1+2j)) " is not a complex number such as "1+2j"
+error: Complex(): "xyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy..." is not a complex number such as "1+2j"
+error: division by zero
+error: division by zero
+error: division by zero
+error: 0 to a negative or complex power divides by zero
+error: 0 to a negative or complex power divides by zero
+error: 0 to a negative or complex power divides by zero
+error: Complex **: the result is too large for a Complex
+error: Complex **: the result is too large for a Complex
+error: Complex **: the result is too large for a Complex
+error: Complex **: the result is too large for a Complex
+error: unsupported operand types for '+': Complex and List
+error: unsupported operand types for '-': Complex and str
+error: unsupported operand types for '*': List and Complex
+error: unsupported operand types for '/': Complex and Bool
+error: unsupported operand types for '**': Complex and str
+error: unsupported operand types for '%': Complex and Number
+error: unsupported operand types for '<': Complex and Complex
+error: a Complex has no field 'size'

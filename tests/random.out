@@ -1,0 +1,141 @@
+0.6394267984578837 0.025010755222666936 0.6394267984578837
+0 0.8444218515250481 3255389356
+-1 0.13436424411240122 3639700191
+4294967296 0.11299430095636409 1794561286
+1.1805916207174113e+21 0.2327882718301838 1782696399
+1e+300 0.7063911271661637 51305790
+0.5 0.2794930785867423 3398449556
+-1.5 0.7101153317194698 3396863
+inf 0.19236379321481523 1231978967
+-inf 0.820833204760975 1254833236
+-4.336808689942018e-19 0.13119521545503066 1306021862
+hello 0.3537754404730722 2848416207
+ 0.9602256525641875 2557274880
+héllo €😀 0.059763321004925984 2096478011
+Bytes(00 00 01) 0.7396298544557905 4220903980
+v1 hello 0.8180391270568783
+v1  0.8444218515250481
+v1 héllo €😀 0.7610048555226191
+v1 Bytes(c8 01) 0.9920778335309689
+0.3537754404730722 0.7720246314157545 0.2327882718301838
+true true
+[0, 0, 0, 5, 9, 9, 12, 113, 185, 209, 775, 1467, 3107, 2172, 8735, 8033, 41690, 106506, 192739, 261253, 371376, 872147, 2211779, 6104886, 10328915, 32321294, 14638265, 41544307, 145983750, 377989219, 354591017, 1115297189, 320714264, 7436134918, 17178422289, 22361239684, 50476992702, 126566386416, 230678548300, 360227096456, 584752802587, 1907878636992, 4305326372483, 6777709584400, 11061041641675, 16391384358880, 51037629742498, 19558179422297, 92074490173380, 186240048240810, 893578018904146, 732919853115475, 1866220957808405, 5113280184132457]
+["", "36", "dfb0e7", "592d28de", "0e862f683a", "d3865934fe5b5d0a", "7507fabf57ffa739a30e0dc304"]
+4 9 56 40 4
+2922914704674405 6 55 0
+4168911999861664 584564095
+110 only 76 9 10
+[230, 200, 90, 290, 180, 130, 280, 10, 270, 150, 160, 110, 70, 170, 0, 210, 30, 20, 60, 250, 40, 50, 140, 240, 220, 260, 100, 190, 120, 80] [] ["a", "c", "b"]
+[59, 36, 73, 61, 90, 85, 88, 76, 54, 71, 19, 44]
+[210, 10, 60, 190, 140] [] [8, 7, 0, 3, 2, 9, 5, 6, 1, 4]
+[236032, 633833, 112711, 866665, 834073, 887472, 451930, 70791] [17, 22, 3, 43, 39, 32, 63, 20] [99, 45, 29, 53, 59, 73, 39, 36]
+["red", "red", "blue", "red", "red"] ["a", "a", "a", "a"]
+[80, 68, 55]
+[280] [270, 140, 100, 0, 190] [] []
+["a", "a", "b", "a", "a", "a", "a", "c"] ["c", "c", "c", "c", "c", "c"]
+[4, 4, 1, 4, 4, 1, 1, 3] [36, 62, 98, 91] []
+1.8809466213290709 -2.551292671561325 0.34236630099295134 4.459202675332502 9.038356963407518
+5 0.7490095762408284 5.610681077864122
+[-0.4060101732, 8.3822330603, 7.7195021192]
+[-0.9572330688, 0.8766920371, 6.7061484856, 8.1499174756, 0.9039679591]
+[1.3249509436, 1.3497533066, 0.1060652566, -3.3544550172]
+[4.2415730549, 1.3670221002, 2.9450680953, 2.8885432609]
+[0.169277271, 2.2615868781, 2.2517868744, 39.2136401856]
+[0.1470417492, 0.0020389924, 1.0591385062, 0.7899488679]
+0 1 1 7
+317 41 0 0
+20 399630 0
+[25, 21, 16, 22, 20, 23, 20, 26, 23, 19, 22, 21, 25, 27, 28, 25, 19, 31, 24, 26, 27, 24, 26, 23, 30, 20, 17, 24, 28, 24, 18, 24, 23, 21, 30, 23, 22, 19, 27, 20, 29, 24, 25, 26, 27, 26, 21, 19, 21, 28, 23, 23, 25, 21, 19, 26, 24, 19, 24, 23]
+53 1.1102230246251565e-16 1.3862943611198906 1.7155277699214135 2.504077396776274 6.283185307179586
+3 3 625 434 2.055579199699816 706921131
+true
+true 0.7085310537
+-0.5259486754
+0.7656450271410742 false
+Random() Random true 0.05468941140519623 582924 270 [80, 20, 50] [180, 140]
+-1.3749231526 16 c5b47f6eb1 [2, 3, 1, 4]
+0.40397807494366633
+0.9012755141163751
+SystemRandom() SystemRandom true true 8 true 0
+true 0 Number [1, 2]
+error: seed(): a seed is a Number, a str or Bytes
+error: seed(): NaN cannot be a seed (it is never the same twice)
+error: seed(a, version): version is 1 or 2
+error: Random(): a seed is a Number, a str or Bytes
+error: getrandbits(k): k is from 0 to 53, the bits a Number holds (randbytes(n) gives more)
+error: getrandbits(k): k is from 0 to 53, the bits a Number holds (randbytes(n) gives more)
+error: getrandbits() expects a whole Number as argument 1, got 1.5
+error: randbytes(n): n cannot be negative
+error: randrange(0): the range is empty
+error: randrange(5, 3): the range is empty
+error: randrange(1, 10, -1): the range is empty
+error: randrange(): the step cannot be 0
+error: randrange() expects a whole Number as argument 1, got 2.5
+error: randrange(): argument 1 is 1.152921504606847e+18, past 2^53, where whole Numbers have gaps
+error: randrange() expects a whole Number as argument 1, got str
+error: randint(3, 2): the range is empty
+error: choice(): cannot choose from an empty list
+error: choice(): cannot choose from an empty range
+error: choice(): the range is too long to pick from
+error: choice() expects a List or a Range as argument 1, got str
+error: shuffle() expects a List as argument 1, got Range
+error: sample(): k must be from 0 to the size of the population
+error: sample(): k must be from 0 to the size of the population
+error: sample() expects an object of options as argument 3, got Number
+error: sample(): counts is a List of whole Numbers
+error: sample(): the number of counts does not match the population
+error: sample(): counts must be whole Numbers
+error: sample(): counts must be whole Numbers
+error: sample(): counts cannot add up to less than 0
+error: sample(): k must be from 0 to the size of the population
+error: choices(): cannot choose from an empty list
+error: choices() expects a List of weights or an object of options as argument 2, got Number
+error: choices() expects an object of options as argument 3, got Number
+error: choices() expects a List of weights as argument 2, got Object
+error: choices(): the weights are given twice
+error: choices(): give weights or cum_weights, not both
+error: choices(): k is a whole Number
+error: choices(): the weights are a List of Numbers
+error: choices(): the number of weights does not match the population
+error: choices(): cannot choose from an empty list
+error: choices(): the weights are a List of Numbers
+error: choices(): the weights must add up to more than 0
+error: choices(): the weights must add up to a finite Number
+error: choices(): the weights must add up to more than 0
+error: uniform() expects a Number as argument 2, got str
+error: triangular() expects a Number as argument 3, got str
+error: normalvariate() expects a Number as argument 1, got str
+error: gauss() expects a Number as argument 2, got str
+error: lognormvariate() expects a Number as argument 2, got Bool
+error: expovariate(): lambd cannot be 0 (it is 1 / the mean)
+error: expovariate() expects a Number as argument 1, got str
+error: vonmisesvariate(): kappa cannot be NaN (Python's never returns)
+error: vonmisesvariate() expects a Number as argument 2, got str
+error: gammavariate(): alpha and beta must be more than 0
+error: gammavariate(): alpha must be finite (Python's never returns)
+error: gammavariate() expects a Number as argument 2, got str
+error: betavariate(): alpha and beta must be more than 0
+error: betavariate(): alpha must be finite (Python's never returns)
+error: betavariate() expects a Number as argument 1, got str
+error: paretovariate(): alpha cannot be 0
+error: paretovariate() expects a Number as argument 1, got str
+error: weibullvariate(): beta cannot be 0
+error: weibullvariate() expects a Number as argument 2, got str
+error: binomialvariate(): n cannot be negative
+error: binomialvariate(): p is from 0 to 1
+error: binomialvariate(): p is from 0 to 1
+error: binomialvariate() expects a Number as argument 2, got str
+error: binomialvariate() expects a whole Number as argument 1, got 2.5
+error: setstate(): that is not a state from getstate()
+error: setstate(): that is not a state from getstate()
+error: setstate(): a state of version 4, where Random's is 3
+error: setstate(): that is not a state from getstate()
+error: setstate(): that is not a state from getstate()
+error: setstate(): the state's words are whole Numbers
+error: setstate(): the state's words are from 0 to 4294967295, and its place from 0 to 624
+error: setstate(): the state's words are from 0 to 4294967295, and its place from 0 to 624
+error: getstate(): a SystemRandom has no state
+error: setstate(): a SystemRandom has no state
+error: randint() takes 2 arguments but got 1
+error: randint() expects a whole Number as argument 2, got 1.5
+error: choice() expects a List or a Range as argument 2, got Number

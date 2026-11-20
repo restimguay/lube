@@ -2,7 +2,7 @@
 # Needs only a C99 compiler and its standard library.
 #
 # `make` builds lube and, in plugins/ next to it, the plugins that come with
-# it (fs, net, audio: src/plugins/), which programs load when they import
+# it (fs, net, audio, gfx, array...: src/plugins/), which programs load when they import
 # them. `make STATIC_PLUGINS=1` puts the plugins inside lube instead (one
 # file: the static Linux release is built this way).
 
@@ -12,7 +12,7 @@ CFLAGS  += -std=c99 -Wall -Wextra -Wno-unused-parameter -pedantic
 LDLIBS  += -lm -lpthread
 UNAME   := $(shell uname -s 2>/dev/null)
 EXE     :=
-PLUGINS := fs net audio gfx
+PLUGINS := fs net audio gfx array math cmath random statistics nn learn llm
 
 # Give the interpreter a 64 MB stack on macOS and Windows so deep recursion
 # works. (On Linux the main thread's stack is set by `ulimit -s`, usually
@@ -38,6 +38,7 @@ else
     LDLIBS += -ldl  # plugins (dlopen is in libdl before glibc 2.34)
     PLUGIN_LIBS_audio := -ldl  # sound: ALSA, opened when the first sound plays
     PLUGIN_LIBS_gfx := -ldl  # windows: X11, opened when the first window opens
+    PLUGIN_LIBS_array := -ldl  # the system's BLAS (OpenBLAS), if it has one
   endif
 endif
 ifdef STACK
@@ -63,6 +64,7 @@ PREFIX ?= /usr/local
 
 # The checking builds have the plugins inside, so the sanitizers watch them too.
 CHECK_SRC := $(wildcard src/*.c) $(PLUGIN_SRC)
+PLUGIN_PARTS := $(wildcard src/plugins/*/*.c src/plugins/*.h) src/lube_gfx.h  # (what plugins include)
 CHECK_LIBS := $(LDLIBS) $(PLUGIN_LIBS_net) $(PLUGIN_LIBS_gfx)
 
 all: lube$(EXE) $(PLUGIN_FILES) liblube.a
@@ -93,6 +95,10 @@ plugins/%$(PLUGIN_EXT): src/plugins/%.c src/lube_plugin.h | plugins
 	$(CC) $(CFLAGS) $(PLUGIN_FLAGS) -o $@ $< -lm $(PLUGIN_LIBS_$*)
 
 plugins/gfx$(PLUGIN_EXT): $(wildcard src/plugins/gfx/*.c) src/lube_gfx.h  # (its parts)
+plugins/array$(PLUGIN_EXT): $(wildcard src/plugins/array/*.c) src/plugins/array.h
+plugins/nn$(PLUGIN_EXT): $(wildcard src/plugins/nn/*.c) src/plugins/array.h
+plugins/learn$(PLUGIN_EXT): $(wildcard src/plugins/learn/*.c) src/plugins/array.h
+plugins/llm$(PLUGIN_EXT): $(wildcard src/plugins/llm/*.c) src/plugins/array.h
 
 plugins:
 	mkdir -p plugins
@@ -100,12 +106,12 @@ plugins:
 # A checking build: AddressSanitizer and UndefinedBehaviorSanitizer catch
 # any out-of-bounds access, use-after-free or undefined behaviour, and the
 # interpreter verifies at exit that every object was freed (no leaks).
-lube-check: $(CHECK_SRC) src/lube.h src/lube_plugin.h
+lube-check: $(CHECK_SRC) $(PLUGIN_PARTS) src/lube.h src/lube_plugin.h
 	$(CC) $(CFLAGS) -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -DLUBE_STATIC_PLUGINS \
 		-fno-sanitize-recover=undefined -DLUBE_CHECK_LEAKS $(LDFLAGS) -o $@ $(CHECK_SRC) $(CHECK_LIBS)
 
 # A ThreadSanitizer build: catches data races between isolates (threads).
-lube-tsan: $(CHECK_SRC) src/lube.h src/lube_plugin.h
+lube-tsan: $(CHECK_SRC) $(PLUGIN_PARTS) src/lube.h src/lube_plugin.h
 	$(CC) $(CFLAGS) -O1 -g -fsanitize=thread -DLUBE_STATIC_PLUGINS $(LDFLAGS) -o $@ $(CHECK_SRC) $(CHECK_LIBS)
 
 test: all

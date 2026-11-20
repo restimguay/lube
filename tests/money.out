@@ -1,0 +1,90 @@
+$19.99 €19.99 ₱5.00 ₱5.00 ₱0.10 $0.00 $0.00 $3.00 $7.00 $2.00
+$2.68 $2.67 -$2.68 $0.01 $0.00 $1,234,567.89 $0.00 $0.00 $123,456,789,012.34
+$1,234.56 -$20.00 $5.00 $7.00 $0.50 $0.13 ¥12 BHD 1.235
+$3.00 €3.00 ¥1,235 BHD 1,234.567 CHF 5.00 zł 5.00 Kč 5.00 R$5.00 AED 5.00
+Money true true true
+$0.30 true false
+$11.25 $11.25 $10.00 $9.75 $0.51 $0.51 $11.48 $30.75 -$10.25
+$3.42 -$2.56 $20.50 $10,250.00 $0.00 5 $1.25 $2.00 -$2.00 $0.00
+-$10.25 $0.00 true true true false true true false true
+false true true true Total: $10.25 $10.25 due
+$1,000,000,000,000,000.00 $0.00 $0.01 -$0.01 $0.00 $276,701,161,105,643.31
+$1.75
+$2.00 [$3.00] Money[] $3.50 $3.00 $3.00 $1.00 [$1.00, $2.00, $3.00]
+$2.00 $2.00 2.5 -3 $9.00 $9.00 $9.00
+1234.5 123450 USD $ 2 AED 7
+[$33.34, $33.33, $33.33] [-$33.34, -$33.33, -$33.33] [$0.03, $0.02] [$1.00] [$33.33, $66.67] [$3.00, $7.00] [$0.02, $0.02, $0.01]
+[-$0.02, -$0.02, -$0.01] [$0.00, $1.00] [$0.00, $100.00] [$0.15, $0.15, $0.14, $0.14, $0.14, $0.14, $0.14]
+€9.20 ¥1,512 $6.60 $2.66
+$12.00 $13.00 -$13.00 $12.40 $12.34 $12.34 ¥7
+$1,234.50 1,234.50 US$1,234.50 USD 1,234.50 $1.234,50 $1234.50 -CHF 1,234.50
+USD
+PHP ₱1,500.00 ₱0.00
+€1.00
+¥8
+₿0.00012345 100000000 GOLD 3 GOLD
+error: m(): "abc" is not an amount (write it as 19.99)
+error: m(): "" is not an amount (write it as 19.99)
+error: m(): "1.2.3" is not an amount (write it as 19.99)
+error: m(): "1234567890123456789" has more digits than money holds (18)
+error: m(): 99999999999999999 USD is too much money (an amount holds at most 2^63 of its smallest unit)
+error: m(): there is no currency 'XYZ' (add_currency() adds one)
+error: m() takes a currency as a str (a code such as "USD", or a symbol such as "$"), not a Number
+error: m() takes an amount (a Number, or text such as "19.99"), not a List
+error: m(): this money is already in USD: change its currency with .to("EUR", rate)
+error: 1e+30 USD is too much money (an amount holds at most 2^63 of its smallest unit)
+error: money cannot be nan
+error: money cannot be infinite
+error: m(): that is too much money
+error: m(): that is too much money (an amount holds at most 2^63 of its smallest unit)
+error: cannot add $1.00 and ₱1.00: they are different currencies (convert one with .to(code, rate))
+error: cannot compare $1.00 and ₱1.00: they are different currencies (convert one with .to(code, rate))
+error: cannot multiply money by money (multiply by a Number)
+error: cannot use * with a Money and a str
+error: cannot use - with a Money and a List
+error: cannot multiply money by infinity
+error: division by zero
+error: division by zero
+error: cannot divide money by nan
+$0.00
+error: modulo by zero
+error: cannot use % with a Money and a str
+error: cannot take a Number modulo money
+error: cannot raise money to a power
+error: cannot divide a Number by money
+error: 1e+30 USD is too much money (an amount holds at most 2^63 of its smallest unit)
+error: the result is too much money
+error: the result is too much money
+error: the result is too much money
+error: Money has no field 'nope' (it has amount, units, currency, symbol and decimals)
+error: cannot compare €1.00 and $1.00: they are different currencies (convert one with .to(code, rate))
+error: allocate() takes a list of ratios (Numbers)
+error: allocate(): ratios are Numbers, 0 or more
+error: allocate(): the ratios must add up to more than 0
+error: split() takes a whole number of shares, 1 or more
+error: split() takes a whole number of shares, 1 or more
+error: to(): the rate is a Number, more than 0
+error: to(): there is no currency 'XYZ' (add_currency() adds one)
+error: the result is too much money
+error: round() takes a whole number of decimals, 0 or more
+error: round() takes a whole number of decimals, 0 or more
+error: format() takes options: {symbol, code, thousands, decimal}
+error: format(): symbol is true, false or a str
+error: format(): code is true or false
+error: format(): thousands is a str
+error: format(): decimal is a str
+error: the result is too much money
+error: cannot subtract $1.00 and €1.00: they are different currencies (convert one with .to(code, rate))
+error: 1e+30 USD is too much money (an amount holds at most 2^63 of its smallest unit)
+error: 1e+30 USD is too much money (an amount holds at most 2^63 of its smallest unit)
+error: parameter 'x' of wants_money() is a Money, so it cannot take a Number
+error: add_currency(): no more than 256 currencies can be added
+error: currency(): there is no currency 'XYZ' (add_currency() adds one)
+error: currency() takes a currency as a str (a code such as "USD", or a symbol such as "$"), not a Number
+error: add_currency(): BTC is already a currency, with 8 decimals and symbol ₿
+error: add_currency(): a code is 1 to 7 letters or digits, and a symbol at most 15 bytes
+error: add_currency(): a code is 1 to 7 letters or digits, and a symbol at most 15 bytes
+error: add_currency(): a code is 1 to 7 letters or digits, and a symbol at most 15 bytes
+error: add_currency(): decimals is a whole number from 0 to 9
+error: add_currency(): decimals is a whole number from 0 to 9
+error: add_currency() takes a code, a symbol (str) and its number of decimals

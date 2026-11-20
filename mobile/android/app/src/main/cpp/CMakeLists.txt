@@ -6,7 +6,7 @@ project(lube_app C)
 set(LUBE_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../../src" CACHE PATH "Lube's src folder")
 file(GLOB LUBE_CORE "${LUBE_SRC}/*.c")
 list(FILTER LUBE_CORE EXCLUDE REGEX "/main\\.c$")  # (the lube command's)
-file(GLOB LUBE_PLUGINS "${LUBE_SRC}/plugins/*.c")  # (fs, net, audio, gfx: inside the app)
+file(GLOB LUBE_PLUGINS "${LUBE_SRC}/plugins/*.c")  # (all of Lube's plugins: inside the app)
 
 add_library(native_app_glue STATIC "${ANDROID_NDK}/sources/android/native_app_glue/android_native_app_glue.c")
 target_include_directories(native_app_glue PUBLIC "${ANDROID_NDK}/sources/android/native_app_glue")

@@ -1,0 +1,157 @@
+2.8 1.6071428571428572 4503599627370496 0.2 5
+3.333333333333333e+307 3.3333333333333334e-301 inf nan
+1.9382455280052897
+780477164744673.1
+1.0899949211106743e+295 1.0899949211106743e+295 0.5000000000291038
+4.25 4.541666666666667 87.6 inf
+inf nan
+36 0 nan nan inf
+48 56 2.5 0 2.6666666666666665
+2.6955242058256363 3.528492299536318e-05
+nan nan 3
+3 4 3.5 3 5 4
+99.5 99 100 true 3
+52.5 3.25 3.5 5
+3 red false
+ab 3 0 2.5
+["b", "d", "f"] [1, 2, 3] [] [true, 1]
+[87, 102.5, 108.25] [81, 86.2, 89, 99.4, 102.5, 103.6, 106, 109.8, 111]
+[81, 86.8, 89, 99.6, 102.5, 103.4, 106, 109.2, 111] [0.6, 1.2, 1.8, 2.4] [7, 7, 7] []
+[1.8333333333333333, 2.1666666666666665, 2.5, 3, 3.5] [7, 7, 7]
+1.3720238095238095 1.3720238095238095 1.215 0.25
+1.0810874155219827 0.986893273527251 2.23606797749979 0
+13.938633711427373
+6.293909552465271e+30
+5846.387796217291 4.32135699504344
+1 2.0000000000000004e+300 1.0000000000000002e-300 0
+1.5e+308 1e+154 inf nan inf
+1.808212560697905e+285 4.122670950963307e+91 0 2
+0.75 -7.5 1 -1
+0.31622776601683794 1 -0.015891043154093204
+1 1 nan
+{slope: 2.1, intercept: 0.7999999999999989} {slope: 1.981818181818182, intercept: 0}
+{slope: 0, intercept: 5}
+NormalDist(mu=10, sigma=2.5) NormalDist(mu=0, sigma=1) NormalDist(mu=3, sigma=1) 10 10 10 2.5 6.25
+[0.0967882898, 0.1595769122, 0.1586552539, 0.8212136204, 6.7961210861, 10, 17.7255807654, -13.1558502245]
+2 [8.3137756245, 10, 11.6862243755] [6.7961210861, 7.8959469161, 8.6889987182] [3, 3] []
+0.7080086102 0.7080086102 0.0718606382 0.352884699
+NormalDist(mu=15, sigma=2.5) NormalDist(mu=15, sigma=2.5) NormalDist(mu=5, sigma=2.5) NormalDist(mu=-5, sigma=2.5) NormalDist(mu=30, sigma=7.5) NormalDist(mu=30, sigma=7.5) NormalDist(mu=-20, sigma=5) NormalDist(mu=2.5, sigma=0.625) NormalDist(mu=-2.5, sigma=0.625) NormalDist(mu=-10, sigma=2.5)
+NormalDist(mu=11, sigma=2.692582403567252) NormalDist(mu=9, sigma=2.692582403567252) NormalDist(mu=0, sigma=5) NormalDist(mu=3, sigma=0)
+NormalDist(mu=-10, sigma=inf) NormalDist(mu=10, sigma=nan) NormalDist(mu=0, sigma=4.94065645841247e-324)
+true false false true false false
+[10.8923176772, 5.1005500126, 8.5058193438, 8.0965137698] [-0.3751473541, 0.4212085001, 0.1196135729] [] []
+[66.2753653691, 81.7919638128, 95.9210281445] 0.683864273453267
+NormalDist(mu=2.716666666666667, sigma=0.5076087732365021) 2.716666666666667 0.5076087732365021 NormalDist(mu=inf, sigma=nan) NormalDist true
+Kde(normal, h=1.5, 6 points) [0.0704285941, 0.0975799253, 0.0820225196, 0.0741421049, 0.4576062643, 0.9940606053]
+Kde(logistic, h=1.5, 6 points) [0.0647387018, 0.0889779571, 0.0622985402, 0.1319075628, 0.4354421588, 0.9641111031]
+Kde(sigmoid, h=1.5, 6 points) [0.0657559954, 0.0904476164, 0.0713249741, 0.1096151783, 0.444211281, 0.9745448544]
+Kde(rectangular, h=1.5, 6 points) [0.0555555556, 0.1111111111, 0.1111111111, 0.0333333333, 0.4722222222, 1]
+Kde(triangular, h=1.5, 6 points) [0.0444444444, 0.0518518519, 0.1407407407, 0.0133333333, 0.487037037, 1]
+Kde(parabolic, h=1.5, 6 points) [0.0533333333, 0.0640740741, 0.1351851852, 0.0173333333, 0.4832098765, 1]
+Kde(quartic, h=1.5, 6 points) [0.0426666667, 0.0443971193, 0.1431625514, 0.0096533333, 0.4904053498, 1]
+Kde(triweight, h=1.5, 6 points) [0.0318577778, 0.0321179866, 0.1470186176, 0.0055573333, 0.494449308, 1]
+Kde(cosine, h=1.5, 6 points) [0.0512939397, 0.060415769, 0.1366534208, 0.0159152505, 0.4845412583, 1]
+Kde(gauss, h=1.5, 6 points) [0.0704285941, 0.0975799253, 0.0820225196, 0.0741421049, 0.4576062643, 0.9940606053]
+Kde(uniform, h=1.5, 6 points) [0.0555555556, 0.1111111111, 0.1111111111, 0.0333333333, 0.4722222222, 1]
+Kde(epanechnikov, h=1.5, 6 points) [0.0533333333, 0.0640740741, 0.1351851852, 0.0173333333, 0.4832098765, 1]
+Kde(biweight, h=1.5, 6 points) [0.0426666667, 0.0443971193, 0.1431625514, 0.0096533333, 0.4904053498, 1]
+Kde(normal, h=2, 1 point) true 0 1
+KdeRandom(normal, h=1.5, 6 points) [0.7116954971, 6.2152870581, 1.2305278286, 6.8882685567, 7.0375236998]
+KdeRandom(logistic, h=1.5, 6 points) [-0.0503909216, 6.2243947307, 2.3415272641, 7.3088454038, 7.5554603722]
+KdeRandom(sigmoid, h=1.5, 6 points) [0.3236589331, 6.2191596754, 1.8638634159, 7.0797738773, 7.2804881979]
+KdeRandom(rectangular, h=1.5, 6 points) [1.0423634777, 6.2121970965, 0.684457084, 6.7304825431, 6.8350909997]
+KdeRandom(triangular, h=1.5, 6 points) [1.3816033907, 6.2061109963, 0.3104973882, 6.49406626, 6.5609813432]
+KdeRandom(parabolic, h=1.5, 6 points) [1.2955201827, 6.2081314773, 0.398356802, 6.5606017474, 6.6356426244]
+KdeRandom(quartic, h=1.5, 6 points) [1.4085588777, 6.2065051997, 0.2578713312, 6.4900748543, 6.5513555356]
+KdeRandom(triweight, h=1.5, 6 points) [1.4755544201, 6.2055758926, 0.1718772174, 6.4492773777, 6.5023103263]
+KdeRandom(cosine, h=1.5, 6 points) [1.3187852433, 6.2077649984, 0.3716725319, 6.545183945, 6.617484185]
+[-1.3334311029, 4.8998910072, -1.1756514185, 1.6938354536, -0.7438065982, -1.7478811126, 2.020541032, -1.3483114468] [6.5123450047, 5.3578262685, 1.9035280616, 6.0438609178, -0.3597024138]
+2.4777466325 1.9421585472 true
+error: mean() needs at least one data point
+error: mean() expects a List of Numbers as argument 1, got Number
+error: mean() expects a List of Numbers as argument 1, but item 1 is a str
+error: fmean() needs at least one data point
+error: fmean(): the sum overflowed along the way
+error: fmean(): inf + -inf has no value
+error: fmean(): the data and the weights must be as long as each other
+error: fmean(): the weights must not add up to 0
+error: fmean() expects a List of Numbers as argument 2, but item 1 is a str
+error: fmean(): inf + -inf has no value
+error: geometric_mean() needs at least one data point
+error: geometric_mean() takes no negative numbers, got -2
+error: harmonic_mean() needs at least one data point
+error: harmonic_mean() takes no negative numbers
+error: harmonic_mean() takes no negative numbers
+error: harmonic_mean(): the number of weights does not match the data
+error: harmonic_mean() takes no negative numbers
+error: harmonic_mean(): the weighted sum must be more than 0
+error: harmonic_mean() expects a List of Numbers as argument 2, got str
+error: median(): no median for empty data
+error: median_low(): no median for empty data
+error: median_high() expects a List of Numbers as argument 1, got str
+error: median_grouped(): no median for empty data
+error: median_grouped() expects a Number as argument 2, got str
+error: mode(): no mode for empty data
+error: mode() counts Numbers, text and Bools, but item 0 is a List
+error: multimode() expects a List as argument 1, got Number
+error: quantiles(): n must be at least 1
+error: quantiles(): n is a whole Number
+error: quantiles(): n is too large
+error: quantiles(): the method is "exclusive" or "inclusive"
+error: quantiles(): unknown method "middle" (it is "exclusive" or "inclusive")
+error: quantiles() needs at least one data point
+error: quantiles() expects an object of options as argument 2, got Number
+error: variance() needs at least two data points
+error: pvariance() needs at least one data point
+error: stdev(): inf or NaN in the data
+error: pstdev() expects a Number (the mean) as argument 2, got str
+error: variance(): the result is too large for a Number
+error: covariance(): both inputs need the same number of data points
+error: covariance() needs at least two data points
+error: covariance(): the sum overflowed along the way
+error: covariance(): inf + -inf has no value
+error: covariance() expects a List of Numbers as argument 2, got str
+error: correlation(): at least one of the inputs is constant
+error: correlation(): unknown method "spearman" (it is "linear" or "ranked")
+error: correlation(): the method is "linear" or "ranked"
+error: correlation() expects an object of options as argument 3, got Number
+error: correlation(): inf + -inf has no value
+error: correlation(): both inputs need the same number of data points
+error: linear_regression(): x is constant
+error: linear_regression() needs at least two data points
+error: linear_regression() expects an object of options as argument 3, got str
+error: linear_regression(): the sum overflowed along the way
+error: NormalDist(): sigma cannot be negative
+error: NormalDist() expects a Number as argument 1, got str
+error: pdf(): not defined when sigma is 0
+error: cdf(): not defined when sigma is 0
+error: zscore(): not defined when sigma is 0
+error: pdf() expects a Number as argument 2, got str
+error: cdf() expects a Number as argument 2, got str
+error: zscore() expects a Number as argument 2, got str
+error: inv_cdf(): p must be more than 0 and less than 1
+error: inv_cdf(): p must be more than 0 and less than 1
+error: inv_cdf() expects a Number as argument 2, got str
+error: quantiles() expects a whole Number as argument 2, got 2.5
+error: overlap() expects a NormalDist as argument 2, got Number
+error: overlap(): not defined when sigma is 0
+error: samples() expects a whole Number as argument 2, got 2.5
+error: samples() expects an object of options as argument 3, got Number
+error: samples(): a seed is a Number, a str or Bytes
+error: NormalDist * NormalDist: a NormalDist is multiplied by a Number
+error: Number / NormalDist: a NormalDist is divided by a Number
+error: NormalDist + str: a NormalDist adds and subtracts Numbers and NormalDists
+error: NormalDist / 0: division by zero
+error: from_samples() needs at least two data points
+error: kde(): the data is empty
+error: kde(): the bandwidth h must be more than 0, not 0
+error: kde() expects a Number (the bandwidth h) as argument 2, got str
+error: kde() expects a str (the kernel) as argument 3, got Number
+error: kde(): unknown kernel "box"
+error: kde() expects a List of Numbers as argument 1, but item 1 is a str
+error: pdf() expects a Number as argument 2, got str
+error: cdf() expects a Number as argument 2, got str
+error: kde_random(): the data is empty
+error: kde_random() expects an object of options as argument 4, got Number
+error: kde_random(): a seed is a Number, a str or Bytes
+error: samples() expects a whole Number as argument 2, got 1.5

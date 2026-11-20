@@ -19,6 +19,7 @@
  */
 #include "lube.h"
 
+#include <math.h>
 #include <setjmp.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -56,6 +57,7 @@ static Node *pipe_expr(Parser *P);
 static Node *statement(Parser *P);
 static Node *block(Parser *P);
 static Node *postfix(Parser *P);
+static Node *index_item(Parser *P);
 
 /* ---------- helpers ---------- */
 
@@ -384,6 +386,7 @@ static TypeAnn type_annotation(Parser *P) {
     case TT_CHANNEL: t.d.kind = TD_CHANNEL; break;
     case TT_ISOLATE: t.d.kind = TD_ISOLATE; break;
     case TT_BYTES: t.d.kind = TD_BYTES; break;
+    case TT_MONEY: t.d.kind = TD_MONEY; break;
     default: t.d.kind = TD_INT; t.d.a = (unsigned char)(tag - TT_INT8); break;
     }
     return t;
@@ -621,6 +624,7 @@ static Node *type_expression(Parser *P, Token *t, int tag) {
     case TT_RANGE:  /* the empty range 0..0 */
         return empty_range(t->line);
     case TT_BYTES:  /* Bytes: none yet, as Bytes() */
+    case TT_MONEY:  /* Money: none of the default currency, as Money() */
         return call_of(P, t);
     default:  /* the sized integers: 0 */
         return literal(IK_SIGNED(tag - TT_INT8) ? SINT_VAL(tag - TT_INT8, 0) : UINT_VAL(tag - TT_INT8, 0), t->line);
@@ -702,7 +706,14 @@ static Node *postfix(Parser *P) {
             advance(P);
             Node *n = new_node(N_INDEX, t->line);
             n->as.index.object = e;
-            n->as.index.index = expression(P);
+            n->as.index.index = index_item(P);
+            if (check(P, T_COMMA)) {  /* x[i, j]: the indexes, together (for a plugin's type) */
+                Node *all = new_node(N_TYPED_LIST, t->line);
+                all->as.tlist.elem = TT_TUPLE;
+                list_add(&all->as.tlist.items, n->as.index.index);
+                while (match(P, T_COMMA)) list_add(&all->as.tlist.items, index_item(P));
+                n->as.index.index = all;
+            }
             expect(P, T_RBRACKET, "']' after the index");
             e = n;
         } else if (t->type == T_DOT) {
@@ -777,7 +788,7 @@ static Node *binary_node(TokenType op, Node *left, Node *right, int line) {
 
 static Node *multiplicative(Parser *P) {
     Node *left = unary(P);
-    while (check(P, T_STAR) || check(P, T_SLASH) || check(P, T_PERCENT)) {
+    while (check(P, T_STAR) || check(P, T_SLASH) || check(P, T_PERCENT) || check(P, T_AT)) {
         Token *op = advance(P);
         left = binary_node(op->type, left, unary(P), op->line);
     }
@@ -793,17 +804,31 @@ static Node *additive(Parser *P) {
     return left;
 }
 
+/* `a..` before ',' or ']' (x[2.., 0]): a range without an end, which is inf. */
+static int open_end(Parser *P, Token *op) { return op->type == T_DOTDOT && (check(P, T_COMMA) || check(P, T_RBRACKET)); }
+
 static Node *range_expr(Parser *P) {
     Node *left = additive(P);
     if (check(P, T_DOTDOT) || check(P, T_DOTDOTEQ)) {
         Token *op = advance(P);
         Node *n = new_node(N_RANGE, op->line);
         n->as.range.start = left;
-        n->as.range.end = additive(P);
+        n->as.range.end = open_end(P, op) ? literal(NUM_VAL(INFINITY), op->line) : additive(P);
         n->as.range.inclusive = op->type == T_DOTDOTEQ;
         return n;
     }
     return left;
+}
+
+/* An index in brackets: an expression, or a range without a start (..3, and .. alone: 0..inf). */
+static Node *index_item(Parser *P) {
+    if (!check(P, T_DOTDOT) && !check(P, T_DOTDOTEQ)) return expression(P);
+    Token *op = advance(P);
+    Node *n = new_node(N_RANGE, op->line);
+    n->as.range.start = literal(NUM_VAL(0), op->line);
+    n->as.range.end = open_end(P, op) ? literal(NUM_VAL(INFINITY), op->line) : additive(P);
+    n->as.range.inclusive = op->type == T_DOTDOTEQ;
+    return n;
 }
 
 static Node *comparison(Parser *P) {

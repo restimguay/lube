@@ -1,0 +1,91 @@
+// A plugin's operators, properties and Numbers (tests/plugins/vec.c), and a plugin that uses another
+import vec.*
+import greet
+fn tries(f) { try { f() } catch e { print("error:", e) } }
+
+let a = Vec(1, 2, 3)
+let b = Vec(4, 5, 6)
+print(a + b, a - b, a * b, b / a, b % a, a ** 2, 2 ** a, 10 - a, a * 2, -a)
+print(a @ b, a == Vec(1, 2, 3), a != b, a == b, a != Vec(1, 2, 3), a < b, a <= b, a > b, a >= Vec(1, 1, 1))
+print(a == 5, a != "x", [a] == [a], a in [a])  // (in a list: the same object)
+print(len(a), a[0], a[-1], a[0, 2], a[1..], a[..2], a[..], a[0..=1], a.x, golden, dims)
+var sum = 0
+for x in b { sum += x }
+var seen = []
+for i, x in a { push(&seen, "{i}:{x}") }
+print(sum, seen, required())
+
+// changing an element: the variable's own copy (another variable keeps what it had)
+var v = Vec(1, 2, 3)
+let kept = v
+v[0] = 10
+v[1, 2] = 7
+print(v, kept)
+v[0] += 5
+v[2] *= 2
+print(v)
+var w = v
+w += 1  // (shared: a new Vec)
+print(w, v)
+var alone = Vec(1, 1)
+alone += Vec(2, 3)  // (nobody else's: changed in place)
+alone -= 1          // (no -=: alone = alone - 1)
+print(alone)
+class Holder {
+    var vec = Vec(0, 0)
+}
+var h = Holder()
+h.vec[1] = 9
+h.vec += 1
+print(h.vec, h.vec.x)
+var list_of = [Vec(1, 2)]
+list_of[0][0] = 3
+print(list_of)
+
+// calling back into Lube: functions, classes, methods (of a class's instance, or of a plugin's object)
+class Point {
+    var x = 0
+    fn moved(dx) => this.x + dx
+}
+let p = Point()
+print(apply(fn(x, y) => x * y, 6, 7), apply(print, "printed")[1], ask(p, "moved", 5))
+print(ask(greet.Counter(1, "t"), "tag"))
+tries(fn() { apply(5) })
+tries(fn() { apply(Point) })
+tries(fn() { apply(fn() { throw "inside" }) })
+tries(fn() { ask(p, "nope") })
+tries(fn() { ask(5, "x") })
+tries(fn() { ask(p, 5) })
+
+// mistakes
+tries(fn() { if a < b { print("no") } })
+tries(fn() { if a == b {} else { print("a Bool: fine") } })
+tries(fn() { a + "x" })
+tries(fn() { a @ "x" })
+tries(fn() { 1 @ 2 })
+tries(fn() { a[7] })
+tries(fn() { a[1, 9] })
+tries(fn() { a[2..1] })
+tries(fn() { v[0] = "x" })
+tries(fn() { v[5] = 1 })
+tries(fn() { v[0] += "x" })
+tries(fn() { v[0][1] = 2 })
+tries(fn() { a.bad })
+tries(fn() { a.nope })
+tries(fn() { alone += "x" })
+tries(fn() { len(Odd()) })
+tries(fn() { for x in Odd() {} })
+var odd = Odd()
+tries(fn() { odd[0] })
+tries(fn() { odd[0] = 1 })
+let odd2 = odd
+tries(fn() { odd[0] = 1 })
+tries(fn() { odd[0] += 1 })
+tries(fn() { -Odd() })
+tries(fn() { Odd() + 1 })
+tries(fn() { Odd().x })
+var c = greet.Counter(1, 2)  // (a type without operators)
+tries(fn() { for x in c {} })
+tries(fn() { c[0] = 1 })
+tries(fn() { c[0] += 1 })
+tries(fn() { c[0, 1] })

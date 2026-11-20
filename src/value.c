@@ -426,12 +426,12 @@ double range_length(ObjRange *r) {
 
 static const char *TYPE_NAMES[TT_COUNT] = {
     "List", "str", "String", "Number", "Bool", "Object", "Map", "List", "Function", "Range", "Channel", "Isolate",
-    "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64", "Bytes",
+    "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64", "Bytes", "Money",
 };
 static const char *LIST_NAMES[TT_COUNT] = {
     "List", "str[]", "String[]", "Number[]", "Bool[]", "Object[]", "Map[]", "List[]", "Function[]", "Range[]",
     "Channel[]", "Isolate[]", "int8[]", "int16[]", "int32[]", "int64[]", "uint8[]", "uint16[]", "uint32[]", "uint64[]",
-    "Bytes[]",
+    "Bytes[]", "Money[]",
 };
 
 /* The TypeTag of a type name such as "String" or "int32", or -1. */
@@ -483,6 +483,7 @@ TypeDesc desc_of(Value v) {
         case OBJ_CLASS: d.kind = TD_CLASSVAL; break;
         case OBJ_CHANNEL: d.kind = TD_CHANNEL; break;
         case OBJ_BYTES: d.kind = TD_BYTES; break;
+        case OBJ_MONEY: d.kind = TD_MONEY; break;
         case OBJ_FOREIGN: d.kind = TD_CLASS; d.cls = AS_FOREIGN(v)->klass; break;
         case OBJ_ISOLATE: d.kind = TD_ISOLATE; break;
         case OBJ_PACKAGE: d.kind = TD_OBJECT; break;
@@ -517,6 +518,7 @@ int desc_accepts(TypeDesc d, Value v, Value *out) {
     case TD_RANGE: return IS_RANGE(v);
     case TD_CHANNEL: return IS_CHANNEL(v);
     case TD_BYTES: return IS_BYTES(v);
+    case TD_MONEY: return IS_MONEY(v);
     case TD_ISOLATE: return IS_ISOLATE(v);
     case TD_CLASSVAL: return IS_CLASS(v);
     default:  /* TD_CLASS: an instance of it or of a subclass; or a plugin's object of its type */
@@ -539,6 +541,7 @@ const char *desc_name(TypeDesc d) {
     case TD_RANGE: return "Range";
     case TD_CHANNEL: return "Channel";
     case TD_BYTES: return "Bytes";
+    case TD_MONEY: return "Money";
     case TD_ISOLATE: return "Isolate";
     case TD_CLASSVAL: return "Class";
     default: return d.cls->name->chars;  /* TD_CLASS */
@@ -568,6 +571,7 @@ int value_has_type(Value v, int tag) {
     case TT_CHANNEL: return IS_CHANNEL(v);
     case TT_ISOLATE: return IS_ISOLATE(v);
     case TT_BYTES: return IS_BYTES(v);
+    case TT_MONEY: return IS_MONEY(v);
     default: return IS_INT(v) && v.ikind == tag - TT_INT8;
     }
 }
@@ -650,6 +654,9 @@ int values_equal(Value a, Value b) {
             equal = p->len == q->len && (!p->len || !memcmp(p->data, q->data, p->len));
             break;
         }
+        case OBJ_MONEY:
+            equal = AS_MONEY(x)->units == AS_MONEY(y)->units && AS_MONEY(x)->cur == AS_MONEY(y)->cur;
+            break;
         case OBJ_CHANNEL:  /* the same channel, held through two wrappers (an isolate's handle has just one) */
             equal = AS_CHANNEL(x)->ch == AS_CHANNEL(y)->ch;
             break;
@@ -680,6 +687,7 @@ const char *type_name(Value v) {
         return AS_MAP(v)->dict ? map_name(AS_MAP(v)->ktype, AS_MAP(v)->vtype) : "Object";
     case OBJ_RANGE: return "Range";
     case OBJ_BYTES: return "Bytes";
+    case OBJ_MONEY: return "Money";
     case OBJ_FOREIGN: return AS_FOREIGN(v)->klass->name->chars;
     case OBJ_CLASS: return "Class";
     case OBJ_CHANNEL: return "Channel";
@@ -845,6 +853,9 @@ static void append_inner(StrBuf *sb, Value v, int quote, int depth) {
     }
     case OBJ_FOREIGN:  /* as its plugin says: Socket(tcp 127.0.0.1:5000) */
         lube_foreign_describe(sb, v);
+        return;
+    case OBJ_MONEY:  /* $1,234.50 */
+        lube_money_describe(sb, v);
         return;
     case OBJ_RANGE: {
         ObjRange *r = AS_RANGE(v);

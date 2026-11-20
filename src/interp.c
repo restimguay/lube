@@ -359,6 +359,7 @@ static const char *op_symbol(TokenType op) {
     case T_SLASH: return "/";
     case T_PERCENT: return "%";
     case T_POW: return "**";
+    case T_AT: return "@";
     case T_LT: return "<";
     case T_LE: return "<=";
     case T_GT: return ">";
@@ -485,6 +486,8 @@ static Value binary_op(Interp *I, TokenType op, Value a, Value b) {
         default: break;
         }
     }
+    if ((IS_FOREIGN(a) || IS_FOREIGN(b)) && lube_foreign_binary(I, op, a, b, &quick)) return quick;  /* a plugin's */
+    if ((IS_MONEY(a) || IS_MONEY(b)) && op != T_IN && op != T_AT && lube_money_op(I, op, a, b, &quick)) return quick;
     switch (op) {
     case T_EQ: return BOOL_VAL(values_equal(a, b));
     case T_NEQ: return BOOL_VAL(!values_equal(a, b));
@@ -621,8 +624,16 @@ static int list_index(Interp *I, Value idx, size_t len, const char *what, size_t
     return 1;
 }
 
+/* The error for x[i, j] on what takes one index. */
+static Value one_index(Interp *I, Value obj, Value idx) {
+    return lube_error(I, "%s takes one index, not %lu", a_type(obj), (unsigned long)AS_LIST(idx)->count);
+}
+
 static Value index_get(Interp *I, Value obj, Value idx) {
     size_t i;
+    Value r;
+    if (IS_FOREIGN(obj) && lube_foreign_index(I, obj, idx, &r)) return r;
+    if (IS_TUPLE(idx)) return IS_FOREIGN(obj) ? lube_error(I, "cannot index into %s", a_type(obj)) : one_index(I, obj, idx);
     if (IS_LIST(obj)) {
         ObjList *l = AS_LIST(obj);
         return list_index(I, idx, l->count, "list", &i) ? retain(l->items[i]) : ERR_VAL;
@@ -660,6 +671,9 @@ static Value index_get(Interp *I, Value obj, Value idx) {
 }
 
 static Value field_get(Interp *I, Value obj, ObjString *name) {
+    Value r;
+    if (IS_FOREIGN(obj) && lube_foreign_property(I, obj, name, &r)) return r;  /* a plugin's: a.shape */
+    if (IS_MONEY(obj)) return lube_money_field(I, obj, name);
     if (IS_STROBJ(obj)) {
         return lube_string_property(I, obj, name);
     }
@@ -759,6 +773,10 @@ static Value *navigate(Interp *I, Value *slot, Place *p, ObjMap **made, int *ele
     for (int i = 0; i < p->nkeys; i++) {
         Value key = p->keys[i];
         *ftype = NULL;  /* (it describes the last step only: a list in a field holds anything it takes) */
+        if (IS_TUPLE(key) && !IS_FOREIGN(*slot)) {
+            one_index(I, *slot, key);
+            return NULL;
+        }
         if (p->is_field[i] && !IS_MAP(*slot)) {
             if (IS_STROBJ(*slot))
                 lube_error(I, "the properties of a String are read-only");
@@ -823,6 +841,10 @@ static Value *navigate(Interp *I, Value *slot, Place *p, ObjMap **made, int *ele
             slot = child;
         } else if (IS_TEXT(*slot)) {
             lube_error(I, "text cannot be changed in place; build new text instead");
+            return NULL;
+        } else if (IS_FOREIGN(*slot) && lube_foreign_iterable(*slot)) {  /* (x[i][j] = v: x[i] is not a place) */
+            lube_error(I, "cannot change a part of an element of %s: change the element itself (x[i, j] = v)",
+                       a_type(*slot));
             return NULL;
         } else {
             lube_error(I, "cannot change an element of %s", a_type(*slot));
@@ -1310,6 +1332,35 @@ static int fast_assign(Interp *I, PlaceDesc *pd, TokenType op, Value *rhs) {
  * reference) or ERR_VAL.
  * ==================================================================== */
 
+/* x[i] = v and x[i] op= v, x (in *slot) a plugin's object: copied first if shared, then its "[]=" (and
+ * "[]" for op=). Takes rhs; returns the value assigned. */
+static Value foreign_assign(Interp *I, Value *slot, Value idx, TokenType op, Value rhs) {
+    Value r = rhs;
+    if (op != T_ASSIGN) {
+        Value old;
+        if (!lube_foreign_index(I, *slot, idx, &old)) old = lube_error(I, "cannot index into %s", a_type(*slot));
+        if (IS_ERR(old)) {
+            release(rhs);
+            return old;
+        }
+        r = binary_op(I, compound_base(op), old, rhs);
+        release(old);
+        release(rhs);
+        if (IS_ERR(r)) return r;
+    }
+    if (lube_foreign_unshare(I, slot) < 0) {
+        release(r);
+        return ERR_VAL;
+    }
+    int done = lube_foreign_set(I, *slot, idx, r);
+    if (!done) lube_error(I, "cannot change an element of %s", a_type(*slot));
+    if (done <= 0) {
+        release(r);
+        return ERR_VAL;
+    }
+    return r;
+}
+
 LUBE_NOINLINE static Value do_assign(Interp *I, TokenType op, Place *place, Value rhs) {
 #define p (*place)
     Value *slot = NULL;
@@ -1321,8 +1372,8 @@ LUBE_NOINLINE static Value do_assign(Interp *I, TokenType op, Place *place, Valu
     ObjMap *made = NULL;  /* the map that got a new, still empty key */
     if (check_changeable(I, &p) == 0) {
         Value *root = root_slot(I, &p);
-        if (root && !whole && !p.is_field[p.nkeys - 1] && (p.nkeys > 1 || IS_BYTES(*root))) {  /* (b[i] = v: a
-                                                                          byte of Bytes has no slot of its own) */
+        if (root && !whole && !p.is_field[p.nkeys - 1] && (p.nkeys > 1 || IS_BYTES(*root) || IS_FOREIGN(*root))) {
+            /* (b[i] = v: a byte of Bytes has no slot of its own, nor an element of a plugin's object) */
             Value *c = root;
             if (p.nkeys > 1) {
                 p.nkeys--;
@@ -1333,6 +1384,11 @@ LUBE_NOINLINE static Value do_assign(Interp *I, TokenType op, Place *place, Valu
                 size_t k;
                 Value r = list_index(I, field, AS_BYTES(*c)->len, "bytes", &k) ? lube_bytes_assign(I, c, k, op, rhs)
                                                                                 : (release(rhs), ERR_VAL);
+                place_free(&p);
+                return r;
+            }
+            if (c && IS_FOREIGN(*c)) {
+                Value r = foreign_assign(I, c, field, op, rhs);
                 place_free(&p);
                 return r;
             }
@@ -1419,7 +1475,8 @@ LUBE_NOINLINE static Value do_assign(Interp *I, TokenType op, Place *place, Valu
         }
     }
     Value r;
-    if (!IS_NUM(*slot) || !IS_NUM(rhs) || !num_op(bin, slot->as.number, rhs.as.number, &r)) r = binary_op(I, bin, *slot, rhs);
+    if (IS_FOREIGN(*slot) && lube_foreign_inplace(I, bin, *slot, rhs, &r)) {}  /* x += b, x nobody else's */
+    else if (!IS_NUM(*slot) || !IS_NUM(rhs) || !num_op(bin, slot->as.number, rhs.as.number, &r)) r = binary_op(I, bin, *slot, rhs);
     release(rhs);
     if (!IS_ERR(r) && elem != TT_ANY) {
         Value c = lube_check_elem(I, type_name(*holder), elem, r);
@@ -2424,6 +2481,12 @@ static Value execute(Interp *I) {
             }
             I->sp -= stacked;
             if (IS_ERR(r)) goto error;
+            if (!IS_BOOL(r)) {  /* (a plugin's operator: an Array of answers, say) */
+                lube_error(I, "a condition needs a Bool, and '%s' gave %s (use all() or any())", op == T_EQ ? "=="
+                           : op == T_NEQ ? "!=" : op_symbol((TokenType)op), a_type(r));
+                release(r);
+                goto error;
+            }
             if (!r.as.boolean) ip = code->code + ARG_OF(in);
             break;
         }
@@ -2447,7 +2510,8 @@ static Value execute(Interp *I) {
             Value v = POP();
             if (IS_INT(v)) r = int_negate(I, v);
             else if (IS_NUM(v)) r = NUM_VAL(-v.as.number);
-            else r = lube_error(I, "cannot negate %s", a_type(v));
+            else if (IS_MONEY(v)) r = lube_money_negate(I, v);
+            else if (!lube_foreign_neg(I, v, &r)) r = lube_error(I, "cannot negate %s", a_type(v));
             release(v);
             if (IS_ERR(r)) goto error;
             PUSH(r);
@@ -2890,12 +2954,15 @@ static Value execute(Interp *I) {
             goto error;
         case OP_FOR_PREP: {  /* the loop owns what it iterates: changes to the variable go to a copy */
             Value it = TOP;
-            if (!IS_RANGE(it) && !IS_LIST(it) && !IS_TEXT(it) && !IS_MAP(it) && !IS_CHANNEL(it) && !IS_BYTES(it)) {
+            double n = 0;
+            if (IS_FOREIGN(it) && lube_foreign_iterable(it)) {  /* a plugin's object: x[0], x[1]... */
+                if (lube_foreign_len(I, it, &n) < 0) goto error;
+            } else if (!IS_RANGE(it) && !IS_LIST(it) && !IS_TEXT(it) && !IS_MAP(it) && !IS_CHANNEL(it) && !IS_BYTES(it)) {
                 lube_error(I, "cannot loop over %s (expected a List, Range, str, Object, Channel or Bytes)", a_type(it));
                 goto error;
             }
-            PUSH(NUM_VAL(IS_RANGE(it) ? range_length(AS_RANGE(it)) : 0));  /* position (in text: bytes; in a map:
-                                                                              entries; a range: its length) */
+            PUSH(NUM_VAL(IS_RANGE(it) ? range_length(AS_RANGE(it)) : n));  /* position (in text: bytes; in a map:
+                                                                  entries; a range or plugin's object: its length) */
             PUSH(NUM_VAL(0));  /* count */
             break;
         }
@@ -2949,6 +3016,13 @@ static Value execute(Interp *I) {
                 ObjBytes *b = AS_BYTES(it);
                 if (k >= (double)b->len) done = 1;
                 else second = NUM_VAL(b->data[(size_t)k]);
+            } else if (IS_FOREIGN(it)) {
+                if (k >= pos) {
+                    done = 1;
+                } else {
+                    lube_foreign_index(I, it, NUM_VAL(k), &second);
+                    if (IS_ERR(second)) goto error;
+                }
             } else {  /* a map or object: keys (and values) */
                 ObjMap *m = AS_MAP(it);
                 size_t i = (size_t)pos;
@@ -3797,6 +3871,7 @@ Interp *lube_new(char *stack_base) {
     register_reflection(I);
     register_isolates(I);
     register_io(I);
+    register_money(I);
     return I;
 }
 

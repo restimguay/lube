@@ -1,0 +1,565 @@
+[[1, 2, 3],
+ [4, 5, 6]] [2, 3] 2 6 float64 8 48 Array true
+5 true [true, false] [] [1, 0]
+int64 [1, -2] [44, 255] [false, true]
+[0, 1, 2, 3] [[0, 1, 2],
+ [3, 4, 5]] [0, 4, 8] [1, 2, 3] uint8 [0, 0]
+[[true, true, true],
+ [true, true, true]] [2, 2, 3] [[1, 2],
+ [3, 4]] float32
+[[true, true, true],
+ [true, true, true]] [1] float32 int64
+[0, 0, 0] [[0, 0],
+ [0, 0]] [[0],
+ [0]] [1, 1] [true, true] [] 0
+[7, 7] [[0, 0],
+ [0, 0]] [true, true] int64 [2.5]
+[[0, 0, 0],
+ [0, 0, 0]] [[true, true, true],
+ [true, true, true]] [0, 0] [[9, 9, 9],
+ [9, 9, 9]] [0]
+[0, 1, 2, 3] [1, 2] [0, 0.25, 0.5, 0.75] [5, 3, 1] int32 []
+[0, 0.25, 0.5, 0.75, 1] [0, 0.25, 0.5, 0.75] [2] [50] [1, 10, 100] [1, 2, 4, 8]
+[[1, 0],
+ [0, 1]] [[1, 0, 0],
+ [0, 1, 0]] [[0, 1, 0],
+ [0, 0, 1],
+ [0, 0, 0]] int64 [[1, 0],
+ [0, 1]] float32
+[[1, 0],
+ [0, 2]] [[0, 1, 0],
+ [0, 0, 2],
+ [0, 0, 0]] [[0, 0, 0],
+ [1, 0, 0],
+ [0, 2, 0]] [1, 5] [2, 6] [4] []
+Bytes(01 00 00 00 02 00 00 00) [1, 2] [0, 0, 0, 0] [[1, 2],
+ [3, 4]] [false, false]
+[[[0, 1],
+  [2, 3]],
+
+ [[4, 5],
+  [6, 7]]]
+[0, 1, 2, ..., 1997, 1998, 1999]
+[1001, 2] 400
+[[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]]
+[0.1, 1e-07, 1e+21] [inf, nan] [1, -1]
+[302] [[[1, 1, 1, ..., 1, 1, 1]]]
+[[0, 1, 2],
+ [3, 4, 5],
+ [6, 7, 8],
+ ...,
+ [2994, 2995, 2996],
+ [2997, 2998, 2999],
+ [3000, 3001, 3002]]
+[0, 2, 4, 6] [true, true] [true, false] [3]
+[[2, 3, 4],
+ [5, 6, 7]] [[2, 3, 4],
+ [5, 6, 7]] [[0, 0, 0],
+ [0, 0, 0]] [[9, 8, 7],
+ [6, 5, 4]] [[2, 4, 6],
+ [8, 10, 12]] [[0.5, 1, 1.5],
+ [2, 2.5, 3]] [inf, 0.5] [[1, 2, 3],
+ [0, 1, 2]] [2, -1] [0.5, 1.5]
+[[1, 4, 9],
+ [16, 25, 36]] [1, 8] [[-1, -2, -3],
+ [-4, -5, -6]] [[false, true, false],
+ [false, false, false]] [[true, false, true],
+ [true, true, true]] [[true, true, false],
+ [false, false, false]] [[true, true, true],
+ [false, false, false]] [[false, false, false],
+ [true, true, true]] [[false, false, true],
+ [true, true, true]] [[false, false, true],
+ [true, true, true]]
+[-1, 3] [true, false] [true, false] [false, true] [false, true] [false, true] [true, false] [3] int32 [254]
+[4, 6] [2, 1] [8, 27] [-1]
+[2, 4] int32 [44] [2]
+float32 float64 int64 int64
+float64 int32 float32 float64
+[0.33333334] [3.5] [true] [11, 22] [1, 2, 3]
+[[11, 22, 33],
+ [14, 25, 36]] [[101, 102, 103],
+ [204, 205, 206]] [[0, 0, 0],
+ [0, 0, 0]]
+[[7, 10],
+ [15, 22]] [3, 7] [4, 6] 11 [[[3, 3],
+  [3, 3]],
+
+ [[3, 3],
+  [3, 3]]] [[3, 3, 3, 3],
+ [3, 3, 3, 3]]
+[[11]] int64 [[1]]
+5 [[10, 14],
+ [14, 20]] [[2],
+ [2],
+ [2]] [[1, 1, 1],
+ [1, 1, 1],
+ [1, 1, 1],
+ [1, 1, 1]]
+[] [[0, 0],
+ [0, 0]]
+[-1, 2] [1.5, 2] 3 [2, 3] [1] [2, 3] 4
+[1, 2.718282] [0, 1] 3 [2, 3] [3] [3] [0.693147] [1.718282]
+[0, 0.841471] [1, 0.540302] [1.557408] [1.570796] [1.570796] [0.785398] [1.175201] [1.543081]
+[0.761594] [0.881374] [1.316958] [0.549306] [-2, 1] [-1, 2] [-1, 1] [0, 2, 2]
+[-1, 0, 1] [-1, 1] [9] [16] [0.25] [3] [8] [0.5205]
+[false, true] [true, false] [false, true] [false] [true] [false, true]
+[1, 2] int64 2 float64
+[-4, -0.25, 1] [4, 0.25, 1] [2, 0.5, nan] [54.59815, 1.284025, 0.367879] [1.386294, -1.386294, 0] [2, -2, 0] [0.60206, -0.60206, 0] [1.609438, 0.223144, 0.693147]
+[53.5982, 0.284, -0.6321] [-0.7568, 0.2474, -0.8415] [-0.6536, 0.9689, 0.5403] [1.1578, 0.2553, -1.5574] [1.5708, 0.0625, -0.2527] [0, 1.5083, 1.8235] [1.3258, 0.245, -0.7854] [27.2899, 0.2526, -1.1752]
+[27.3082, 1.0314, 1.5431] [0.9993, 0.2449, -0.7616] [2.0947, 0.2475, -0.8814] [2.2924, 0.6931, 1.317] [0.5493, 0.0313, -0.1257] [4, 0, -1] [4, 1, -1] [4, 0, -1]
+[4, 0, -1] [1, 1, -1] [16, 0.0625, 1] [0.25, 4, -1] [1.587401, 0.629961, -1] [16, 1.189207, 0.5] [1, 0.276326, -0.842701] [false, false, false] [false, false, false] [true, true, true]
+[0, 2, 3] [1.2, 5.7] 2 [1.2] [[1, 2, 3],
+ [4, 5, 6]] [12300]
+[[2, 2, 3],
+ [4, 5, 5]] [[1, 1, 1],
+ [1, 1, 1]] [2, 4] 3
+3 [3] [6] 0.25 2 [2] 1024 [9]
+[4, 5] [1, 2] [nan] [nan] [5] [1]
+[0.785398] true [5] [-1] [-4, 3] [-4, 3, 0, -9] [-1]
+[0] [0] [nan] [true, true]
+[true] [true] [false] [true] true [true]
+[true, false] [true, false] [false, true] false
+[2, -4] [0, 0] [1, 4] [1, 1] [1, 1] [1, 4] [1, 0] [0, -2] [0.785398, -2.356194] [1.4142135, 2.828427]
+[1, -2] [0, -1] [-1, 2] [false, true] [true, true] [true, false] [true, false] [true, false] [false, true]
+[1, 4] [[0, 0, 3],
+ [4, 5, 6]] [[0, 2]] [1.5] [[0, 1], [0, 1]] [[1]] [[0]]
+[true, false] true [false] [true] true false true
+true false false true
+[[0, 1, 2],
+ [3, 4, 5]] [[0, 1],
+ [2, 3],
+ [4, 5]] [[0, 1],
+ [2, 3],
+ [4, 5]] [0, 1, 2, 3, 4, 5] [1, 4, 2, 5, 3, 6] [1, 4, 2, 5, 3, 6] [1, 2, 3] [1, 2, 3, 4, 5, 6] [1, 4, 2, 5, 3, 6]
+[[1, 4],
+ [2, 5],
+ [3, 6]] [3, 1, 2] [2, 3, 1] [3, 2, 1] [3, 2]
+[1, 6] [6, 1] [3] [3, 1] []
+[[1, 2],
+ [1, 2]] [5, 5, 5] [5, 4, 3, 2, 1, 0] [[4, 5, 6],
+ [1, 2, 3]] [[3, 2, 1],
+ [6, 5, 4]] []
+[[1, 2, 3],
+ [4, 5, 6],
+ [1, 2, 3],
+ [4, 5, 6]] [[1, 2, 3, 1, 2, 3],
+ [4, 5, 6, 4, 5, 6]] float64 [[0, 1, 2, 3, 4, 5],
+ [0, 1, 2, 3, 4, 5]] [6, 2] [6, 2]
+[2, 6] [4, 3] [12] [2, 6] [1]
+[1, 2, 1, 2] [[1, 2],
+ [1, 2]] [2, 6] [] [1, 1, 2, 2] [[1, 2, 3],
+ [1, 2, 3],
+ [4, 5, 6],
+ [4, 5, 6]] [2, 6] []
+[4, 5, 0, 1, 2, 3] [1, 2, 3, 4, 5, 0] [[3, 1, 2],
+ [6, 4, 5]] [[4, 5, 6],
+ [1, 2, 3]] []
+[0, 1, 2, 3] [8, 9, 10, 11] 6 6 [0, 4, 8] [1, 2] [[0, 1],
+ [4, 5]] [7, 11] [[0, 1, 2, 3],
+ [8, 9, 10, 11]] [] [3, 2, 1, 0]
+[0, 4] [[4, 5, 6, 7],
+ [8, 9, 10, 11]] [] [0, 1] [0, 1, 2] [] [4, 5]
+[[0, 1, 2, 3],
+ [8, 9, 10, 11]] [1, 11] [1, 9] [4, 7] [[0, 3],
+ [4, 7],
+ [8, 11]] [2, 2, 4] [[8, 9, 10, 11],
+ [0, 1, 2, 3]] [[1, 3],
+ [9, 11]]
+[9, 10, 11] [[0, 1, 2, 3],
+ [8, 9, 10, 11]] [[0, 3],
+ [4, 7],
+ [8, 11]] [0, 8] [0] [1, 2]
+[1, 2] [[1, 2],
+ [5, 6]] [2, 3] [2, 2] [2, 3]
+[[1, 0, 7],
+ [2, 2, 8],
+ [5, 6, 9]]
+[[4, -1, 0],
+ [4, 3, 3],
+ [4, -1, 0]]
+[[18, 109, 9],
+ [3, 4, 3],
+ [9, 109, 9]]
+4 -50
+[1, 2] [0, 99, 2, 3]
+[[5, 2],
+ [1, 2]]
+[0, 1, 0]
+[10, 11, 12] [0, 1, 2]
+[1.5, 2.5] float64
+[3, 2]
+[0, 2, 4]
+[-1, 3]
+66 ["0:5", "1:6"] 3 0
+21 [5, 7, 9] [6, 15] [6, 15] [[5, 7, 9]] [[21]] 3 0
+720 [6, 120] 3.5 [2.5, 3.5, 4.5] [nan, nan] 1 [3, 6] [1, 2, 3] 6 0 [1, 1, 1] [1, 0]
+true false true false true 2.9166666666666665 1.707825127659933 [2.25, 2.25, 2.25] 1.8708286933869707 nan true
+3 2 6 3 1.5
+nan 1 1 2 true
+1 5 1 [4, 5, 6] 5 [2, 2]
+[1, 3, 6, 10, 15, 21] [[1, 2, 3],
+ [5, 7, 9]] [[1, 3, 6],
+ [4, 9, 15]] [1, 2, 6] [[1, 2, 3],
+ [4, 10, 18]] [1, 3] [2, 6] [1, 2]
+2 [1, 1, 2] 2 1.25 [2, 5] [3.25, 4.25, 5.25] 4.333333333333333
+2 2.5 [2.5, 3.5, 4.5] [2, 5] 1.75 [[1, 4],
+ [2, 5],
+ [3, 6]] 2 nan
+44999850000 89999700000 300000 449850000 895498500 299999
+[1, 2, 3] [[1, 2, 3],
+ [4, 5, 6]] [[1, 3],
+ [0, 2]] [[1, 2, 3],
+ [4, 5, 6]] [-inf, 1, nan] [-1, 3] [1, 2] [false, true]
+[1, 2, 0] [2, 0, 1, 3] [[0, 0, 0],
+ [1, 1, 1]] [[1, 0],
+ [0, 1]]
+[1, 2, 3] [[1, 2], [1, 2]] [[1, 2], [1, 0], [1, 0, 1]] [5] [1, nan] []
+1 2 [0, 3] [1, 2, 0, 1] [0, 1, 0, 0] [0.5, 3]
+true true [200, 2000]
+[[18, 7],
+ [14, 11]] [[18, 7],
+ [14, 11]] [4, 2] [[8, 2],
+ [4, 6]] 6 11 [[17, 11],
+ [11, 13]] [[1, 2, 3],
+ [2, 4, 6]] 7
+10 0 [1, 2.302585092994046] [-1, 0] [0, -inf] [0.1, 0.6] [[true, true],
+ [true, true]] float32
+[[0.3, -0.1],
+ [-0.2, 0.4]] [[2, 0],
+ [1, 1.4142135623730951]] float32
+[[-0.169031, 0.897085],
+ [-0.507093, 0.276026],
+ [-0.845154, -0.345033]] [[-5.91608, -7.437357],
+ [0, 0.828079]] true [2, 2] [2, 3] [[0, 0],
+ [0, 0]]
+[4.242641, 2] [3, 3] [2, 2] true true
+[2, 2] [4.242641, 2] [2, 3] true [3, 3] [4.242641, 2] [0, 0]
+true [2, 0] float32
+[2.1943971674, 3.3867701566, 9.418832676] true [1, 3, 5] [[-1.9999999999999998, 1],
+ [1.4999999999999998, -0.49999999999999994]]
+[1, 3] true [-3.524937810560445, 6.524937810560445] float32
+[0.666667, 0.5] [0.166667] 2 [4.079143, 0.600491] 1 [0] 2
+[[0.04, 0.08],
+ [0.08, 0.16]] [[0.2],
+ [0.4]] 1 3 0 float32
+5 5.477225575051661 5.477225575051661 7.071068 5.116673 1.954395 6 4 5 5
+7 4 3 2 true [4.47213595499958, 3.1622776601683795] [5, 5] 9.539392014169456
+none true true true true
+true 0 [[10, 7],
+ [22, 15]]
+[[448, 472, 496, 520],
+ [1984, 2136, 2288, 2440],
+ [3520, 3800, 4080, 4360],
+ [5056, 5464, 5872, 6280]] 2
+str [[448, 472, 496, 520],
+ [1984, 2136, 2288, 2440],
+ [3520, 3800, 4080, 4360],
+ [5056, 5464, 5872, 6280]]
+[0.5488135039273248, 0.7151893663724195, 0.6027633760716439] 0.5448831829968969 [0.4236547993389047, 0.6458941130666561] 0.4375872112626925 0.8917730007820798 5.9636627605010295 [-0.2331169623484446, 0.5834500761653292]
+[1.764052345968, 0.400157208367, 0.978737984106] 2.240893199201 [1.86755799015, -0.977277879876] 11.900176835051 [-0.151357208298, -0.103218851794] [3.137792279938, 1.505348219073] 0.839432846739
+6 [3, 7, 4, 6, 9] [[-3, 1],
+ [2, -1]] [5, 5, 5] [4908575591, 4537253172]
+[2, 1, 4, 0, 3] [[1, 2],
+ [5, 6],
+ [3, 4]] [10, 30, 20] 0 [0, 1, 4] [20, 10] [4, 3, 0]
+[2, 2, 2, 1, 2, 3] [2, 3, 1] 0
+[2, 2] [3] 0.5
+true float64 [2, 3] | true float32 [1] | true int64 [2] | true int32 [1] | true uint8 [1] | true bool [2] | true float64 [] | true float64 [0, 2] | 0
+[[1, 4],
+ [2, 5],
+ [3, 6]]
+[[1, 3],
+ [2, 4]]
+error: load(): 'build/arr/bad.npy' is not a .npy file
+error: load(): 'build/arr/short.npy' ends too soon
+error: load(): 'build/arr/odd.npy' holds a kind of Array this cannot read (<c16)
+error: load(): 'build/arr/v3.npy' is not a .npy file
+error: load(): 'build/arr/i1.npy' holds a kind of Array this cannot read (|i1)
+error: load(): 'build/arr/nodescr.npy' holds a kind of Array this cannot read ()
+error: load(): 'build/arr/deep.npy' has too many dimensions
+error: load(): 'build/arr/head.npy' is not a .npy file
+error: load(): cannot read 'build/arr/missing.npy'
+error: save(): cannot write 'build/nope/x.npy'
+1.000000000000000000e+00 2.000000000000000000e+00 3.000000000000000000e+00
+4.000000000000000000e+00 5.000000000000000000e+00 6.000000000000000000e+00
+
+# x,y,z
+1.00,2.00,3.00
+4.00,5.00,6.00
+
+    1
+    2
+
+[[1, 2, 3],
+ [4, 5, 6]] [[1, 2, 3],
+ [4, 5, 6]] [1, 2] int64
+[1, 2, 3] [0]
+error: loadtxt(): line 2 of 'build/arr/ragged.txt' has 1 numbers, not 2 as before
+error: loadtxt(): line 1 of 'build/arr/words.txt' has something that is not a number
+error: loadtxt(): cannot read 'build/arr/missing.txt'
+error: loadtxt(): there is no dtype "complex" (float64, float32, int64, int32, uint8, bool)
+error: savetxt() writes an Array of 1 or 2 dimensions
+error: savetxt(): fmt must have one number in it, such as "%.6f"
+error: savetxt(): fmt must have one number in it, such as "%.6f"
+error: savetxt(): fmt must have one number in it, such as "%.6f"
+error: savetxt(): cannot write 'build/nope/x.txt'
+1.0%
+
+error: save() expects a path (a str) as argument 1, got a Number
+error: load() expects a path (a str) as argument 1, got a Number
+error: savetxt() expects a path (a str) as argument 1, got a Number
+error: loadtxt() expects a path (a str) as argument 1, got a Number
+error: save() expects an Array (or a list or Number) as argument 2, got a str
+error: savetxt() expects an Array (or a list or Number) as argument 2, got a str
+{w: [[0, 1, 2],
+ [3, 4, 5]], "q\"\\": [1, 2], m: [true], e: []} ["w", "q\"\\", "m", "e"] float32 [0, 2]
+{h: [1.5, -2, 5.9604645e-08, inf, 0, 0], b: [3.25, 1.5046328e-36], i: [-3, 300], j: [-5, 7], z: 2.5} float32 int32
+{}
+error: load_safetensors(): 'build/arr/bad0.safetensors' is not a safetensors file
+error: load_safetensors(): 'build/arr/bad1.safetensors' is not a safetensors file
+error: load_safetensors(): 'build/arr/bad2.safetensors' is not a safetensors file
+error: load_safetensors(): 'build/arr/bad3.safetensors' is not a safetensors file
+error: load_safetensors(): 'build/arr/bad4.safetensors' is not a safetensors file
+error: load_safetensors(): 'build/arr/bad5.safetensors' is not a safetensors file
+error: load_safetensors(): 'build/arr/bad6.safetensors' is not a safetensors file
+error: load_safetensors(): 'build/arr/bad7.safetensors' is not a safetensors file
+error: load_safetensors(): 'build/arr/bad8.safetensors' is not a safetensors file
+error: load_safetensors(): 'build/arr/bad9.safetensors' is not a safetensors file
+error: load_safetensors(): 'build/arr/bad10.safetensors' is not a safetensors file
+error: load_safetensors(): 'build/arr/bad11.safetensors' is not a safetensors file
+error: load_safetensors(): 'build/arr/bad12.safetensors' is not a safetensors file
+error: load_safetensors(): 'build/arr/bad13.safetensors' is not a safetensors file
+error: load_safetensors(): 'build/arr/bad14.safetensors' is not a safetensors file
+error: load_safetensors(): 'build/arr/bad15.safetensors' is not a safetensors file
+error: load_safetensors(): 'build/arr/bad16.safetensors' is not a safetensors file
+error: load_safetensors(): 'build/arr/bad17.safetensors' is not a safetensors file
+error: load_safetensors(): 'build/arr/bad18.safetensors' is not a safetensors file
+error: load_safetensors(): 'build/arr/c16.safetensors' has 'a' of dtype C64, which this cannot read
+error: load_safetensors(): 'build/arr/tiny.safetensors' is not a safetensors file
+error: load_safetensors(): cannot read 'build/arr/missing.safetensors'
+error: save_safetensors(): cannot write 'build/nope/x.safetensors'
+error: save_safetensors() expects an object of Arrays by name, got a Number
+error: save_safetensors(): every value must be an Array, named by a str
+error: save_safetensors() expects a path (a str) as argument 1, got a Number
+error: load_safetensors() expects a path (a str) as argument 1, got a Number
+1 400000 true 3 [300000] true 3.141592653589793 2.718281828459045 inf false
+error: threads() takes a whole number in 0..64 (0: one per core)
+error: threads() takes a whole number in 0..64 (0: one per core)
+error: use_blas() takes true or false
+error: array(): an Array holds Numbers and Bools, not a str
+error: array(): an Array holds Numbers and Bools, not a str
+error: array(): lists of different shapes
+error: array(): lists of different shapes
+error: array(): lists of different shapes
+error: array(): lists of different shapes
+error: array(): lists of different shapes
+[[0, 1],
+ [1, 2]]
+[[[0, 1]]]
+error: array(): lists of different shapes
+error: array(): too many dimensions
+error: array(): too many dimensions
+error: array(): too many dimensions
+error: array(): a range too long for an Array
+error: array(): there is no dtype "float16" (float64, float32, int64, int32, uint8, bool)
+error: array(): there is no dtype a Number (float64, float32, int64, int32, uint8, bool)
+error: zeros(): a shape is whole numbers, 0 or more (or a list of them)
+error: zeros(): a shape is whole numbers, 0 or more (or a list of them)
+error: zeros(): a shape is whole numbers, 0 or more
+error: zeros(): at most 16 dimensions
+error: zeros(): at most 16 dimensions
+error: that Array would be too big
+error: full() fills with a Number or a Bool, not a str
+error: full(): there is no dtype "x" (float64, float32, int64, int32, uint8, bool)
+error: full_like() fills with a Number or a Bool, not a str
+error: zeros_like() expects an Array (or a list or Number) as argument 1, got a str
+error: zeros_like(): there is no dtype "x" (float64, float32, int64, int32, uint8, bool)
+error: arange() takes 1 to 4 arguments but got 0
+error: arange() takes stop, or start, stop and step (and a dtype)
+error: arange(): there is no dtype "x" (float64, float32, int64, int32, uint8, bool)
+error: arange(): the step cannot be 0
+error: arange(): that would be too long
+error: arange(): there is no dtype "x" (float64, float32, int64, int32, uint8, bool)
+error: linspace() expects Numbers, got a str
+error: linspace(): num must be a whole number, 0 or more
+error: eye() takes 1 to 4 arguments but got 0
+error: eye(): n, m and k are whole Numbers
+error: eye() takes n, m and k (and a dtype)
+error: eye(): sizes are 0 or more
+error: eye(): there is no dtype "x" (float64, float32, int64, int32, uint8, bool)
+error: diag() takes an Array of 1 or 2 dimensions
+error: diag(): k must be a whole Number
+error: diag() expects an Array (or a list or Number) as argument 1, got a str
+error: from_bytes() expects Bytes as argument 1, got a str
+error: from_bytes(): 3 bytes do not make whole int32 values
+error: from_bytes(): there is no dtype "int8" (float64, float32, int64, int32, uint8, bool)
+error: from_bytes(): that shape does not hold 4 values
+error: from_bytes(): a shape is whole numbers, 0 or more
+error: expected an Array, a Number or a list, got a str
+error: shapes [2, 3] and [4] do not broadcast together
+error: shapes [2, 3] and [3, 2] do not broadcast together
+error: integers cannot be raised to negative powers (use a float dtype)
+error: array(): an Array holds Numbers and Bools, not a str
+error: array(): an Array holds Numbers and Bools, not a str
+error: expected an Array, a Number or a list, got a str
+error: array(): an Array holds Numbers and Bools, not a str
+error: expected an Array, a Number or a list, got a str
+error: round(): decimals must be a whole Number
+error: expected an Array, a Number or a list, got a str
+error: where() takes a condition alone, or with both x and y
+error: where() expects an Array (or a list or Number) as argument 1, got a str
+error: expected an Array, a Number or a list, got a str
+error: expected an Array, a Number or a list, got a str
+error: where(): the condition, x and y do not broadcast together
+error: expected an Array, a Number or a list, got a str
+error: expected an Array, a Number or a list, got a str
+error: shapes [2] and [3] do not broadcast together
+error: array_equal() expects an Array (or a list or Number) as argument 1, got a str
+error: array_equal() expects an Array (or a list or Number) as argument 2, got a str
+error: nonzero() expects an Array (or a list or Number) as argument 1, got a str
+error: matmul needs Arrays of at least 1 dimension (for a Number, use *)
+error: matmul: shapes [2, 3] and [2, 3] do not fit (3 is not 2)
+error: shapes [2, 2, 3] and [3, 3, 2] do not broadcast together
+error: expected an Array, a Number or a list, got a str
+error: expected an Array, a Number or a list, got a str
+error: dot() of Arrays of more than 2 dimensions: use matmul
+error: outer() expects an Array (or a list or Number) as argument 1, got a str
+error: outer() expects an Array (or a list or Number) as argument 2, got a str
+error: trace() needs a matrix (an Array of 2 dimensions)
+error: det() needs a square matrix (an Array of 2 dimensions)
+error: array(): an Array holds Numbers and Bools, not a str
+error: inv(): the matrix is singular
+error: solve(): b must have 2 rows, as a has
+error: array(): an Array holds Numbers and Bools, not a str
+error: cholesky(): the matrix is not positive definite
+error: qr(): mode is "reduced" or "complete"
+error: qr() needs a matrix (an Array of 2 dimensions)
+error: lstsq(): b must have 2 rows, as a has
+error: array(): an Array holds Numbers and Bools, not a str
+error: svd() needs a matrix (an Array of 2 dimensions)
+error: norm(): a matrix has no such norm ("fro", "nuc", 1, -1, 2, -2, inf or -inf)
+error: norm(): a matrix has no such norm ("fro", "nuc", 1, -1, 2, -2, inf or -inf)
+error: norm(): "fro" is a matrix norm (for an Array of 2 dimensions)
+error: norm(): axis 5 is not one of this Array's (it has 2)
+error: reshape(): an Array of shape [2, 3] cannot become [4]
+error: reshape(): only one axis can be -1
+error: reshape(): 6 elements do not fit that shape
+error: reshape(): 6 elements do not fit that shape
+error: reshape(): a shape is whole numbers (one may be -1)
+error: reshape(): a shape is whole numbers (one may be -1)
+error: reshape(): at most 16 dimensions
+error: reshape(): at most 16 dimensions
+error: reshape() expects an Array (or a list or Number) as argument 1, got a str
+error: transpose(): axes must name each of the 2 axes once
+error: transpose(): axes must name each of the 2 axes once
+error: transpose(): axes must name each of the 2 axes once
+error: transpose(): axis 5 is not one of this Array's (it has 2)
+error: transpose(): an axis is a whole Number, not a str
+error: swapaxes(): axis 2 is not one of this Array's (it has 2)
+error: expand_dims(): no axis 5 for an Array of 2 dimensions
+error: expand_dims(): no axis 0 for an Array of 16 dimensions
+error: squeeze(): axis 0 has length 2, not 1
+error: squeeze(): axis 9 is not one of this Array's (it has 2)
+error: shapes [2, 3] and [3] do not broadcast together
+error: broadcast_to(): a shape is whole numbers, 0 or more
+error: flip(): axis 2 is not one of this Array's (it has 2)
+error: concatenate() expects a list of Arrays, at least one
+error: concatenate() expects a list of Arrays, at least one
+error: concatenate() expects an Array (or a list or Number) as argument 1, got a str
+error: concatenate(): the Arrays have different numbers of dimensions
+error: concatenate(): the Arrays' shapes differ along axis 1
+error: concatenate(): no axis 2 for Arrays of 2 dimensions
+error: concatenate(): no axis 0.5 for Arrays of 2 dimensions
+error: stack(): too many dimensions
+error: vstack() expects a list of Arrays, at least one
+error: vstack() expects an Array (or a list or Number) as argument 1, got a str
+error: tile(): a shape is whole numbers, 0 or more (or a list of them)
+error: tile(): too many dimensions
+error: that Array would be too big
+error: that Array would be too big
+error: repeat(): the count must be a whole Number, 0 or more
+error: repeat(): axis 5 is not one of this Array's (it has 2)
+error: repeat(): too many dimensions
+error: roll(): the shift must be a whole Number
+error: roll(): axis 3 is not one of this Array's (it has 2)
+error: index 5 is out of range for axis 0 (length 2)
+error: an Array index must be a whole number, not 0.5
+error: too many indexes for an Array of 2 dimensions
+error: an Array index must be a Number, a range, a list or an Array, not a str
+error: an Array slice needs whole numbers
+error: index 9 is out of range for axis 0 (length 2)
+error: array(): an Array holds Numbers and Bools, not a str
+error: a bool index of shape [1] does not fit an Array of shape [2, 3]
+error: the index arrays' shapes do not broadcast together
+error: that index would make too many dimensions
+[]
+[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]
+error: shapes [3] and [2] do not broadcast together
+error: shapes [3] and [2, 2] do not broadcast together
+error: the index arrays' shapes do not broadcast together
+error: index 9 is out of range for axis 0 (length 2)
+error: that index would make too many dimensions
+error: expected an Array, a Number or a list, got a str
+error: cannot change a part of an element of an Array: change the element itself (x[i, j] = v)
+error: too many indexes for an Array of 0 dimensions
+error: len() of a 0-dimensional Array (it has one element: item())
+error: astype(): there is no dtype "x" (float64, float32, int64, int32, uint8, bool)
+error: item() of an Array of 6 elements: give a position
+error: item(): no position 6 in an Array of 6 elements
+error: item(): no position 0 in an Array of 6 elements
+6 3 7 true [[1, 2, 3], [4, 5, 6]] [4, 5, 6] 5 [[1, 2, 3],
+ [4, 5, 6]] false
+error: sum(): axis 5 is not one of this Array's (it has 2)
+error: sum(): axis 0.5 is not one of this Array's (it has 2)
+error: sum(): an axis is a whole Number, not a str
+error: sum(): expected an axis and then options (an object), got a Number
+error: max() of an empty Array: it has no largest
+error: argmin() of an empty Array: it has no smallest
+error: min(): an axis is a whole Number, not a str
+error: min() expects an Array (or a list or Number) as argument 1, got a str
+error: sum() expects an Array (or a list or Number) as argument 1, got a str
+error: ptp(): axis 5 is not one of this Array's (it has 2)
+error: cumsum(): axis 5 is not one of this Array's (it has 2)
+error: average() expects an Array (or a list or Number) as argument 2, got a str
+[6, 15]
+error: shapes [2, 3] and [1, 2] do not broadcast together
+error: average(): axis 5 is not one of this Array's (it has 2)
+error: median() of an empty Array
+error: percentile(): q must be in 0..100
+error: percentile() expects an Array (or a list or Number) as argument 2, got a str
+error: percentile(): axis 5 is not one of this Array's (it has 2)
+error: percentile(): too many dimensions
+error: sort() needs an Array of at least 1 dimension
+error: sort(): axis 5 is not one of this Array's (it has 2)
+error: searchsorted() needs a sorted Array of 1 dimension (and side "left" or "right")
+error: searchsorted() needs a sorted Array of 1 dimension (and side "left" or "right")
+error: searchsorted() expects an Array (or a list or Number) as argument 2, got a str
+error: bincount() needs an Array of 1 dimension
+error: bincount() counts whole numbers, 0 or more
+error: bincount(): weights must be as many as the numbers
+error: bincount() expects an Array (or a list or Number) as argument 2, got a str
+error: seed() takes a whole number in 0..4294967295
+error: seed() takes a whole number in 0..4294967295
+error: rand(): a shape is whole numbers, 0 or more (or a list of them)
+error: random(): a size is a Number or a list of them, not a str
+error: standard_normal(): a shape is whole numbers, 0 or more (or a list of them)
+error: uniform() expects a Number as argument 1, got a str
+error: uniform(): a shape is whole numbers, 0 or more (or a list of them)
+error: normal(): the scale cannot be negative
+error: exponential(): the scale cannot be negative
+error: randint(): low must be less than high, both whole numbers
+error: randint(): low must be less than high, both whole numbers
+error: randint() expects a Number as argument 1, got a str
+error: randint(): a shape is whole numbers, 0 or more (or a list of them)
+error: permutation() of a whole number, 0 or more
+error: permutation() needs an Array of at least 1 dimension
+error: permutation() expects an Array (or a list or Number) as argument 1, got a str
+error: choice() picks from 0..n-1, n a whole number
+error: choice() picks from an Array of 1 dimension
+error: choice() expects an Array (or a list or Number) as argument 1, got a str
+error: choice() from nothing
+error: choice(): cannot take more than there are without replacing
+error: choice(): p must be 2 probabilities that add up to 1
+error: choice() expects an Array (or a list or Number) as argument 2, got a str
+error: choice(): a shape is whole numbers, 0 or more (or a list of them)
+error: sum(): expected an axis and then options (an object), got a Number

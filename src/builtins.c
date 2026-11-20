@@ -98,6 +98,7 @@ static ObjList *to_list(Interp *I, Value v, const char *fn) {
 
 /* -1, 0 or 1; *failed is set after raising an error for incomparable values. */
 static int compare(Interp *I, Value a, Value b, const char *fn, int *failed) {
+    if (IS_MONEY(a) && IS_MONEY(b)) return lube_money_compare(I, a, b, fn, failed);
     if (IS_NUMERIC(a) && IS_NUMERIC(b)) {
         int c = numeric_compare(a, b);
         if (c != 2) return c;
@@ -237,6 +238,7 @@ NATIVE(n_repr) { (void)I; (void)argc; return OBJ_VAL(value_repr(argv[0])); }
 static Value to_number(Interp *I, int argc, Value *argv, const char *fn) {
     Value v = argv[0];
     if (IS_NUM(v)) return v;
+    if (IS_MONEY(v)) return lube_money_field(I, v, lube_intern(I, "amount", 6));
     if (IS_INT(v)) return NUM_VAL(numeric_value(v));
     if (IS_BOOL(v)) return NUM_VAL(v.as.boolean ? 1 : 0);
     if (IS_TEXT(v)) {
@@ -277,6 +279,9 @@ NATIVE(n_len) {
     if (IS_MAP(v)) return NUM_VAL((double)AS_MAP(v)->count);
     if (IS_RANGE(v)) return NUM_VAL(range_length(AS_RANGE(v)));
     if (IS_BYTES(v)) return NUM_VAL((double)AS_BYTES(v)->len);
+    double n;
+    int r = IS_FOREIGN(v) ? lube_foreign_len(I, v, &n) : 0;  /* a plugin's object, with "len" */
+    if (r) return r < 0 ? ERR_VAL : NUM_VAL(n);
     return type_error(I, "len", 0, "a str, List, Object, Range or Bytes", v);
 }
 
@@ -883,7 +888,7 @@ NATIVE(n_sum) {
     Value total = NUM_VAL(0);
     for (size_t i = 0; i < src->count; i++) {
         Value item = src->items[i];
-        if (!IS_NUMERIC(item)) {
+        if (!IS_NUMERIC(item) && !IS_MONEY(item)) {
             Value e = lube_error(I, "sum() can only add numbers, found %s", a_type(item));
             release(OBJ_VAL(src));
             return e;
@@ -1172,6 +1177,7 @@ NATIVE(n_fixed) {
 
 NATIVE(n_abs) {
     (void)argc;
+    if (IS_MONEY(argv[0])) return AS_MONEY(argv[0])->units < 0 ? lube_money_negate(I, argv[0]) : retain(argv[0]);
     NEED_NUM(0);
     if (IS_INT(argv[0])) return int_abs(I, argv[0]);
     return NUM_VAL(fabs(argv[0].as.number));

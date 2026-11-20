@@ -54,7 +54,7 @@ echo "tests:      $(tail -1 "$OUT/tests.log")"
 
 "$PROFDATA" merge -sparse "$OUT"/run-*.profraw -o "$OUT/lube.profdata"
 # (the graphics plugin's parts that every system has: its windows of each system's are built by CI)
-SOURCES="src/*.c src/plugins/*.c src/plugins/gfx/draw.c src/plugins/gfx/font.c src/plugins/gfx/png.c"
+SOURCES="src/*.c src/plugins/*.c src/plugins/gfx/draw.c src/plugins/gfx/font.c src/plugins/gfx/png.c src/plugins/array/*.c src/plugins/nn/*.c src/plugins/learn/*.c src/plugins/llm/*.c"
 # shellcheck disable=SC2086
 "$COV" report "$OUT/lube" -instr-profile="$OUT/lube.profdata" $SOURCES >"$OUT/report.txt"
 # shellcheck disable=SC2086

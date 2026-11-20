@@ -24,6 +24,7 @@
 #include "lube_plugin.h"
 
 #include <ctype.h>
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -60,6 +61,12 @@ typedef struct {
     void *data;              /* (a host program's function: what it gave with it) */
 } Fn;
 
+/* The operators a plugin's type can have (lube_plugin.h), in the order of OP_NAMES. */
+enum { OPF_ADD, OPF_SUB, OPF_MUL, OPF_DIV, OPF_MOD, OPF_POW, OPF_MATMUL, OPF_EQ, OPF_NE, OPF_LT, OPF_LE, OPF_GT,
+       OPF_GE, OPF_NEG, OPF_GET, OPF_SET, OPF_LEN, OPF_COPY, OPF_IADD, OPF_ISUB, OPF_IMUL, OPF_IDIV, OPF_IMOD, NOPS };
+static const char *const OP_NAMES[NOPS] = {"+", "-", "*", "/", "%", "**", "@", "==", "!=", "<", "<=", ">", ">=",
+                                           "neg", "[]", "[]=", "len", "copy", "+=", "-=", "*=", "/=", "%="};
+
 struct LubeType {
     int id;                  /* where each interpreter keeps its class (foreign_classes) */
     char *name;
@@ -70,6 +77,9 @@ struct LubeType {
     Fn ctor;                 /* (fn NULL: calling the type makes nothing) */
     Fn *methods;
     int nmethods, cap;
+    LubeFn ops[NOPS];        /* its operators (lube->op), by OPF_* above */
+    Fn *props;               /* its properties (lube->property): x.name */
+    int nprops, pcap;
 };
 
 struct LubePlugin {
@@ -80,6 +90,12 @@ struct LubePlugin {
     LubeType **types;
     int ntypes, tcap;
     int ok;                  /* 0: it would not load (said once) */
+    const void *exports;     /* what it gives other plugins (lube->provide) */
+    char **requires;         /* the plugins it uses (lube->require): a built program needs them too */
+    int nrequires;
+    char **const_names;      /* its Numbers (lube->constant) */
+    double *const_values;
+    int nconsts;
 };
 
 static LubeLock *registry;   /* over everything here: isolates import too */
@@ -354,6 +370,89 @@ static LubeValue api_error(LubeVM *vm, const char *format, ...) {
 
 static double api_now(void) { return lube_now(); }
 
+static void api_operator(LubeType *t, const char *op, LubeFn fn) {
+    for (int i = 0; i < NOPS; i++)
+        if (!strcmp(OP_NAMES[i], op)) {
+            t->ops[i] = fn;
+            return;
+        }
+    lube_print(1, "lube: plugin '%s': %s has no operator '%s' to give\n", t->plugin->name, t->name, op);
+}
+
+static int api_range(LubeValue x, double *start, double *end, double *step, int *inclusive) {
+    Value v = V(x);
+    if (!IS_RANGE(v)) return 0;
+    ObjRange *r = AS_RANGE(v);
+    *start = r->start;
+    *end = r->end;
+    *step = r->step;
+    *inclusive = r->inclusive;
+    return 1;
+}
+
+static void api_provide(LubePlugin *p, const void *exports) { p->exports = exports; }
+
+static void api_constant(LubePlugin *p, const char *name, double value) {
+    p->const_names = (char **)xrealloc(p->const_names, sizeof(char *) * (size_t)(p->nconsts + 1));
+    p->const_values = (double *)xrealloc(p->const_values, sizeof(double) * (size_t)(p->nconsts + 1));
+    p->const_names[p->nconsts] = xstrndup(name, strlen(name));
+    p->const_values[p->nconsts++] = value;
+}
+
+static LubeValue api_call(LubeVM *vm, LubeValue fn, int argc, const LubeValue *argv) {
+    Value small[8], *args = argc <= 8 ? small : (Value *)xmalloc(sizeof(Value) * (size_t)argc);
+    if (argc) memcpy(args, argv, sizeof(Value) * (size_t)argc);
+    Value r = IS_CALLABLE(V(fn)) ? lube_call((Interp *)vm, V(fn), argc, args)
+                                 : lube_error((Interp *)vm, "%s cannot be called", a_type(V(fn)));
+    if (args != small) free(args);
+    return L(r);
+}
+
+static LubeValue api_call_method(LubeVM *vm, LubeValue obj, const char *name, int argc, const LubeValue *argv) {
+    Interp *I = (Interp *)vm;
+    Value v = V(obj);
+    ObjClass *c = IS_INSTANCE(v) ? AS_MAP(v)->klass : IS_FOREIGN(v) ? AS_FOREIGN(v)->klass : NULL;
+    Value m = c ? lube_find_method(c, lube_intern(I, name, strlen(name))) : NIL_VAL;
+    if (IS_NIL(m)) return L(lube_error(I, "%s has no method '%s'", a_type(v), name));
+    Value small[8], *args = argc <= 8 ? small : (Value *)xmalloc(sizeof(Value) * (size_t)argc);
+    if (argc) memcpy(args, argv, sizeof(Value) * (size_t)argc);
+    Value r = lube_call_method(I, m, v, argc, args);
+    if (args != small) free(args);
+    return L(r);
+}
+
+static int api_failed(LubeValue v) { return IS_ERR(V(v)); }
+
+static LubeValue api_object_keys(LubeVM *vm, LubeValue o) {
+    (void)vm;
+    ObjList *l = new_list();
+    Value v = V(o);
+    if (IS_MAP(v))
+        for (size_t i = 0; i < AS_MAP(v)->used; i++)
+            if (AS_MAP(v)->entries[i].live) list_push(l, retain(AS_MAP(v)->entries[i].key));
+    return L(OBJ_VAL(l));
+}
+
+static void api_property(LubeType *t, const char *name, LubeFn fn) {
+    add_fn(&t->props, &t->nprops, &t->pcap, name, fn, 1, 1);
+}
+
+static LubePlugin *load(const char *name);
+static int name_ok(const char *s);
+
+/* (in lube_plugin_init, so under the registry lock already) */
+static const void *api_require(LubePlugin *p, const char *name) {
+    LubePlugin *q = name_ok(name) ? load(name) : NULL;
+    if (!q) return NULL;
+    int known = 0;
+    for (int i = 0; i < p->nrequires; i++) known |= !strcmp(p->requires[i], name);
+    if (!known) {
+        p->requires = (char **)xrealloc(p->requires, sizeof(char *) * (size_t)(p->nrequires + 1));
+        p->requires[p->nrequires++] = xstrndup(name, strlen(name));
+    }
+    return q->exports;
+}
+
 static void *api_function_data(LubeVM *vm) {
     const ObjNative *n = ((Interp *)vm)->calling;
     return n && n->plugin_fn ? ((const Fn *)n->plugin_fn)->data : NULL;
@@ -371,6 +470,8 @@ static const LubeAPI API = {
     api_retain, api_release, api_error,
     api_now, api_format_number, lock_new, lock_acquire, lock_release, lock_wait, lock_notify, thread_start,
     api_function_data,
+    api_operator, api_range, api_provide, api_require, api_constant, api_property,
+    api_call, api_call_method, api_failed, api_object_keys,
 };
 
 const LubeAPI *lube_plugin_api(void) { return &API; }
@@ -513,6 +614,11 @@ static LubePlugin *load(const char *name) {
     memset(p, 0, sizeof *p);
     p->name = xstrndup(name, strlen(name));
     p->file = file;
+    if (nplugins == plugins_cap) {  /* (listed first: one it requires may require it back) */
+        plugins_cap = plugins_cap ? plugins_cap * 2 : 4;
+        plugins = (LubePlugin **)xrealloc(plugins, sizeof(LubePlugin *) * (size_t)plugins_cap);
+    }
+    plugins[nplugins++] = p;
     if (init) {
         int version = init(p, &API);
         if (version < 0) {
@@ -524,11 +630,6 @@ static LubePlugin *load(const char *name) {
             p->ok = 1;
         }
     }
-    if (nplugins == plugins_cap) {
-        plugins_cap = plugins_cap ? plugins_cap * 2 : 4;
-        plugins = (LubePlugin **)xrealloc(plugins, sizeof(LubePlugin *) * (size_t)plugins_cap);
-    }
-    plugins[nplugins++] = p;
     return p;
 }
 
@@ -563,6 +664,8 @@ ObjMap *lube_plugin_names(Interp *I, ObjString *name, int *bad) {
         map_set(names, retain(OBJ_VAL(lube_intern(I, p->fns[i].name, strlen(p->fns[i].name)))), BOOL_VAL(1));
     for (int i = 0; i < p->ntypes; i++)
         map_set(names, retain(OBJ_VAL(lube_intern(I, p->types[i]->name, strlen(p->types[i]->name)))), BOOL_VAL(1));
+    for (int i = 0; i < p->nconsts; i++)
+        map_set(names, retain(OBJ_VAL(lube_intern(I, p->const_names[i], strlen(p->const_names[i])))), BOOL_VAL(1));
     return names;
 }
 
@@ -581,6 +684,10 @@ int lube_plugin_import(Interp *I, ObjString *name) {
         ObjClass *c = foreign_class(I, p->types[i]);
         if (lube_define_global(I, c->key, retain(OBJ_VAL(c))) < 0) return -1;  /* LCOV_EXCL_LINE */
     }
+    for (int i = 0; i < p->nconsts; i++) {
+        ObjString *key = lube_global_key(I, name, lube_intern(I, p->const_names[i], strlen(p->const_names[i])));
+        if (lube_define_global(I, key, NUM_VAL(p->const_values[i])) < 0) return -1;  /* LCOV_EXCL_LINE */
+    }
     return 0;
 }
 
@@ -589,6 +696,14 @@ const char *lube_plugin_file(Interp *I, ObjString *name) {
     (void)I;
     LubePlugin *p = get(name);
     return p && p->ok ? p->file : NULL;
+}
+
+/* The plugins plugin `name` uses (lube->require), which a program built with it needs as well. */
+char **lube_plugin_requires(Interp *I, ObjString *name, int *n) {
+    (void)I;
+    LubePlugin *p = get(name);
+    *n = p ? p->nrequires : 0;
+    return p ? p->requires : NULL;
 }
 
 #ifndef LUBE_RUNTIME  /* (lube --build's) */
@@ -662,4 +777,139 @@ void lube_foreign_describe(StrBuf *sb, Value v) {
         sb_putn(sb, big, (size_t)n);
         free(big);
     }
+}
+
+/* ======================================================================
+ * A plugin type's operators, for the interpreter (lube->op)
+ * ==================================================================== */
+
+static LubeFn op_of(Value v, int op) { return IS_FOREIGN(v) ? AS_FOREIGN(v)->klass->foreign->ops[op] : NULL; }
+
+/* Calls operator fn with argv (borrowed; tuple: x[i, j]'s indexes, spread out) and `last` after them when
+ * it is not nothing (the value of x[i] = v): returns what it gives. */
+static Value op_call(Interp *I, LubeFn fn, Value x, Value idx, Value last) {
+    Value small[8], *args = small;
+    int n = 1 + (IS_TUPLE(idx) ? (int)AS_LIST(idx)->count : !IS_NIL(idx)) + !IS_NIL(last);
+    if (n > 8) args = (Value *)xmalloc(sizeof(Value) * (size_t)n);
+    int k = 0;
+    args[k++] = x;
+    if (IS_TUPLE(idx))
+        for (size_t i = 0; i < AS_LIST(idx)->count; i++) args[k++] = AS_LIST(idx)->items[i];
+    else if (!IS_NIL(idx))
+        args[k++] = idx;
+    if (!IS_NIL(last)) args[k++] = last;
+    LubeValue lsmall[8], *largs = n > 8 ? (LubeValue *)xmalloc(sizeof(LubeValue) * (size_t)n) : lsmall;
+    memcpy(largs, args, sizeof(Value) * (size_t)n);
+    Value r = V(fn((LubeVM *)I, n, largs));
+    if (args != small) free(args);
+    if (largs != lsmall) free(largs);
+    return r;
+}
+
+static int binary_slot(int op) {
+    switch (op) {
+    case T_PLUS: return OPF_ADD;
+    case T_MINUS: return OPF_SUB;
+    case T_STAR: return OPF_MUL;
+    case T_SLASH: return OPF_DIV;
+    case T_PERCENT: return OPF_MOD;
+    case T_POW: return OPF_POW;
+    case T_AT: return OPF_MATMUL;
+    case T_EQ: return OPF_EQ;
+    case T_NEQ: return OPF_NE;
+    case T_LT: return OPF_LT;
+    case T_LE: return OPF_LE;
+    case T_GT: return OPF_GT;
+    case T_GE: return OPF_GE;
+    default: return -1;  /* (in) */
+    }
+}
+
+/* a op b, when a or b is a plugin's object whose type has that operator: 1 with *out set (perhaps an error). */
+int lube_foreign_binary(Interp *I, int op, Value a, Value b, Value *out) {
+    int k = binary_slot(op);
+    LubeFn fn = k < 0 ? NULL : op_of(a, k) ? op_of(a, k) : op_of(b, k);
+    if (!fn) return 0;
+    Value args[2] = {a, b};
+    LubeValue largs[2];
+    memcpy(largs, args, sizeof largs);
+    *out = V(fn((LubeVM *)I, 2, largs));
+    return 1;
+}
+
+/* -x, likewise. */
+int lube_foreign_neg(Interp *I, Value x, Value *out) {
+    LubeFn fn = op_of(x, OPF_NEG);
+    if (!fn) return 0;
+    *out = op_call(I, fn, x, NIL_VAL, NIL_VAL);
+    return 1;
+}
+
+/* x[idx] (idx a tuple: x[i, j]), likewise. */
+int lube_foreign_index(Interp *I, Value x, Value idx, Value *out) {
+    LubeFn fn = op_of(x, OPF_GET);
+    if (!fn) return 0;
+    *out = op_call(I, fn, x, idx, NIL_VAL);
+    return 1;
+}
+
+/* x[idx] = v: 1 when done, -1 after an error, 0 if its type has no "[]=". The copy-on-write is the
+ * caller's (lube_foreign_unshare). */
+int lube_foreign_set(Interp *I, Value x, Value idx, Value v) {
+    LubeFn fn = op_of(x, OPF_SET);
+    if (!fn) return 0;
+    Value r = op_call(I, fn, x, idx, v);
+    if (IS_ERR(r)) return -1;
+    release(r);
+    return 1;
+}
+
+/* Gives *slot (a plugin's object) a single owner before it changes, when its type can copy: -1 after an error. */
+int lube_foreign_unshare(Interp *I, Value *slot) {
+    LubeFn fn = op_of(*slot, OPF_COPY);
+    if (!fn || slot->as.obj->rc == 1) return 0;
+    Value c = op_call(I, fn, *slot, NIL_VAL, NIL_VAL);
+    if (IS_ERR(c)) return -1;
+    release(*slot);
+    *slot = c;
+    return 0;
+}
+
+/* len(x): 1 with *n, 0 if its type has no "len", -1 after an error. */
+int lube_foreign_len(Interp *I, Value x, double *n) {
+    LubeFn fn = op_of(x, OPF_LEN);
+    if (!fn) return 0;
+    Value r = op_call(I, fn, x, NIL_VAL, NIL_VAL);
+    if (IS_ERR(r)) return -1;
+    if (!IS_NUM(r) || !(r.as.number >= 0) || r.as.number != floor(r.as.number)) {
+        lube_error(I, "len of %s gave %s, not a whole Number", a_type(x), a_type(r));
+        release(r);
+        return -1;
+    }
+    *n = r.as.number;
+    return 1;
+}
+
+/* x.name, x a plugin's object whose type has that property: 1 with *out set (perhaps an error). */
+int lube_foreign_property(Interp *I, Value x, ObjString *name, Value *out) {
+    LubeType *t = AS_FOREIGN(x)->klass->foreign;
+    for (int i = 0; i < t->nprops; i++)
+        if (!strcmp(t->props[i].name, name->chars)) {
+            *out = op_call(I, t->props[i].fn, x, NIL_VAL, NIL_VAL);
+            return 1;
+        }
+    return 0;
+}
+
+/* Whether `for item in x` can take x's items (its type has "len" and "[]"). */
+int lube_foreign_iterable(Value x) { return op_of(x, OPF_LEN) && op_of(x, OPF_GET); }
+
+/* x op= b changing x in place (op T_PLUS...), when nothing else holds x and its type can: 1 with *out set. */
+int lube_foreign_inplace(Interp *I, int op, Value x, Value b, Value *out) {
+    int k = op == T_PLUS ? OPF_IADD : op == T_MINUS ? OPF_ISUB : op == T_STAR ? OPF_IMUL : op == T_SLASH ? OPF_IDIV
+                                                                                                       : OPF_IMOD;
+    LubeFn fn = op_of(x, k);
+    if (!fn || x.as.obj->rc != 1) return 0;
+    *out = op_call(I, fn, x, b, NIL_VAL);
+    return 1;
 }

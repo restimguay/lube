@@ -16,7 +16,7 @@ set(LUBE_GAME "${CMAKE_CURRENT_SOURCE_DIR}/../game" CACHE PATH "the program's fo
 
 file(GLOB LUBE_CORE "${LUBE_SRC}/*.c")
 list(FILTER LUBE_CORE EXCLUDE REGEX "/main\\.c$")  # (the lube command's)
-file(GLOB LUBE_PLUGINS "${LUBE_SRC}/plugins/*.c")  # (fs, net, audio, gfx: inside the app)
+file(GLOB LUBE_PLUGINS "${LUBE_SRC}/plugins/*.c")  # (all of Lube's plugins: inside the app)
 file(GLOB_RECURSE GAME_FILES RELATIVE "${LUBE_GAME}" "${LUBE_GAME}/*")
 set(GAME_TOP "")
 set(GAME_PATHS "")
