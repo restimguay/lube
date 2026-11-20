@@ -1,0 +1,62 @@
+// A window, shown nowhere (LUBE_GFX=none): what a program on a server, or a test, can do with one
+import gfx.*
+
+fn tries(f) { try { f() } catch e { print("error:", e) } }
+
+let w = window(16, 8, "Test")
+print(w, w.is_open(), w.width(), w.height(), w.pixel(0, 0) == rgb(0, 0, 0), type(w), w is Window)
+w.set_fps(0)
+w.fill_rect(0, 0, 4, 4, color("red"))
+w.text("hi", 4, 0)
+w.draw(image(4, 4, color("blue")), 8, 2)
+w.present()
+print(w.events(), w.key_down("left"), w.key_down("space"), w.mouse())
+w.set_title("Another")
+let shot = w.copy()  // (a window's pixels, as an Image)
+print(shot, shot.pixel(1, 1) == color("red"), shot.pixel(9, 3) == color("blue"), len(w.to_png()) > 0)
+let img = image(16, 8)
+img.draw(w, 0, 0)  // (a window drawn on an image)
+print(img.pixel(1, 1) == color("red"))
+w.clear()
+print(w.pixel(1, 1) == rgb(0, 0, 0))
+
+// frames kept to set_fps: 20 a second, so 3 take 0.1s or more; then one long late, which isn't made up for
+w.set_fps(20)
+let start = now()
+for i in 0..3 { w.present() }
+print("3 frames at 20 a second:", now() - start >= 0.095)
+sleep(0.3)
+let late = now()
+w.present()
+w.present()
+print("after falling behind, no rush:", now() - late >= 0.045)
+w.set_fps(0)
+
+// mistakes
+tries(fn() { window(4, 4) })
+tries(fn() { w.key_down("nope") })
+tries(fn() { w.key_down(5) })
+tries(fn() { w.set_fps(-1) })
+tries(fn() { w.set_fps("fast") })
+tries(fn() { w.set_title(5) })
+tries(fn() { window(4, 4, "x", 0.5) })
+tries(fn() { window(0, 4) })
+
+// closed: by the program, then once more (nothing); what is left still draws
+w.close()
+w.close()
+print(w, w.is_open(), w.events())
+w.present()
+w.set_title("gone")
+w.fill_rect(0, 0, 1, 1, color("white"))
+print(w.pixel(0, 0) == color("white"))
+
+// another, now that one is closed; one let go of while open closes, so the next can open
+let w2 = Window(4, 2, "Second", 3)
+print(w2)
+w2.close()
+fn open_one() {
+    let inner = window(2, 2)
+    return inner.width()
+}
+print(open_one(), window(3, 3))

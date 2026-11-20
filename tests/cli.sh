@@ -333,7 +333,7 @@ esac
 command -v "$PCXX" >/dev/null 2>&1 || PCXX=g++
 case "$(uname -s)" in
     Darwin) ELIBS="-lm -lpthread" ;;
-    MINGW* | MSYS* | CYGWIN*) ELIBS="-lm -lws2_32" ;;
+    MINGW* | MSYS* | CYGWIN*) ELIBS="-lm -lws2_32 -lgdi32 -luser32" ;;
     *) ELIBS="-lm -lpthread -ldl" ;;
 esac
 mkdir -p "$TMP/embed"
@@ -345,10 +345,15 @@ mkdir -p "$TMP/embed"
     wait
 ) >"$TMP/embed/build.log" 2>&1
 { "$PCC" -std=c99 $ECFLAGS -Isrc -o "$TMP/embed/host" tests/embed/host.c "$TMP/embed/"*.o $ELIBS &&
-    "$PCXX" -std=c++11 $ECFLAGS -Isrc -o "$TMP/embed/host_cpp" tests/embed/host.cpp "$TMP/embed/"*.o $ELIBS; } \
+    "$PCXX" -std=c++11 $ECFLAGS -Isrc -o "$TMP/embed/host_cpp" tests/embed/host.cpp "$TMP/embed/"*.o $ELIBS &&
+    "$PCC" -std=c99 $ECFLAGS -Isrc -o "$TMP/embed/gfx_host" tests/embed/gfx_host.c "$TMP/embed/"*.o $ELIBS; } \
     >>"$TMP/embed/build.log" 2>&1 || cat "$TMP/embed/build.log"
 run "embed: in a C program" "$TMP/embed/host"
 run "embed: in a C++ program" "$TMP/embed/host_cpp"
+run "embed: a program that shows the windows itself (lube_gfx.h)" env -u LUBE_GFX "$TMP/embed/gfx_host"
+
+# ---- graphics: windows shown nowhere (LUBE_GFX=none), so the tests need no screen ----
+run "gfx: a window, shown nowhere" env LUBE_GFX=none "$LUBE" tests/cli/gfx_window.lube
 
 # ---- sound: played in silence (LUBE_AUDIO=none), so the tests are quiet and need no sound card ----
 run "audio: playing, in silence" env LUBE_AUDIO=none "$LUBE" tests/cli/audio_play.lube

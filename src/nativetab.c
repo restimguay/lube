@@ -13,8 +13,10 @@ const int lube_nnatives = 0;
 int lube_plugin_init_fs(struct LubePlugin *plugin, const struct LubeAPI *api);
 int lube_plugin_init_net(struct LubePlugin *plugin, const struct LubeAPI *api);
 int lube_plugin_init_audio(struct LubePlugin *plugin, const struct LubeAPI *api);
+int lube_plugin_init_gfx(struct LubePlugin *plugin, const struct LubeAPI *api);
 const LubeStaticPlugin lube_static_plugins[] = {
-    {"fs", lube_plugin_init_fs}, {"net", lube_plugin_init_net}, {"audio", lube_plugin_init_audio}, {NULL, NULL}};
+    {"fs", lube_plugin_init_fs}, {"net", lube_plugin_init_net}, {"audio", lube_plugin_init_audio}, {"gfx", lube_plugin_init_gfx},
+    {NULL, NULL}};
 #else
 const LubeStaticPlugin lube_static_plugins[] = {{NULL, NULL}};
 #endif

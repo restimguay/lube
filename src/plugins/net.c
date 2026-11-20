@@ -235,11 +235,11 @@ static void host_port(const struct sockaddr *sa, char *host, size_t size, int *p
     *port = 0;
     if (sa->sa_family == AF_INET) {
         const struct sockaddr_in *a = (const struct sockaddr_in *)(const void *)sa;
-        inet_ntop(AF_INET, (void *)&a->sin_addr, host, size);
+        inet_ntop(AF_INET, (void *)&a->sin_addr, host, (socklen_t)size);
         *port = ntohs(a->sin_port);
     } else if (sa->sa_family == AF_INET6) {
         const struct sockaddr_in6 *a = (const struct sockaddr_in6 *)(const void *)sa;
-        inet_ntop(AF_INET6, (void *)&a->sin6_addr, host, size);
+        inet_ntop(AF_INET6, (void *)&a->sin6_addr, host, (socklen_t)size);
         *port = ntohs(a->sin6_port);
     }
 }

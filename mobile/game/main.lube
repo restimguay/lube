@@ -1,0 +1,44 @@
+// The phone templates' program (mobile/android, mobile/ios): tap to add a ball. On a computer:
+//     lube mobile/game/main.lube
+// A window of 180 by 320 pixels: a phone shows it as large as fits, in whole pixels where it can.
+import gfx.*
+
+let W = 180
+let H = 320
+let win = window(W, H, "Balls", 2)
+let colors = [color("orange"), color("#3cf"), color("#f4a"), color("#8e5"), color("white")]
+var balls = []
+
+fn add_ball(x, y) {
+    let angle = random() * 6.283
+    let speed = 60 + random() * 90
+    balls.push({x: x, y: y, vx: cos(angle) * speed, vy: sin(angle) * speed, r: random_int(4, 10),
+                color: colors[random_int(0, len(colors) - 1)]})
+}
+
+add_ball(W / 2, H / 2)
+var last = now()
+while win.is_open() {
+    for e in win.events() {
+        if e.kind == "mouse_down" { add_ball(e.x, e.y) }  // (a finger, or the mouse)
+        if e.kind == "key_down" and e.key == "escape" { win.close() }  // (Android's back button too)
+    }
+    let t = now()
+    let dt = min(t - last, 0.05)
+    last = t
+    for i in 0..len(balls) {
+        var b = balls[i]  // (a copy: changed, then put back)
+        b.x += b.vx * dt
+        b.y += b.vy * dt
+        if b.x < b.r { b.x = b.r; b.vx = abs(b.vx) }
+        if b.x > W - b.r { b.x = W - b.r; b.vx = -abs(b.vx) }
+        if b.y < b.r { b.y = b.r; b.vy = abs(b.vy) }
+        if b.y > H - b.r { b.y = H - b.r; b.vy = -abs(b.vy) }
+        balls[i] = b
+    }
+    win.clear(rgb(20, 24, 40))
+    for b in balls { win.fill_circle(b.x, b.y, b.r, b.color) }
+    win.text("tap to add a ball", 4, 4, color("white"))
+    win.text("balls: " + str(len(balls)), 4, 16, rgb(160, 170, 200))
+    win.present()
+}

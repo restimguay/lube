@@ -38,6 +38,19 @@
 
 #ifndef LUBE_RUNTIME  /* (translating to C: not in a program built with --small; its runtime part is at the end) */
 #include <stdarg.h>
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
+
+/* Runs the C compiler (a command line): not on a phone, which has none (and iOS no system()). */
+static int run_compiler(const char *command) {
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    (void)command;
+    return -1;
+#else
+    return system(command);
+#endif
+}
 
 /* snprintf for the short pieces of C this file writes (names and small
  * expressions, far below size): through vsnprintf, which compilers do not
@@ -2462,7 +2475,7 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
             sb_putc(&c1, '"');
 #endif
             fflush(stdout);
-            if (system(c1.data) != 0) status = 70;
+            if (run_compiler(c1.data) != 0) status = 70;
             sb_free(&c1);
         }
         int n;
@@ -2482,7 +2495,7 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
         if (small) sb_puts(&cmd, " -Wl,--gc-sections -s");
 #endif
 #ifdef _WIN32
-        sb_puts(&cmd, " -lws2_32");  /* (sockets: plugins/net.c, when it is inside) */
+        sb_puts(&cmd, " -lws2_32 -lgdi32 -luser32");  /* (sockets and windows: plugins/net.c and gfx.c, when inside) */
 #else
         sb_puts(&cmd, " -lpthread");
 #endif
@@ -2494,7 +2507,7 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
         sb_putc(&cmd, '"');
 #endif
         fflush(stdout);
-        if (status || system(cmd.data) != 0) {
+        if (status || run_compiler(cmd.data) != 0) {
             fprintf(stderr, "lube: the C compiler (%s) failed\n", cc && *cc ? cc : dflt);
             status = 70;
         }

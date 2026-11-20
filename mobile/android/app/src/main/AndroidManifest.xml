@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A NativeActivity (no Java): its code is liblube_app.so, from src/main/cpp. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- (the net plugin's sockets: remove it if the program uses none) -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:label="@string/app_name"
+        android:hasCode="false"
+        android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+        <!-- configChanges: turning the phone keeps the program running (the window is fitted again) -->
+        <activity
+            android:name="android.app.NativeActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density">
+            <meta-data android:name="android.app.lib_name" android:value="lube_app" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

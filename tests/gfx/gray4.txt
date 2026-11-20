@@ -1,0 +1,7 @@
+ff000000 ff333333 ff666666 ff999999 ffcccccc ffffffff ff222222 ff555555 ff888888
+ff555555 ff888888 ffbbbbbb ffeeeeee ff111111 ff444444 ff777777 ffaaaaaa ffdddddd
+ffaaaaaa ffdddddd ff000000 ff333333 ff666666 ff999999 ffcccccc ffffffff ff222222
+ffffffff ff222222 ff555555 ff888888 ffbbbbbb ffeeeeee ff111111 ff444444 ff777777
+ff444444 ff777777 ffaaaaaa ffdddddd ff000000 ff333333 ff666666 ff999999 ffcccccc
+ff999999 ffcccccc ffffffff ff222222 ff555555 ff888888 ffbbbbbb ffeeeeee ff111111
+ffeeeeee ff111111 ff444444 ff777777 ffaaaaaa ffdddddd ff000000 ff333333 ff666666
