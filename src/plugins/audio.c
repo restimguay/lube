@@ -11,10 +11,10 @@
  *
  * The system's sound is what every machine has, loaded when the first sound
  * plays (so a program that plays none never touches it, and no library is
- * needed to build Lube): Audio Queue on macOS, ALSA on Linux and the
- * Raspberry Pi, waveOut on Windows. Without one (a server, a machine with no
- * sound card, or LUBE_AUDIO=none) sounds play in silence: they take their
- * time and end, as they would out loud.
+ * needed to build Lube): Audio Queue on macOS and iOS, AAudio on Android,
+ * ALSA on Linux and the Raspberry Pi, waveOut on Windows. Without one (a
+ * server, a machine with no sound card, or LUBE_AUDIO=none) sounds play in
+ * silence: they take their time and end, as they would out loud.
  */
 #if !defined(_WIN32) && !defined(__APPLE__) && !defined(_POSIX_C_SOURCE)
 #define _POSIX_C_SOURCE 200809L  /* nanosleep, dlopen under -std=c99 */
@@ -137,7 +137,7 @@ static void mix(float *out, int frames) {
     }
 }
 
-#if !defined(LUBE_SILENT) && (defined(__linux__) || defined(_WIN32))  /* (the devices that take 16-bit samples) */
+#if !defined(LUBE_SILENT) && ((defined(__linux__) && !defined(__ANDROID__)) || defined(_WIN32))  /* (the devices that take 16-bit samples) */
 static void to_s16(const float *in, short *out, int n) {
     for (int i = 0; i < n; i++) out[i] = (short)(in[i] * 32767.0f);
 }
@@ -240,6 +240,84 @@ static const char *open_device(void) {
     }
     if (queue_start(q, NULL) != 0) return NULL;
     return "Audio Queue";
+}
+
+#elif defined(__ANDROID__)
+/* AAudio (Android 8 and later), libaaudio.so opened when the first sound plays;
+ * an older Android plays in silence. It asks for the mix on a thread of its own. */
+typedef struct AAudioStreamStruct AAudioStream;
+typedef struct AAudioStreamBuilderStruct AAudioStreamBuilder;
+typedef int32_t (*AAudioData)(AAudioStream *stream, void *user, void *data, int32_t frames);
+typedef void (*AAudioError)(AAudioStream *stream, void *user, int32_t error);
+static int32_t (*aa_builder)(AAudioStreamBuilder **builder);
+static void (*aa_set_format)(AAudioStreamBuilder *b, int32_t format);
+static void (*aa_set_channels)(AAudioStreamBuilder *b, int32_t channels);
+static void (*aa_set_rate)(AAudioStreamBuilder *b, int32_t rate);
+static void (*aa_set_performance)(AAudioStreamBuilder *b, int32_t mode);
+static void (*aa_set_data)(AAudioStreamBuilder *b, AAudioData fn, void *user);
+static void (*aa_set_error)(AAudioStreamBuilder *b, AAudioError fn, void *user);
+static int32_t (*aa_open)(AAudioStreamBuilder *b, AAudioStream **stream);
+static int32_t (*aa_builder_delete)(AAudioStreamBuilder *b);
+static int32_t (*aa_start)(AAudioStream *stream);
+static int32_t (*aa_close)(AAudioStream *stream);
+static int32_t (*aa_rate)(AAudioStream *stream);
+
+static int32_t aa_fill(AAudioStream *stream, void *user, void *data, int32_t frames) {  /* (on AAudio's thread) */
+    (void)stream, (void)user;
+    lube->lock_acquire(lock);
+    mix((float *)data, frames);
+    lube->lock_release(lock);
+    return 0;  /* (go on) */
+}
+
+static void aa_lost(AAudioStream *stream, void *user, int32_t error);
+
+static AAudioStream *aa_stream(void) {
+    AAudioStreamBuilder *b;
+    AAudioStream *s = NULL;
+    if (aa_builder(&b) != 0) return NULL;
+    aa_set_format(b, 2 /* float */);
+    aa_set_channels(b, 2);
+    aa_set_rate(b, RATE);
+    aa_set_performance(b, 12 /* low latency */);
+    aa_set_data(b, aa_fill, NULL);
+    aa_set_error(b, aa_lost, NULL);
+    if (aa_open(b, &s) != 0) s = NULL;
+    aa_builder_delete(b);
+    if (s && (aa_rate(s) != RATE || aa_start(s) != 0)) {
+        aa_close(s);
+        s = NULL;
+    }
+    return s;
+}
+
+/* The sound went elsewhere (headphones out, Bluetooth in): a stream to wherever it goes now. */
+static void aa_reopen(void *old) {
+    aa_close((AAudioStream *)old);
+    for (int i = 0; i < 25; i++) {
+        if (aa_stream()) return;
+        sleep_for(0.2);
+    }
+    silent_main(NULL);  /* (none to be had: voices still end on time) */
+}
+
+static void aa_lost(AAudioStream *stream, void *user, int32_t error) {
+    (void)user;
+    if (error == -899 /* disconnected */) lube->thread_start(aa_reopen, stream, 1 << 20);  /* (not on AAudio's thread) */
+}
+
+static const char *open_device(void) {
+    void *lib = dlopen("libaaudio.so", RTLD_NOW | RTLD_LOCAL);
+    if (!lib || !LOAD(lib, aa_builder, "AAudio_createStreamBuilder") || !LOAD(lib, aa_set_format, "AAudioStreamBuilder_setFormat") ||
+        !LOAD(lib, aa_set_channels, "AAudioStreamBuilder_setChannelCount") ||
+        !LOAD(lib, aa_set_rate, "AAudioStreamBuilder_setSampleRate") ||
+        !LOAD(lib, aa_set_performance, "AAudioStreamBuilder_setPerformanceMode") ||
+        !LOAD(lib, aa_set_data, "AAudioStreamBuilder_setDataCallback") ||
+        !LOAD(lib, aa_set_error, "AAudioStreamBuilder_setErrorCallback") || !LOAD(lib, aa_open, "AAudioStreamBuilder_openStream") ||
+        !LOAD(lib, aa_builder_delete, "AAudioStreamBuilder_delete") || !LOAD(lib, aa_start, "AAudioStream_requestStart") ||
+        !LOAD(lib, aa_close, "AAudioStream_close") || !LOAD(lib, aa_rate, "AAudioStream_getSampleRate"))
+        return NULL;
+    return aa_stream() ? "AAudio" : NULL;
 }
 
 #elif defined(__linux__)

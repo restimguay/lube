@@ -815,6 +815,23 @@ while win.is_open() {
 - `copy()`, `crop(x, y, w, h)`, `width()` and `height()`; `to_png()` gives the PNG file's `Bytes`, and `save_png(path)` writes it. `load_image` reads every kind of PNG (gray, RGB, palette, with alpha, 1 to 16 bits, interlaced), and says what is wrong with one it can't. `text_size(s, scale?)` is `[width, height]` in pixels (6 by 10 a letter).
 - One window at a time: `window(w, h, title?, scale?)`. `win.events()` is a list of `{kind, ...}`: `key_down` (`key`, `repeat`), `key_up`, `text` (`text`, what was typed), `mouse_move`, `mouse_down` and `mouse_up` (`x`, `y` in the window's pixels, `button`: 1 left, 2 right, 3 middle), `wheel` (`dx`, `dy`), `touch_down`, `touch_move` and `touch_up` (`id`, `x`, `y`: on a phone the first finger works the mouse too), `focus`, `blur` and `close` (the close button: the window closes). `win.key_down(name)` and `win.mouse()` (`{x, y, left, right, middle}`) say what is held now, and `keys()` lists the keys' names.
 - `win.present()` keeps to 60 frames a second (`win.set_fps(n)`; 0 for no waiting). `win.set_title(s)`, `win.close()`, `win.is_open()`. A window is drawn by the program, so it stays sharp at any scale: the screen shows each pixel as a square of whole pixels where it can.
+- `win.set_fullscreen(true)` fills the screen with it (its pixels as large as fit, black around them), and `false` makes it a window again; `win.is_fullscreen()` says which (on macOS, the window's green button changes it too). `win.show_cursor(false)` hides the mouse's arrow over the window.
+
+Game controllers are numbered from 0, in the order they connect, and their buttons are named by where they are, as on an Xbox controller: `a` at the bottom, `b` on the right, `x` on the left, `y` at the top (on a PlayStation controller, cross, circle, square and triangle):
+
+```lube
+for e in win.events() {
+  if e.kind == "pad_connected" { print("controller", e.pad, "is", e.name) }
+  if e.kind == "pad_down" and e.button == "a" { jump() }
+}
+let p = win.pad(0)                                   // controller 0 now
+x += p.left_x * speed                                // a stick: -1 to 1 (right and down are more)
+if p.right_trigger > 0.5 { fire() }                  // a trigger: 0 to 1
+```
+
+- Events: `pad_connected` (`pad`, `name`), `pad_disconnected` (`pad`), `pad_down` and `pad_up` (`pad`, `button`). Controllers already connected when the window opens come as `pad_connected` too, in its first events.
+- `win.pads()` lists the numbers of those connected. `win.pad(n)` is `{connected, name}`, a Bool for each button (`a`, `b`, `x`, `y`, `left_shoulder`, `right_shoulder`, `back`, `start`, `guide`, `left_stick`, `right_stick`, `up`, `down`, `left`, `right`), and the axes as Numbers: `left_x`, `left_y`, `right_x`, `right_y` (with the middle fifth of each stick, where a stick at rest is never quite still, as 0) and `left_trigger`, `right_trigger`. A trigger pressed past half way is also a button, `left_trigger` or `right_trigger`, for `pad_down`. `pad_buttons()` lists the names.
+- They come from what each system has: XInput on Windows (Xbox controllers, and the many that work as one), GameController on macOS and iOS (Xbox, PlayStation, Switch and MFi controllers), the kernel's own on Linux (the controllers it knows: Xbox, PlayStation, Switch, Steam and most others), and Android's.
 - Windows need no library to build Lube: they use what the system has, loaded when the first window opens. That is Cocoa on macOS, X11 on Linux and the Raspberry Pi, and Win32 on Windows. With `LUBE_GFX=none` a window is shown nowhere (on a server, or in tests: everything works but the screen), and the static Linux binary from the releases has no windows (it can still draw images and save them).
 
 ### Writing a plugin
@@ -1129,18 +1146,23 @@ lube_gfx_set_host(&host);          // window() now opens here
 LubeGfxEvent e = {LUBE_GFX_TOUCH_DOWN};
 e.x = 10, e.y = 20;                // in the window's pixels: lube_gfx_fit(...) says where it is on the surface
 lube_gfx_post(&e);                 // from any thread
+
+LubeGfxEvent pad = {LUBE_GFX_PAD_AXIS};  // a game controller: PAD_CONNECTED (text: its name), PAD_DOWN and
+pad.id = 0, pad.key = "left_x";          // PAD_UP (key: a button), PAD_AXIS (key: an axis, value: where it is),
+pad.value = -0.5;                        // PAD_DISCONNECTED; id says which
+lube_gfx_post(&pad);
 ```
 
 `tests/embed/gfx_host.c` uses all of it.
 
 ## Phones: Android and iOS
 
-`mobile/` has a template app for each: a Lube program that fills the screen, with touches as its input. Both run `mobile/game/main.lube` (a sample: tap to add a ball), which also runs on a computer as it is (`lube mobile/game/main.lube`). Put your program there, as `main.lube`, with the files it reads beside it.
+`mobile/` has a template app for each: a Lube program that fills the screen, with touches as its input. Both run `mobile/game/main.lube` (a sample: tap to add a ball, with a sound from `sounds/pop.wav`), which also runs on a computer as it is (`lube mobile/game/main.lube`). Put your program there, as `main.lube`, with the files it reads beside it, in folders or not.
 
-- **Android** (`mobile/android`): a NativeActivity, with no Java. Open the folder in Android Studio, or build it with Gradle (`gradle -p mobile/android assembleDebug`, or `installDebug` for a phone plugged in); it needs the NDK. The program's files are copied to the app's own storage, where it runs, and what it prints goes to the log (`adb logcat -s lube`). The back button is the `escape` key.
-- **iOS** (`mobile/ios`): `cmake -G Xcode -S mobile/ios -B build/ios -DCMAKE_SYSTEM_NAME=iOS`, then open `build/ios/LubeApp.xcodeproj` and run it (on a phone, after choosing a signing team). What it prints goes to Xcode's console.
-- The program's window is shown as large as fits, in whole pixels where it can, with black around it: 180 by 320 fills a phone held upright. Touches come as `touch_down`, `touch_move` and `touch_up`, the first finger as the mouse too, so a program written for a mouse works with a finger. A hardware keyboard's keys come as keys. When the app goes to the background, the program gets `blur`, and on Android it waits there until the app comes back.
-- Lube and its plugins are built into the app from `src/` (the templates find it from where they are: elsewhere, give its path with `-DLUBE_SRC=...`). Files, sockets and graphics work as on a computer. Sound works on iOS; on Android it plays in silence for now.
+- **Android** (`mobile/android`): a NativeActivity, with no Java. Open the folder in Android Studio, or build it with Gradle (`gradle -p mobile/android assembleDebug`, or `installDebug` for a phone plugged in; a program in another folder: `-PlubeGame=/path/to/it`); it needs the NDK. The program's files are copied to the app's own storage, where it runs, when the app is new or has changed (so files the program writes there stay), and what it prints goes to the log (`adb logcat -s lube`). The back button is the `escape` key.
+- **iOS** (`mobile/ios`): `cmake -G Xcode -S mobile/ios -B build/ios -DCMAKE_SYSTEM_NAME=iOS` (a program in another folder: `-DLUBE_GAME=/path/to/it`), then open `build/ios/LubeApp.xcodeproj` and run it (on a phone, after choosing a signing team). What it prints goes to Xcode's console.
+- The program's window is shown as large as fits, in whole pixels where it can, with black around it: 180 by 320 fills a phone held upright. Touches come as `touch_down`, `touch_move` and `touch_up`, the first finger as the mouse too, so a program written for a mouse works with a finger. A hardware keyboard's keys come as keys, and game controllers as controllers. When the app goes to the background, the program gets `blur`, and on Android it waits there until the app comes back.
+- Lube and its plugins are built into the app from `src/` (the templates find it from where they are: elsewhere, give its path with `-DLUBE_SRC=...`). Files, sockets, sound and graphics work as on a computer: sound with Audio Queue on iOS, and AAudio on Android 8 and later (in silence before that).
 
 ## How the interpreter works
 

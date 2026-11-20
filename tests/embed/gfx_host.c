@@ -7,6 +7,7 @@
 #include "lube_embed.h"
 #include "lube_gfx.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -32,6 +33,17 @@ static const char *SCRIPT =
     "print('5000 at once:')\n"
     "let many = w.events()\n"
     "print(len(many), many[0].x, many[len(many) - 1].x)\n"
+    "print('controllers:')\n"
+    "show(w)\n"
+    "let p = w.pad(0)\n"
+    "print(w.pads(), p.connected, p.name, p.a, p.b, p.start, p.left_x, round(p.left_y * 1000) / 1000, p.right_x, p.right_y,\n"
+    "      p.left_trigger, p.right_trigger)\n"
+    "print(w.pad(2))\n"
+    "print('controllers: let go of, past their ends, and one gone:')\n"
+    "show(w)\n"
+    "let q = w.pad(0)\n"
+    "print(w.pads(), q.a, round(q.left_x * 1000) / 1000, round(q.left_y * 1000) / 1000, q.right_x, q.right_y, q.left_trigger,\n"
+    "      q.right_trigger, w.pad(1).connected, w.pad(3).name)\n"
     "print('closed by the host:')\n"
     "show(w)\n"
     "print(w.is_open(), w)\n"
@@ -69,6 +81,17 @@ static void post(int kind, const char *key, const char *text, double x, double y
     e.button = button;
     e.id = id;
     if (kind == LUBE_GFX_WHEEL) e.dx = x, e.dy = y;
+    lube_gfx_post(&e);
+}
+
+static void post_pad(int kind, int id, const char *key, const char *text, double value) {
+    LubeGfxEvent e;
+    memset(&e, 0, sizeof e);
+    e.kind = kind;
+    e.id = id;
+    e.key = key;
+    e.text = text;
+    e.value = value;
     lube_gfx_post(&e);
 }
 
@@ -119,7 +142,38 @@ static void pump(void *user) {
     case 5:  /* (more than a program that never asks keeps: the latest) */
         for (int i = 0; i < 5000; i++) post(LUBE_GFX_MOUSE_MOVE, NULL, NULL, i, 0, 0, 0);
         break;
-    case 6:
+    case 6:  /* game controllers */
+        post_pad(LUBE_GFX_PAD_CONNECTED, 0, NULL, "Test Pad", 0);
+        post_pad(LUBE_GFX_PAD_DOWN, 0, "a", NULL, 0);
+        post_pad(LUBE_GFX_PAD_DOWN, 0, "a", NULL, 0);              /* (down already: nothing) */
+        post_pad(LUBE_GFX_PAD_AXIS, 0, "left_y", NULL, 0.6);       /* (from 0.2, its dead middle, to 1: 0.5) */
+        post_pad(LUBE_GFX_PAD_AXIS, 0, "right_x", NULL, 0.1);      /* (in the dead middle: 0) */
+        post_pad(LUBE_GFX_PAD_AXIS, 0, "right_y", NULL, 0.1);
+        post_pad(LUBE_GFX_PAD_AXIS, 0, "left_trigger", NULL, 0.7);  /* (past half way: down) */
+        post_pad(LUBE_GFX_PAD_AXIS, 0, "left_trigger", NULL, 0.45); /* (not below 0.4: still down) */
+        post_pad(LUBE_GFX_PAD_DOWN, 0, "right_trigger", NULL, 0);  /* (a trigger as a button: all the way) */
+        post_pad(LUBE_GFX_PAD_DOWN, 1, "start", NULL, 0);          /* (one not said to be there: it is now) */
+        post_pad(LUBE_GFX_PAD_DOWN, 0, "no-such-button", NULL, 0); /* (names Lube doesn't know, and numbers it has no room for: left out) */
+        post_pad(LUBE_GFX_PAD_DOWN, 0, NULL, NULL, 0);
+        post_pad(LUBE_GFX_PAD_AXIS, 0, "no-such-axis", NULL, 1);
+        post_pad(LUBE_GFX_PAD_AXIS, 0, NULL, NULL, 1);
+        post_pad(LUBE_GFX_PAD_DOWN, 8, "a", NULL, 0);
+        post_pad(LUBE_GFX_PAD_DOWN, -1, "a", NULL, 0);
+        break;
+    case 7:
+        post_pad(LUBE_GFX_PAD_UP, 0, "a", NULL, 0);
+        post_pad(LUBE_GFX_PAD_AXIS, 0, "left_trigger", NULL, -3);  /* (below 0: 0, and let go of) */
+        post_pad(LUBE_GFX_PAD_UP, 0, "right_trigger", NULL, 0);
+        post_pad(LUBE_GFX_PAD_AXIS, 0, "left_x", NULL, -5);        /* (past the end: -1; the stick no more than 1 out) */
+        post_pad(LUBE_GFX_PAD_AXIS, 0, "right_x", NULL, 2);
+        post_pad(LUBE_GFX_PAD_AXIS, 0, "right_y", NULL, nan(""));  /* (not a number: 0) */
+        post_pad(LUBE_GFX_PAD_CONNECTED, 0, NULL, "Again", 0);     /* (there already: nothing) */
+        post_pad(LUBE_GFX_PAD_DISCONNECTED, 1, NULL, NULL, 0);
+        post_pad(LUBE_GFX_PAD_DISCONNECTED, 1, NULL, NULL, 0);     /* (gone already: nothing) */
+        post_pad(LUBE_GFX_PAD_CONNECTED, 2, NULL, NULL, 0);        /* (no name: "controller") */
+        post_pad(LUBE_GFX_PAD_CONNECTED, 3, NULL, "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\xc3\xa9", 0);  /* (cut before the é) */
+        break;
+    case 8:
         post(LUBE_GFX_CLOSE, NULL, NULL, 0, 0, 0, 0);
         post(LUBE_GFX_KEY_DOWN, "a", NULL, 0, 0, 0, 0);  /* (after it closed: nothing) */
         break;

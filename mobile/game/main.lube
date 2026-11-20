@@ -1,11 +1,14 @@
 // The phone templates' program (mobile/android, mobile/ios): tap to add a ball. On a computer:
 //     lube mobile/game/main.lube
 // A window of 180 by 320 pixels: a phone shows it as large as fits, in whole pixels where it can.
+// A game controller works too: A adds a ball, the left stick tilts the balls. On a computer, F11: fullscreen.
 import gfx.*
+import audio.*
 
 let W = 180
 let H = 320
 let win = window(W, H, "Balls", 2)
+let pop = Sound("sounds/pop.wav")  // (a file in a folder: the templates copy them all)
 let colors = [color("orange"), color("#3cf"), color("#f4a"), color("#8e5"), color("white")]
 var balls = []
 
@@ -14,6 +17,7 @@ fn add_ball(x, y) {
     let speed = 60 + random() * 90
     balls.push({x: x, y: y, vx: cos(angle) * speed, vy: sin(angle) * speed, r: random_int(4, 10),
                 color: colors[random_int(0, len(colors) - 1)]})
+    pop.play(0.5, x / W * 2 - 1)  // (heard from where it is, left to right)
 }
 
 add_ball(W / 2, H / 2)
@@ -21,13 +25,24 @@ var last = now()
 while win.is_open() {
     for e in win.events() {
         if e.kind == "mouse_down" { add_ball(e.x, e.y) }  // (a finger, or the mouse)
+        if e.kind == "pad_down" and e.button == "a" { add_ball(W / 2, H / 2) }  // (a game controller)
         if e.kind == "key_down" and e.key == "escape" { win.close() }  // (Android's back button too)
+        if e.kind == "key_down" and e.key == "f11" { win.set_fullscreen(not win.is_fullscreen()) }
     }
     let t = now()
     let dt = min(t - last, 0.05)
     last = t
+    var tilt_x = 0
+    var tilt_y = 0
+    for n in win.pads() {  // (each controller's left stick pushes every ball)
+        let p = win.pad(n)
+        tilt_x += p.left_x * 400
+        tilt_y += p.left_y * 400
+    }
     for i in 0..len(balls) {
         var b = balls[i]  // (a copy: changed, then put back)
+        b.vx += tilt_x * dt
+        b.vy += tilt_y * dt
         b.x += b.vx * dt
         b.y += b.vy * dt
         if b.x < b.r { b.x = b.r; b.vx = abs(b.vx) }
@@ -40,5 +55,6 @@ while win.is_open() {
     for b in balls { win.fill_circle(b.x, b.y, b.r, b.color) }
     win.text("tap to add a ball", 4, 4, color("white"))
     win.text("balls: " + str(len(balls)), 4, 16, rgb(160, 170, 200))
+    if len(win.pads()) > 0 { win.text("controllers: " + str(len(win.pads())), 4, 28, rgb(160, 170, 200)) }
     win.present()
 }

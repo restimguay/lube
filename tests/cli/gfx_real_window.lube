@@ -1,0 +1,38 @@
+// A window the system shows (CI runs this on each system's own: Cocoa, Win32, and X11 under Xvfb):
+//     lube tests/cli/gfx_real_window.lube
+// Every call of a real window, once: drawing, presenting, events, controllers, fullscreen and back, the cursor.
+// What fullscreen ends as depends on the screen (a display with no window manager has none), so this only
+// checks that each works without failing; it ends by printing "ok".
+import gfx.*
+
+let win = window(160, 90, "Lube: a real window", 2)
+
+fn frames(n) {
+    for i in 0..n {
+        for e in win.events() {
+            if e.kind == "pad_connected" { print("controller", e.pad, "connected:", e.name) }
+            if e.kind == "pad_down" { print("controller", e.pad, "pressed", e.button) }
+        }
+        win.clear(rgb(20, 24, 40))
+        win.fill_circle(40 + i % 80, 45, 10, color("orange"))
+        win.text("a real window", 4, 4)
+        win.present()
+    }
+}
+
+frames(10)
+print("controllers:", win.pads())
+let first = win.pad(0)
+print("controller 0:", first.connected, first.left_x, first.a)
+win.set_fullscreen(true)
+frames(90)
+print("fullscreen (asked for):", win.is_fullscreen())
+win.set_fullscreen(false)
+frames(90)
+win.show_cursor(false)
+frames(5)
+win.show_cursor(true)
+win.set_title("Lube: done")
+frames(5)
+win.close()
+print("ok")

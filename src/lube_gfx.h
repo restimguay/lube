@@ -44,18 +44,23 @@ enum {
     LUBE_GFX_KEY_DOWN = 1, LUBE_GFX_KEY_UP, LUBE_GFX_TEXT,
     LUBE_GFX_MOUSE_MOVE, LUBE_GFX_MOUSE_DOWN, LUBE_GFX_MOUSE_UP, LUBE_GFX_WHEEL,
     LUBE_GFX_TOUCH_DOWN, LUBE_GFX_TOUCH_MOVE, LUBE_GFX_TOUCH_UP,
-    LUBE_GFX_FOCUS, LUBE_GFX_BLUR, LUBE_GFX_CLOSE
+    LUBE_GFX_FOCUS, LUBE_GFX_BLUR, LUBE_GFX_CLOSE,
+    /* game controllers: id is which (0 to 7) */
+    LUBE_GFX_PAD_CONNECTED, LUBE_GFX_PAD_DISCONNECTED, LUBE_GFX_PAD_DOWN, LUBE_GFX_PAD_UP, LUBE_GFX_PAD_AXIS
 };
 
 typedef struct {
     int kind;              /* LUBE_GFX_... */
-    const char *key;       /* KEY_DOWN, KEY_UP: a key's name, as the program sees it ("a", "left", "space"...) */
-    const char *text;      /* TEXT: UTF-8 */
+    const char *key;       /* KEY_DOWN, KEY_UP: a key's name, as the program sees it ("a", "left", "space"...);
+                            * PAD_DOWN, PAD_UP: a button's ("a", "start", "up"...: see pad_buttons());
+                            * PAD_AXIS: an axis's ("left_x", "left_y", "right_x", "right_y", "left_trigger", "right_trigger") */
+    const char *text;      /* TEXT: UTF-8; PAD_CONNECTED: the controller's name */
     double x, y;           /* MOUSE_..., TOUCH_...: in the window's pixels */
     int button;            /* MOUSE_DOWN, MOUSE_UP: 1 left, 2 right, 3 middle */
-    int id;                /* TOUCH_...: which finger */
+    int id;                /* TOUCH_...: which finger; PAD_...: which controller */
     double dx, dy;         /* WHEEL */
     int repeat;            /* KEY_DOWN: 1 if the key is held and repeating */
+    double value;          /* PAD_AXIS: a stick's -1 to 1 (right, and down, are more), a trigger's 0 to 1 */
 } LubeGfxEvent;
 
 void lube_gfx_set_host(const LubeGfxHost *host);  /* (copied; NULL: windows are the system's again) */
