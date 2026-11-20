@@ -65,9 +65,10 @@ built app: 1 file, 339570 bytes
 - arithmetic, comparisons, `and`, `or` and `not`;
 - `if`, `while`, and `for` over a range (`0..n`, `1..=n`);
 - local `var`s and `let`s;
+- lists of Numbers or of Bools that the function makes itself (`[0] * n`, `Number[]`, `[a, b]`), and indexes, changes, pushes to and measures with `len`, but never passes on or returns;
 - calls to other such functions and to the math built-ins (`sqrt`, `abs`, `floor`, `pow`, `log`...).
 
-The build lists the functions it compiled, and everything else runs on the VM as usual.
+The build lists the functions it compiled, and for each typed function it didn't, the line where it stopped (`not native: names (line 12)`). Everything else runs on the VM as usual.
 
 ```lube
 fn fib(n: Number): Number {      // compiled
@@ -79,7 +80,7 @@ fn names(n: Number): str => "{n}"   // not compiled (text): runs on the VM
 
 The machine code computes exactly what the VM would, down to the last bit of every Number. A function given only whole numbers runs on 64-bit integers wherever its numbers stay whole, and switches to doubles where they don't or past 2^53. The machine code never reports an error itself. When one would happen (division by zero, a function that ends without returning its value, recursion too deep), the VM runs that call again and reports it as usual, with the usual traceback. That's safe because these functions change nothing outside themselves.
 
-It needs a C compiler (`cc`, or `CC`; `gcc` on Windows) when building, not when running, and Lube's C sources: the `src` folder next to `lube`, or the folder `LUBE_SRC` names. On the benchmarks in `bench/vs_rust`, `fib` runs 27 times faster than on the VM and the arithmetic `loop` 13 times faster: 1.7 and 2.2 times the time of the same programs in Rust.
+It needs a C compiler (`cc`, or `CC`; `gcc` on Windows) when building, not when running, and Lube's C sources: the `src` folder next to `lube`, or the folder `LUBE_SRC` names. On the benchmarks in `bench/vs_rust`, the native builds run `fib` 27 times faster than the VM, the arithmetic `loop` 13 times faster, and the `sieve` (a list of Bools) 27 times faster, in a twelfth of the memory. That's 1.7, 2.2 and 1.2 times the time of the same programs in Rust.
 
 ## Memory: no garbage collector, no drama
 

@@ -73,6 +73,60 @@ fn evens(n: Number): Number {
 }
 fn by_fraction(n: Number): Number => halves(n / 3) + fib(2.5)
 
+// lists the fn makes itself are native too: arrays that never leave it
+fn sieve(n: Number): Number {
+  var flags = [true] * (n + 1)
+  var count = 0
+  var i = 2
+  while i <= n {
+    if flags[i] {
+      count += 1
+      var j = i * i
+      while j <= n {
+        flags[j] = false
+        j += i
+      }
+    }
+    i += 1
+  }
+  return count
+}
+
+fn lists(n: Number): Number {
+  var xs = [1, 2.5, n]
+  xs.push(4)
+  push(&xs, 5)
+  xs[0] = 10
+  xs[1] += 1
+  xs[-1] *= 2
+  var bs = Bool[true]
+  bs.push(n > 2)
+  var total = 0
+  for i in 0..len(xs) { total += xs[i] }
+  if bs[1] { total += 100 }
+  var ys = Number[]
+  ys.push(7)
+  var zs = 3 * [0.5]
+  var bb = [false] * 2
+  bb[1] = true
+  xs = [1, 2]
+  xs = [xs[1], 3]
+  return total + ys[0] + zs[2] + xs[1] + len(bs) + xs[1.0] + len(bb)
+}
+fn bad_index(n: Number): Number {
+  let xs = [1, 2, 3]
+  return xs[n]
+}
+fn bad_repeat(n: Number): Number {
+  var xs = [0] * n
+  return len(xs)
+}
+fn many(n: Number): Number {
+  var xs = Number[]
+  for i in 0..n { xs.push(i) }
+  return len(xs)
+}
+
 // these give up, and the VM runs the call: its errors, its limits
 fn zero_div(n: Number): Number => n / (n - n)
 fn zero_mod(n: Number): Number => n % 0
@@ -126,6 +180,60 @@ fn statement(n: Number): Number {
   return n
 }
 fn negate_bool(b: Bool): Number => -b
+fn makes_closure(n: Number): Number {
+  let f = fn(x) => x
+  return f(n)
+}
+fn passes(xs) => xs
+fn list_leaves(n: Number): Number {
+  let xs = [n]
+  return len(passes(xs))
+}
+fn empty_list(n: Number): Number {
+  var xs = []
+  return n
+}
+fn mixed_list(n: Number): Number {
+  var xs = [1, true]
+  return n
+}
+fn bool_add(n: Number): Number {
+  var bs = [true]
+  bs[0] = false
+  return n
+}
+fn list_retyped(n: Number): Number {  // a var keeps its kind of list: [1] is not a Number[]
+  var xs = [1]
+  xs = Number[2]
+  return n
+}
+fn index_bool(n: Number): Number {
+  let xs = [1]
+  return xs[true]
+}
+fn push_bool(n: Number): Number {
+  var xs = [1]
+  xs.push(true)
+  return len(xs)
+}
+fn text_list(n: Number): Number {
+  var xs = str[]
+  return n
+}
+fn bool_list_add(n: Number): Number {
+  var bs = [true]
+  bs[0] += 1
+  return n
+}
+fn repeat_bool(n: Number): Number {
+  var xs = [1] * true
+  return n
+}
+fn index_number(n: Number): Number => n[0]
+fn push_value(n: Number): Number {
+  var xs = [1]
+  return push(&xs, 2)
+}
 fn contains(n: Number): Bool => n in 5
 
 print(fib(20), sum_mod(1000), mixed(2), mixed(2.5), ops(7, 3), ops(7.5, 2), ops(-7, 3))
@@ -134,11 +242,25 @@ nothing(9)
 print(maths(10), halves(7), neg(0), neg(3), calls(10), evens(10), by_fraction(9))
 print(big(300000), big(3000000), neg_zero(-7), neg_zero(-7) == 0, neg_zero(15), deep(30000))
 print([5, 6, 7].map(fib), uses_list(3), untyped(1), text(4), returns_any(5), calls_untyped(2))
+print(sieve(100), lists(3), lists(1), many(30))
+try { print(bad_index(1), bad_index(-3), bad_index(5)) } catch e { print(e) }
+try { print(bad_index(1.5)) } catch e { print(e) }
+try { print(bad_repeat(2), bad_repeat(-1)) } catch e { print(e) }
+try { print(bad_repeat(1.5)) } catch e { print(e) }
+print(list_leaves(1), empty_list(2), mixed_list(3), bool_add(4), push_bool(6), text_list(7))
+try { print(list_retyped(5)) } catch e { print(e) }
+try { print(index_bool(1)) } catch e { print(e) }
+try { print(bool_list_add(1)) } catch e { print(e) }
+try { print(repeat_bool(1)) } catch e { print(e) }
+try { print(index_number(1)) } catch e { print(e) }
+try { print(push_value(1)) } catch e { print(e) }
 print(sets_global(7), counter, has_list(2), inner_fn(3), num_cond(0), while_num(4), for_call(1), with_try(2), statement(5))
 try { print(negate_bool(true)) } catch e { print(e) }
+print(makes_closure(3))
 try { print(contains(1)) } catch e { print(e) }
 try { print(zero_div(3)) } catch e { print(e) }
 try { print(zero_mod(3)) } catch e { print(e) }
 try { print(no_return(5)) } catch e { print(e) }
 try { print(fib("x")) } catch e { print(e) }
 try { print(deep(200000)) } catch e { print(e) }
+print(many(300))  // (past LUBE_MAX_ITEMS=200: the VM says so, script or built)

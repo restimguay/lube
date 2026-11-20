@@ -440,12 +440,58 @@ static int sort_before(Interp *I, Value cmp, Value b, Value a) {
     return before;
 }
 
+/* sort() of plain Numbers: the same merge sort and the same comparisons
+ * (b < a, and nan cannot be ordered) on the doubles themselves. Fills out;
+ * 0, or -1 after an error. */
+static int sort_numbers(Interp *I, ObjList *src, ObjList *out) {
+    size_t n = src->count;
+    double *a = xmalloc(sizeof(double) * (n ? n : 1)), *tmp = xmalloc(sizeof(double) * (n ? n : 1));
+    for (size_t i = 0; i < n; i++) a[i] = src->items[i].as.number;
+    int failed = 0;
+    for (size_t width = 1; width < n && !failed; width *= 2) {
+        for (size_t lo = 0; lo < n && !failed; lo += 2 * width) {
+            size_t mid = lo + width < n ? lo + width : n;
+            size_t hi = lo + 2 * width < n ? lo + 2 * width : n;
+            size_t i = lo, j = mid, k = lo;
+            while (i < mid && j < hi) {
+                if (a[j] != a[j] || a[i] != a[i]) {
+                    lube_error(I, "sort() cannot order nan");
+                    failed = 1;
+                    break;
+                }
+                tmp[k++] = a[j] < a[i] ? a[j++] : a[i++];
+            }
+            while (i < mid) tmp[k++] = a[i++];
+            while (j < hi) tmp[k++] = a[j++];
+        }
+        double *t = a;
+        a = tmp;
+        tmp = t;
+    }
+    if (!failed) {
+        list_reserve(out, n);
+        for (size_t i = 0; i < n; i++) out->items[out->count++] = NUM_VAL(a[i]);
+    }
+    free(a);
+    free(tmp);
+    return failed ? -1 : 0;
+}
+
 /* Stable bottom-up merge sort into a new list. */
 NATIVE(n_sort) {
     Value cmp = argc > 1 ? argv[1] : NIL_VAL;
     if (!IS_NIL(cmp)) NEED_FN(1);
     LIST_ARG(src, 0);
-    size_t n = src->count;
+    size_t n = src->count, numbers = IS_NIL(cmp);
+    for (size_t i = 0; i < n && numbers; i++) numbers = IS_NUM(src->items[i]);
+    if (numbers) {  /* the common case, without a comparison call for each pair */
+        ObjList *out = new_list();
+        out->elem = src->elem;
+        Value result = sort_numbers(I, src, out) < 0 ? ERR_VAL : OBJ_VAL(out);
+        if (IS_ERR(result)) release(OBJ_VAL(out));
+        release(OBJ_VAL(src));
+        return result;
+    }
     Value *a = xmalloc(sizeof(Value) * (n ? n : 1));
     Value *tmp = xmalloc(sizeof(Value) * (n ? n : 1));
     for (size_t i = 0; i < n; i++) a[i] = src->items[i];  /* borrowed from src */
