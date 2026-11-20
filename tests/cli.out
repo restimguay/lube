@@ -17,10 +17,11 @@ usage:
                         run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build [--native] FILE [-o OUT]
+  lube --build [--native [--fast]] FILE [-o OUT]
                         build FILE and its imports into a standalone executable; --native also
                         compiles its fns that compute only with Numbers and Bools to machine
-                        code (needs a C compiler, and Lube's sources: LUBE_SRC)
+                        code (needs a C compiler, and Lube's sources: LUBE_SRC); --fast lets
+                        that code use 64-bit integers that wrap around and reorder sums
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 0]
@@ -37,10 +38,11 @@ usage:
                         run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build [--native] FILE [-o OUT]
+  lube --build [--native [--fast]] FILE [-o OUT]
                         build FILE and its imports into a standalone executable; --native also
                         compiles its fns that compute only with Numbers and Bools to machine
-                        code (needs a C compiler, and Lube's sources: LUBE_SRC)
+                        code (needs a C compiler, and Lube's sources: LUBE_SRC); --fast lets
+                        that code use 64-bit integers that wrap around and reorder sums
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 0]
@@ -59,10 +61,11 @@ usage:
                         run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build [--native] FILE [-o OUT]
+  lube --build [--native [--fast]] FILE [-o OUT]
                         build FILE and its imports into a standalone executable; --native also
                         compiles its fns that compute only with Numbers and Bools to machine
-                        code (needs a C compiler, and Lube's sources: LUBE_SRC)
+                        code (needs a C compiler, and Lube's sources: LUBE_SRC); --fast lets
+                        that code use 64-bit integers that wrap around and reorder sums
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 64]
@@ -79,10 +82,11 @@ usage:
                         run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build [--native] FILE [-o OUT]
+  lube --build [--native [--fast]] FILE [-o OUT]
                         build FILE and its imports into a standalone executable; --native also
                         compiles its fns that compute only with Numbers and Bools to machine
-                        code (needs a C compiler, and Lube's sources: LUBE_SRC)
+                        code (needs a C compiler, and Lube's sources: LUBE_SRC); --fast lets
+                        that code use 64-bit integers that wrap around and reorder sums
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 64]
@@ -131,10 +135,11 @@ usage:
                         run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build [--native] FILE [-o OUT]
+  lube --build [--native [--fast]] FILE [-o OUT]
                         build FILE and its imports into a standalone executable; --native also
                         compiles its fns that compute only with Numbers and Bools to machine
-                        code (needs a C compiler, and Lube's sources: LUBE_SRC)
+                        code (needs a C compiler, and Lube's sources: LUBE_SRC); --fast lets
+                        that code use 64-bit integers that wrap around and reorder sums
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 64]
@@ -179,10 +184,11 @@ usage:
                         run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build [--native] FILE [-o OUT]
+  lube --build [--native [--fast]] FILE [-o OUT]
                         build FILE and its imports into a standalone executable; --native also
                         compiles its fns that compute only with Numbers and Bools to machine
-                        code (needs a C compiler, and Lube's sources: LUBE_SRC)
+                        code (needs a C compiler, and Lube's sources: LUBE_SRC); --fast lets
+                        that code use 64-bit integers that wrap around and reorder sums
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 64]
@@ -397,6 +403,13 @@ parameter 'n' of fib() is a Number, so it cannot take a str
 stack overflow: too much recursion
 lube: out of memory
 [exit 70]
+--- native: --fast (wrapping whole numbers), built
+native: cube, total, spin, mods, half, bad
+built TMP/fast_app: 1 file, N bytes
+1000000000 295 -1 -2 3.5
+8.553255926290448e+18 -4.588811930167108e+17
+modulo by zero
+[exit 0]
 --- native: top-level loops, as a script
 570 true 7.9792266297612e+16
 51
@@ -792,10 +805,11 @@ usage:
                         run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build [--native] FILE [-o OUT]
+  lube --build [--native [--fast]] FILE [-o OUT]
                         build FILE and its imports into a standalone executable; --native also
                         compiles its fns that compute only with Numbers and Bools to machine
-                        code (needs a C compiler, and Lube's sources: LUBE_SRC)
+                        code (needs a C compiler, and Lube's sources: LUBE_SRC); --fast lets
+                        that code use 64-bit integers that wrap around and reorder sums
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 64]
@@ -854,10 +868,11 @@ usage:
                         run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build [--native] FILE [-o OUT]
+  lube --build [--native [--fast]] FILE [-o OUT]
                         build FILE and its imports into a standalone executable; --native also
                         compiles its fns that compute only with Numbers and Bools to machine
-                        code (needs a C compiler, and Lube's sources: LUBE_SRC)
+                        code (needs a C compiler, and Lube's sources: LUBE_SRC); --fast lets
+                        that code use 64-bit integers that wrap around and reorder sums
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 64]

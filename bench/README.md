@@ -16,6 +16,7 @@ python3 bench/vs_rust/run.py              # every pair: CPU time, peak memory, L
 python3 bench/vs_rust/run.py fib nbody    # some of them
 python3 bench/vs_rust/run.py --base OLD   # this lube against another build of it
 python3 bench/vs_rust/run.py --native     # each program built with lube --build --native
+python3 bench/vs_rust/run.py --native --fast  # ... with --native --fast (wrapping integers, reordered sums)
 ```
 
 Rust is built with `rustc -C opt-level=3`. `--base` runs the two lubes

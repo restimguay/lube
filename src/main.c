@@ -25,10 +25,11 @@ static void usage(FILE *out) {
             "                        run FILE in the debugger (h at its prompt lists the commands)\n"
             "  lube --hot FILE [ARGS...]\n"
             "                        run FILE, applying changes to its files while it runs\n"
-            "  lube --build [--native] FILE [-o OUT]\n"
+            "  lube --build [--native [--fast]] FILE [-o OUT]\n"
             "                        build FILE and its imports into a standalone executable; --native also\n"
             "                        compiles its fns that compute only with Numbers and Bools to machine\n"
-            "                        code (needs a C compiler, and Lube's sources: LUBE_SRC)\n"
+            "                        code (needs a C compiler, and Lube's sources: LUBE_SRC); --fast lets\n"
+            "                        that code use 64-bit integers that wrap around and reorder sums\n"
             "  lube -v, --version    print the version\n"
             "  lube -h, --help       show this help\n",
             LUBE_VERSION);
@@ -194,8 +195,9 @@ int main(int argc, char **argv) {
             status = lube_run_file(I, argv[2]);
         }
     } else if (!strcmp(argv[1], "--build")) {
-        /* lube --build [--native] app.lube [-o app]: the output is named after the file by default */
+        /* lube --build [--native [--fast]] app.lube [-o app]: the output is named after the file by default */
         int native = argc > 2 && !strcmp(argv[2], "--native");
+        if (native && argc > 3 && !strcmp(argv[3], "--fast")) native = 2;
         char **a = argv + native;  /* a[2]: the file, a[4]: the output */
         if (argc - native != 3 && !(argc - native == 5 && !strcmp(a[3], "-o"))) {
             usage(stderr);

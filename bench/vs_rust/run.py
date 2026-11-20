@@ -89,6 +89,8 @@ def main():
     ap.add_argument("--lube", default=os.path.join(ROOT, "lube"), help="the lube to test")
     ap.add_argument("--base", help="another lube to compare with (runs alternate, so both see the same load)")
     ap.add_argument("--native", action="store_true", help="build each program with lube --build --native first")
+    ap.add_argument("--fast", action="store_true", help="with --native: lube --build --native --fast (wrapping integers, "
+                    "sums the C compiler may reorder)")
     ap.add_argument("names", nargs="*", help="benchmarks to run (default: all)")
     args = ap.parse_args()
     names = args.names or sorted(f[:-5] for f in os.listdir(HERE) if f.endswith(".lube"))
@@ -106,7 +108,8 @@ def main():
         prog = [args.lube, os.path.join(HERE, name + ".lube")]
         if args.native:  # the program built with its typed fns as machine code
             exe = os.path.join(OUT, name + "_native")
-            subprocess.run([args.lube, "--build", "--native", prog[1], "-o", exe], check=True, stdout=subprocess.DEVNULL)
+            subprocess.run([args.lube, "--build", "--native"] + (["--fast"] if args.fast else []) + [prog[1], "-o", exe],
+                           check=True, stdout=subprocess.DEVNULL)
             prog = [exe]
         lt, lm, lout, lcode = best(prog, args.runs)
         rt, rm, rout, _ = best([bin_], args.runs)

@@ -108,6 +108,8 @@ typedef struct {
     unsigned char *tnn;   /* tnn[k]: temporary t<k> is a whole number that is not negative */
     int captnn;
     int nvt;            /* the values this fn makes: vt0, vt1, ... */
+    int fast;           /* lube --build --native --fast: whole numbers wrap around past 2^63, unchecked (not
+                           2^53), and the C compiler may reorder sums: not always the VM's bits, quicker */
     int *live;
     int *acc;           /* acc[slot]: an accumulator of the loop with flag ovf<acc - 1> (see loop_accs), else 0 */
     /* shapes: the fields a record parameter's uses need, found as it is translated. A record
@@ -394,8 +396,15 @@ static int gen_binop(Gen *g, TokenType op, int ta, const char *a, int tb, const 
     } else if (ta == NT_INT && tb == NT_INT && c >= 0) {
         sb_printf(g->out, "int t%d = %s %s %s;\n", t, a, cmp[c], b);
     } else if (ta == NT_INT && tb == NT_INT && (op == T_PLUS || op == T_MINUS)) {  /* exact while within 2^53 */
-        sb_printf(g->out, "int64_t t%d = %s %c %s;\nif (LUBE_OUT(t%d)) %s\n", t, a, op == T_PLUS ? '+' : '-', b, t, bail(g));
+        if (g->fast) sb_printf(g->out, "int64_t t%d = (int64_t)((uint64_t)%s %c (uint64_t)%s);\n", t, a, op == T_PLUS ? '+' : '-', b);
+        else sb_printf(g->out, "int64_t t%d = %s %c %s;\nif (LUBE_OUT(t%d)) %s\n", t, a, op == T_PLUS ? '+' : '-', b, t, bail(g));
         g->tnn[t] = op == T_PLUS && nonneg(g, a) && nonneg(g, b);
+        snprintf(res, 64, "t%d", t);
+        return NT_INT;
+    } else if (ta == NT_INT && tb == NT_INT && op == T_STAR && g->fast) {  /* (wrapping; still never -0) */
+        sb_printf(g->out, "int64_t t%d = (int64_t)((uint64_t)%s * (uint64_t)%s);\n", t, a, b);
+        sb_printf(g->out, "if (t%d == 0 && (%s < 0 || %s < 0)) %s\n", t, a, b, bail(g));
+        g->tnn[t] = nonneg(g, a) && nonneg(g, b);
         snprintf(res, 64, "t%d", t);
         return NT_INT;
     } else if (ta == NT_INT && tb == NT_INT && op == T_STAR) {  /* (as a double: exact when it fits; never -0) */
@@ -412,7 +421,8 @@ static int gen_binop(Gen *g, TokenType op, int ta, const char *a, int tb, const 
         snprintf(res, 64, "t%d", t);
         return NT_INT;
     } else if (ta == NT_INT && tb == NT_INT && op == T_PERCENT) {  /* Lube's %: the sign of b; never -0 */
-        sb_printf(g->out, "if (%s == 0) %s\nint64_t t%d = %s %% %s;\n", b, bail(g), t, a, b);
+        sb_printf(g->out, g->fast ? "if (%s == 0) %s\nint64_t t%d = %s == -1 ? 0 : %s %% %s;\n"  /* (wrapped: INT64_MIN % -1) */
+                                  : "if (%s == 0) %s\nint64_t t%d = %s%s %% %s;\n", b, bail(g), t, g->fast ? b : "", a, b);
         sb_printf(g->out, "if (t%d != 0 && (t%d < 0) != (%s < 0)) t%d += %s;\nelse if (t%d == 0 && %s < 0) %s\n", t, t,
                   b, t, b, t, a, bail(g));
         snprintf(res, 64, "t%d", t);
@@ -1126,6 +1136,7 @@ static int acc_list(NodeList *l, int s) {
  * of bounds): a return in it cannot be using them. Returns k (-1: none). */
 static int loop_accs(Gen *g, Node *n) {
     int k = -1, nslots = g->cur->d->nslots;
+    if (g->fast) return -1;  /* (nothing checked: plain additions) */
     for (int s = 0; s < nslots; s++) {
         if (type_of(g, s) != NT_INT || g->acc[s] || acc_uses(n, s) <= 0) continue;
         if (k < 0) {
@@ -1922,9 +1933,10 @@ static const char *const HEADER[] = {  /* (pieces: C99 promises string literals 
  * executable exe_out: Lube itself, with the functions that can be native
  * compiled to machine code. Returns 0, or an exit status after a message. */
 int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *lens, const char *argv0,
-                      const char *exe_out) {
+                      const char *exe_out, int fast) {
     Gen g;
     memset(&g, 0, sizeof g);
+    g.fast = fast;
     g.declared = new_map();
     g.vars = new_map();
     Arena **arenas = xmalloc(sizeof(Arena *) * (size_t)nfiles);
@@ -2092,6 +2104,25 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
 #elif defined(_WIN32)
         sb_printf(&cmd, " -Wl,--stack,0x%lx", (unsigned long)LUBE_STACK_SIZE);
 #endif
+        StrBuf obj;  /* --fast: the machine code compiled apart, with its own flags (Lube's stay exact) */
+        sb_init(&obj);
+        if (fast) {
+            StrBuf c1;
+            sb_init(&c1);
+            sb_printf(&obj, "%.*s.o", (int)base, exe_out);
+#ifdef _WIN32
+            sb_putc(&c1, '"');
+#endif
+            sb_printf(&c1, "\"%s\" -O3 -std=c99 -ffp-contract=fast -fassociative-math -fno-signed-zeros -fno-trapping-math"
+                           " -fwrapv -I\"%s\" -c \"%s\" -o \"%s\"%s%s", cc && *cc ? cc : dflt, srcdir, gen.data, obj.data,
+                      extra ? " " : "", extra ? extra : "");
+#ifdef _WIN32
+            sb_putc(&c1, '"');
+#endif
+            fflush(stdout);
+            if (system(c1.data) != 0) status = 70;
+            sb_free(&c1);
+        }
         int n;
         char **files = os_files(srcdir, ".c", &n);
         for (int i = 0; i < n; i++) {
@@ -2099,7 +2130,7 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
             free(files[i]);
         }
         free(files);
-        sb_printf(&cmd, " \"%s\" -I\"%s\" -o \"%s\" -lm", gen.data, srcdir, exe_out);
+        sb_printf(&cmd, " \"%s\" -I\"%s\" -o \"%s\" -lm", fast ? obj.data : gen.data, srcdir, exe_out);
 #ifndef _WIN32
         sb_puts(&cmd, " -lpthread");
 #endif
@@ -2108,11 +2139,13 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
         sb_putc(&cmd, '"');
 #endif
         fflush(stdout);
-        if (system(cmd.data) != 0) {
+        if (status || system(cmd.data) != 0) {
             fprintf(stderr, "lube: the C compiler (%s) failed\n", cc && *cc ? cc : dflt);
             status = 70;
         }
         if (!getenv("LUBE_NATIVE_KEEP")) remove(gen.data);  /* (LUBE_NATIVE_KEEP: to read it) */
+        if (fast) remove(obj.data);
+        sb_free(&obj);
     }
     if (status <= 0) printf("native: %s\n", count ? names.data : "none of its functions can be (a plain build)");
     StrBuf not;  /* the typed fns that are not, and where translating them stopped */

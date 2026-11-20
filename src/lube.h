@@ -1027,7 +1027,7 @@ char **os_files(const char *dir, const char *ext, int *n);  /* sorted; free each
 
 /* native.c */
 int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *lens, const char *argv0,
-                      const char *exe_out);
+                      const char *exe_out, int fast);
 void lube_native_attach(Interp *I, FuncDecl *program, Source *src);
 int lube_native_loop(Source *src, int index);
 int lube_global_watched(Interp *I, ObjString *name);

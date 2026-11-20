@@ -186,7 +186,7 @@ int lube_build(Interp *I, const char *argv0, const char *main_path, const char *
     sb_puts(&compiled, ".exe");
 #endif
     if (native && !status) {
-        status = lube_native_build(I, fs.count, fs.keys, fs.texts, fs.lens, argv0, compiled.data);
+        status = lube_native_build(I, fs.count, fs.keys, fs.texts, fs.lens, argv0, compiled.data, native == 2);
         if (status < 0) native = status = 0;  /* nothing could be native: this lube as it is */
     }
     char *self = status ? NULL : native ? xstrndup(compiled.data, compiled.len) : find_self(argv0);
