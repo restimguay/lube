@@ -502,8 +502,11 @@ FN(m_get_params) {
         LubeValue x;
         if (t == T_BOOL) x = lube->boolean(v != 0);
         else if (t == T_AUTO && v == -1) x = lube->new_str(vm, "auto", 4);
-        else if (t == T_CHOICE) x = lube->new_str(vm, choice_name(id, (int)v, c, sizeof c), strlen(c));
-        else if (t == T_FEATURES && v < 0) x = lube->new_str(vm, choice_name(id, v == -2 ? 0 : 1, c, sizeof c), strlen(c));
+        else if (t == T_CHOICE || (t == T_FEATURES && v < 0)) {
+            /* (named first, measured after: in one call's arguments, which runs first is unspecified) */
+            choice_name(id, t == T_CHOICE ? (int)v : v == -2 ? 0 : 1, c, sizeof c);
+            x = lube->new_str(vm, c, strlen(c));
+        }
         else if (t == T_RANGE) {
             x = lube->new_list(vm);
             lube->list_push(x, lube->number_value(v));
