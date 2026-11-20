@@ -307,6 +307,14 @@ static Value *global_ref(Interp *I, const VarRef *r, int *failed) {
     return v;
 }
 
+/* Is there a global r names (through r's cache)? (Not made, when lazy.) */
+static int global_exists(Interp *I, const VarRef *r) {
+    ObjMap *g = I->globals;
+    int at = r->gslot - 1;
+    if (at >= 0 && (size_t)at < g->used && g->entries[at].live && g->entries[at].key.as.obj == (Obj *)r->name) return 1;
+    return map_find(g, OBJ_VAL(r->name)) != NULL;
+}
+
 /* global_origin for r, through r's cache. */
 static int global_origin_ref(Interp *I, const VarRef *r, Origin *origin) {
     if (r->cepoch != I->epoch) {
@@ -1851,7 +1859,7 @@ LUBE_NOINLINE static int prep_method(Interp *I, MethodDesc *md, Value obj, Place
         return push_call(I, callee, SELF_NONE, NIL_VAL, NULL);
     }
     const VarRef *r = &md->fallback;
-    if (r->kind == VAR_GLOBAL && !map_find(I->globals, OBJ_VAL(r->name))) {
+    if (r->kind == VAR_GLOBAL && !global_exists(I, r)) {
         lube_error(I, "%s has no method '%s'", type_name(obj), name->chars);
         release(obj);
         if (have_place) place_free(place);
@@ -2237,14 +2245,14 @@ static Value execute(Interp *I) {
                 goto error;
             }
             break;
-        case OP_INTERP: {
+        case OP_INTERP: {  /* (formatting runs no code of the program: one buffer, kept) */
             int n = ARG_OF(in);
-            StrBuf sb;
-            sb_init(&sb);
-            for (int i = I->sp - n; i < I->sp; i++) append_value(&sb, I->stack[i], 0);
+            StrBuf *sb = &I->interp;
+            sb->len = 0;
+            for (int i = I->sp - n; i < I->sp; i++) append_value(sb, I->stack[i], 0);
             pop_to(I, I->sp - n);
-            PUSH(OBJ_VAL(new_string(sb.data ? sb.data : "", sb.len)));
-            sb_free(&sb);
+            PUSH(OBJ_VAL(new_string(sb->data ? sb->data : "", sb->len)));
+            if (sb->cap > 65536) sb_free(sb);  /* (not a large one) */
             break;
         }
         case OP_LIST:
@@ -2580,6 +2588,14 @@ static Value execute(Interp *I) {
                     push_call(I, retain(md->cache_method), SELF_LEND, NIL_VAL, &place);
                     break;
                 }
+                Value *fn = root && root->type == VAL_OBJ && !IS_MAP(*root) && !IS_PACKAGE(*root) && md->fallback.kind == VAR_GLOBAL
+                                ? global_ref(I, &md->fallback, &failed) : NULL;
+                if (failed) goto error;
+                if (fn && IS_NATIVE(*fn)) {  /* xs.push(v), s.ends_with(t): a built-in, x first (as prep_method does) */
+                    if (AS_NATIVE(*fn)->changes_first) push_call(I, retain(*fn), SELF_LEND, NIL_VAL, &place);
+                    else push_call(I, retain(*fn), SELF_VALUE, retain(*root), NULL);
+                    break;
+                }
             }
             if (have_place) {
                 take_place(I, &code->places[md->recv_place], &place);
@@ -2689,6 +2705,34 @@ static Value execute(Interp *I) {
                     nf->dbg_line = -1;
                     I->frame = nf;
                     SWITCH_FRAME();
+                    break;
+                }
+            }
+            if (!cd->refs && IS_NATIVE(I->stack[pc->callee]) && (pc->mode == SELF_VALUE || pc->mode == SELF_LEND)) {
+                /* x.f(args), f a built-in (s.ends_with(t), xs.push(v)): called here (see invoke) */
+                ObjNative *nf = AS_NATIVE(I->stack[pc->callee]);
+                int ci = pc->callee, argc = 1 + cd->nargs, failed = 0, lend = pc->mode == SELF_LEND;
+                const VarRef *rv = lend ? pc->place.root : NULL;
+                Value *root = !lend ? NULL : pc->place.nkeys || !nf->changes_first || !place_changeable(I, &pc->place) ? NULL
+                            : rv->kind == VAR_LOCAL ? (rv->watch && rv->watch->n ? NULL : &SLOT(rv->index))
+                            : (I->nwatchers || I->nfwatch) && watched_name(I, rv->name) ? NULL : global_ref(I, rv, &failed);
+                if (failed) goto error;
+                if (argc >= nf->min_args && (nf->max_args < 0 || argc <= nf->max_args) && (!lend || (root && root->type != VAL_LENT)) &&
+                    (lend || !nf->changes_first)) {
+                    I->npending--;
+                    if (lend) {  /* x is lent to it (in use meanwhile), and given back */
+                        I->stack[ci + 1] = *root;
+                        *root = rv->kind == VAR_GLOBAL ? LENT_VAL : NIL_VAL;
+                    }
+                    r = nf->fn(I, argc, &I->stack[ci + 1]);
+                    if (lend) {
+                        root = rv->kind == VAR_LOCAL ? &SLOT(rv->index) : global_ref(I, rv, &failed);
+                        *root = I->stack[ci + 1];
+                        I->stack[ci + 1] = NIL_VAL;
+                    }
+                    pop_to(I, ci);
+                    if (IS_ERR(r)) goto error;
+                    PUSH(r);
                     break;
                 }
             }
@@ -3665,6 +3709,7 @@ size_t lube_free(Interp *I) {
         s = next;
     }
     sb_free(&I->trace);
+    sb_free(&I->interp);
     for (int i = 0; i < I->nchunks; i++) free(I->chunks[i]);
     free(I->chunks);
     free(I->pending);

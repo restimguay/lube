@@ -707,6 +707,7 @@ static void isolate_main(void *arg) {
         }
     }
     size_t alive = lube_free(I);
+    lube_pool_drain();  /* (its thread ends: the main one's goes with the process) */
 #ifdef LUBE_CHECK_LEAKS
     if (alive) lube_print(1, "lube: leak check failed in an isolate: %lu objects still alive\n", (unsigned long)alive);
 #endif

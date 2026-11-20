@@ -171,6 +171,7 @@ typedef enum {
 struct Obj {
     size_t rc;              /* number of owners */
     ObjType type;
+    unsigned char pool;     /* memory.c: the free list its memory goes back to (0: malloc's) */
 };
 
 struct ObjString {          /* a str: byte string, NUL terminated */
@@ -307,7 +308,12 @@ static inline ObjString *text_of(Value v) {
 /* memory.c */
 extern LUBE_THREAD_LOCAL size_t lube_live_objects;  /* objects alive in this thread's isolate */
 Obj *alloc_object(size_t size, ObjType type);
+Obj *realloc_object(Obj *o, size_t old_size, size_t size);
 void obj_destroy(Obj *o);
+void lube_pool_drain(void);
+void *lube_block_alloc(size_t size);
+void lube_block_free(void *p, size_t size);
+void *lube_block_realloc(void *p, size_t old, size_t size);
 
 static inline Value retain(Value v) {
     if (v.type == VAL_OBJ) v.as.obj->rc++;
@@ -823,6 +829,7 @@ struct Interp {
     int error_line;
     Source *error_src;
     StrBuf trace;                   /* traceback collected while unwinding */
+    StrBuf interp;                  /* OP_INTERP's text, kept between uses */
     int trace_count;                /* frames the error passed through */
     int trace_shown;                /* distinct lines kept in `trace` */
     int trace_hidden;               /* frames left out after the first lines */
