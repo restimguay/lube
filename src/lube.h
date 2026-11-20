@@ -400,6 +400,19 @@ typedef enum {
  *   VAR_GLOBAL   looked up by name at run time */
 typedef struct OnList OnList;
 
+/* lube --build --native: a function compiled to machine code (see native.c).
+ * fn returns 0 with the result in *out, or 1 to let the VM run the call
+ * itself (an error to report, or calls too deep). Bools are 0 or 1. */
+typedef int (*LubeNativeFn)(const double *args, double *out, int depth_left);
+typedef struct LubeNative {
+    const char *key;            /* the fn's global */
+    const char *sig;            /* its parameters' types, ':', its return type: N (Number), B (Bool), or none */
+    uint64_t src_hash;          /* of the source file it was compiled from (natives fit only that text) */
+    LubeNativeFn fn;
+} LubeNative;
+extern const LubeNative lube_natives[];  /* (nativetab.c, or the native build's own) */
+extern const int lube_nnatives;
+
 typedef struct {
     ObjString *name;
     VarKind kind;
@@ -618,6 +631,7 @@ struct FuncDecl {
     unsigned char plain;         /* (compile.c) no & or var parameter, none with a default, each untyped or a
                                     Number, not a constructor: OP_CALL starts it without enter() */
     unsigned char plain_method;  /* a method whose other parameters are like that: OP_INVOKE's fast path */
+    const LubeNative *native;    /* compiled to machine code (lube --build --native), or NULL */
     Code code;              /* its bytecode (compile.c) */
 };
 
@@ -936,7 +950,7 @@ size_t lube_free(Interp *I);
 Source *lube_add_source(Interp *I, const char *path, char *text, size_t length);
 int lube_check_source(Interp *I, Source *src);
 void lube_module_path(StrBuf *path, const char *importer, const char *rel);
-int lube_build(Interp *I, const char *self, const char *main_path, const char *out_path);
+int lube_build(Interp *I, const char *self, const char *main_path, const char *out_path, int native);
 int lube_run_bundle(Interp *I, const char *argv0, int argc, char **argv);
 ObjList *lube_hot_reload(Interp *I);
 Value lube_find_method(ObjClass *c, ObjString *name);
@@ -966,7 +980,14 @@ void lock_wait(LubeLock *l);        /* releases the lock while waiting for lock_
 void lock_notify(LubeLock *l);      /* wakes every waiter */
 int thread_start(void (*fn)(void *), void *arg, size_t stack_size);
 int lube_cores(void);
-char **os_lube_files(const char *dir, int *n);  /* sorted; free each and the array */
+char **os_files(const char *dir, const char *ext, int *n);  /* sorted; free each and the array */
+#define os_lube_files(dir, n) os_files(dir, ".lube", n)
+
+/* native.c */
+int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *lens, const char *argv0,
+                      const char *exe_out);
+void lube_native_attach(Interp *I, FuncDecl *program, Source *src);
+uint64_t lube_hash_text(const char *text, size_t len);
 #ifdef _WIN32
 char *os_self_path(void);  /* the running program (malloc'd), or NULL */
 #endif

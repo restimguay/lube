@@ -169,14 +169,27 @@ static int add_file(Interp *I, Files *fs, const char *key, const char *real, con
     return status;
 }
 
-int lube_build(Interp *I, const char *argv0, const char *main_path, const char *out_path) {
+/* lube --build: the program, packed after a copy of this lube; native: after
+ * a lube compiled for it, with machine code for the functions that can have
+ * it (native.c). */
+int lube_build(Interp *I, const char *argv0, const char *main_path, const char *out_path, int native) {
     Files fs = {0};
     const char *slash = strrchr(main_path, '/');
     fs.dir = main_path;
     fs.dirlen = slash ? (size_t)(slash - main_path + 1) : 0;
     if (!I->root) I->root = slash ? xstrndup(main_path, (size_t)(slash - main_path)) : xstrndup(".", 1);
     int status = add_file(I, &fs, main_path + fs.dirlen, NULL, NULL, NULL);
-    char *self = status ? NULL : find_self(argv0);
+    StrBuf compiled;  /* native: the lube made for this program */
+    sb_init(&compiled);
+    sb_printf(&compiled, "%s.native-tmp", out_path);
+#ifdef _WIN32
+    sb_puts(&compiled, ".exe");
+#endif
+    if (native && !status) {
+        status = lube_native_build(I, fs.count, fs.keys, fs.texts, fs.lens, argv0, compiled.data);
+        if (status < 0) native = status = 0;  /* nothing could be native: this lube as it is */
+    }
+    char *self = status ? NULL : native ? xstrndup(compiled.data, compiled.len) : find_self(argv0);
     size_t exe_len = 0;
     char *exe = self ? read_file(self, &exe_len) : NULL;
     if (!status && !exe) {
@@ -219,6 +232,8 @@ int lube_build(Interp *I, const char *argv0, const char *main_path, const char *
     free(fs.keys);
     free(fs.texts);
     free(fs.lens);
+    if (native) remove(compiled.data);
+    sb_free(&compiled);
     free(self);
     free(exe);
     return status;

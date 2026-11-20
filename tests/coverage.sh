@@ -33,6 +33,10 @@ if [ "$(uname -s)" = Darwin ]; then FLAGS="-DLUBE_STACK_SIZE=0x3F00000 -Wl,-stac
 # atomic counters: isolates run on several threads at once
 ${CC:-cc} -std=c99 -O0 -g -fprofile-instr-generate -fcoverage-mapping -fprofile-update=atomic $FLAGS -o "$OUT/lube" src/*.c -lm -lpthread
 
+# Programs built with lube --build --native are measured too: they run the
+# part of the interpreter that calls machine code.
+export LUBE_NATIVE_CFLAGS="-O0 -fprofile-instr-generate -fcoverage-mapping -fprofile-update=atomic"
+
 # An absolute path (some tests run lube, and programs built with it, from
 # other folders), and a pool of files every run merges into under a lock (%8m):
 # named by process id alone, a reused id would overwrite an earlier run's counts.

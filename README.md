@@ -53,6 +53,34 @@ A Lube program can be run as a script, or built into a single executable that ru
 
 The executable is a copy of the interpreter with the program appended, so it starts as fast as a script and behaves the same. Building checks every file first, so a program with a syntax error, or an import that can't be found, doesn't build. Imports are packed with the paths the program uses, so the sources aren't needed afterwards. Files the program reads with `read_file` are still read from disk, relative to the current folder. Every command-line argument goes to the program: a built executable has no options of its own.
 
+### Native code: `lube --build --native`
+
+```sh
+./lube --build --native app.lube -o app
+native: fib, collatz, mandel
+built app: 1 file, 339570 bytes
+```
+
+`--native` also compiles the program's functions that compute only with Numbers and Bools to machine code, through the system's C compiler. A function qualifies when its parameters and result are typed `Number` or `Bool`, and its body uses only:
+- arithmetic, comparisons, `and`, `or` and `not`;
+- `if`, `while`, and `for` over a range (`0..n`, `1..=n`);
+- local `var`s and `let`s;
+- calls to other such functions and to the math built-ins (`sqrt`, `abs`, `floor`, `pow`, `log`...).
+
+The build lists the functions it compiled, and everything else runs on the VM as usual.
+
+```lube
+fn fib(n: Number): Number {      // compiled
+  if n < 2 { return n }
+  return fib(n - 1) + fib(n - 2)
+}
+fn names(n: Number): str => "{n}"   // not compiled (text): runs on the VM
+```
+
+The machine code computes exactly what the VM would, down to the last bit of every Number. A function given only whole numbers runs on 64-bit integers wherever its numbers stay whole, and switches to doubles where they don't or past 2^53. The machine code never reports an error itself. When one would happen (division by zero, a function that ends without returning its value, recursion too deep), the VM runs that call again and reports it as usual, with the usual traceback. That's safe because these functions change nothing outside themselves.
+
+It needs a C compiler (`cc`, or `CC`; `gcc` on Windows) when building, not when running, and Lube's C sources: the `src` folder next to `lube`, or the folder `LUBE_SRC` names. On the benchmarks in `bench/vs_rust`, `fib` runs 27 times faster than on the VM and the arithmetic `loop` 13 times faster: 1.7 and 2.2 times the time of the same programs in Rust.
+
 ## Memory: no garbage collector, no drama
 
 Lube gives every value **value semantics**, the way numbers already behave in every language:

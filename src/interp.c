@@ -1435,6 +1435,28 @@ static Frame *new_frame(Interp *I) {
 static Value execute(Interp *I);
 static int check_items(Interp *I, OnDesc *od);
 
+/* Calls d's machine code (lube --build --native) with the argc arguments at
+ * stack[base...]: 1 with the result in *out, or 0 when the VM must run the
+ * call itself (arguments of other types, which it reports; an error the
+ * machine code leaves to it; calls too deep; the debugger). */
+#define NATIVE_DEPTH 20000  /* (C stack enough for this many) */
+static int call_native(Interp *I, FuncDecl *d, int base, int argc, Value *out) {
+    const char *sig = d->native->sig;
+    double args[8], result;
+    if (I->dbg || argc != d->nparams) return 0;
+    for (int i = 0; i < argc; i++) {
+        Value v = I->stack[base + i];
+        if (sig[i] == 'N' && IS_NUM(v)) args[i] = v.as.number;
+        else if (sig[i] == 'B' && IS_BOOL(v)) args[i] = v.as.boolean;
+        else return 0;
+    }
+    int left = LUBE_MAX_FRAMES - I->depth < NATIVE_DEPTH ? LUBE_MAX_FRAMES - I->depth : NATIVE_DEPTH;
+    if (d->native->fn(args, &result, left)) return 0;
+    char ret = sig[argc + 1];
+    *out = ret == 'N' ? NUM_VAL(result) : ret == 'B' ? BOOL_VAL(result != 0) : NIL_VAL;
+    return 1;
+}
+
 /* on x { ... } in a function: registers the block for the running frame and
  * puts it in its hidden slot (cleared, as every slot, when the code around
  * it ends). Blocks of this frame already out of scope are dropped first. */
@@ -2468,8 +2490,14 @@ static Value execute(Interp *I) {
             if (IS_FUNCTION(I->stack[ci])) {  /* a plain function: started here (see FuncDecl.plain) */
                 ObjFunction *fn = AS_FUNCTION(I->stack[ci]);
                 FuncDecl *d = fn->decl;
-                int base = ci + 1, ok = d->plain && argc == d->nparams && I->depth < LUBE_MAX_FRAMES &&
-                                        base + d->nslots + d->code.maxstack <= LUBE_STACK_MAX;
+                int base = ci + 1;
+                if (d->native && call_native(I, d, base, argc, &r)) {  /* its machine code did it */
+                    pop_to(I, ci);
+                    PUSH(r);
+                    break;
+                }
+                int ok = d->plain && argc == d->nparams && I->depth < LUBE_MAX_FRAMES &&
+                         base + d->nslots + d->code.maxstack <= LUBE_STACK_MAX;
                 for (int i = 0; ok && d->types && i < argc; i++)
                     ok = !d->types[i].set || IS_NUM(I->stack[base + i]);
                 if (ok) {
@@ -2950,6 +2978,9 @@ static Value execute(Interp *I) {
  * stack[base...], which the caller owns (and pops afterwards). (Callbacks
  * must be functions: a class is never called this way.) */
 static Value call_value(Interp *I, Value callee, int argc, int base) {
+    Value r;
+    if (IS_FUNCTION(callee) && AS_FUNCTION(callee)->decl->native && call_native(I, AS_FUNCTION(callee)->decl, base, argc, &r))
+        return r;
     if (IS_FUNCTION(callee)) {
         Frame *f = enter(I, AS_FUNCTION(callee), base, argc);
         if (!f) return ERR_VAL;
@@ -3006,7 +3037,9 @@ static FuncDecl *compile_source(Interp *I, Source *src, const char *name, int mo
         return NULL;
     }
     keep_arena(I, arena);  /* functions defined here may outlive this run */
-    return compile_program(I, program, src, arena, name, mode);
+    FuncDecl *d = compile_program(I, program, src, arena, name, mode);
+    lube_native_attach(I, d, src);  /* (lube --build --native: machine code for some of its fns) */
+    return d;
 }
 
 /* Drops "." segments and folds "dir/.." in a path, so that one file always

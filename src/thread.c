@@ -16,10 +16,10 @@
 
 static int by_name(const void *a, const void *b) { return strcmp(*(char *const *)a, *(char *const *)b); }
 
-/* Adds `name` to a list of file names if it ends in .lube. */
-static void add_lube(char ***names, int *n, int *cap, const char *name) {
-    size_t len = strlen(name);
-    if (len <= 5 || strcmp(name + len - 5, ".lube")) return;
+/* Adds `name` to a list of file names if it ends in `ext`. */
+static void add_named(char ***names, int *n, int *cap, const char *name, const char *ext) {
+    size_t len = strlen(name), elen = strlen(ext);
+    if (len <= elen || strcmp(name + len - elen, ext)) return;
     if (*n == *cap) {
         *cap = *cap ? *cap * 2 : 8;
         *names = xrealloc(*names, sizeof(char *) * (size_t)*cap);
@@ -74,8 +74,9 @@ int thread_start(void (*fn)(void *), void *arg, size_t stack_size) {
     return 1;
 }
 
-/* The .lube files in a folder, sorted (NULL with *n = -1 if it is not one). */
-char **os_lube_files(const char *dir, int *n) {
+/* The files in a folder whose names end in ext, sorted (NULL with *n = -1
+ * if it is not a folder). */
+char **os_files(const char *dir, const char *ext, int *n) {
     char pattern[4096];
     WIN32_FIND_DATAA fd;
     snprintf(pattern, sizeof pattern, "%s\\*", dir);
@@ -86,7 +87,7 @@ char **os_lube_files(const char *dir, int *n) {
     int cap = 0;
     *n = 0;
     do {
-        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) add_lube(&names, n, &cap, fd.cFileName);
+        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) add_named(&names, n, &cap, fd.cFileName, ext);
     } while (FindNextFileA(h, &fd));
     FindClose(h);
     if (*n) qsort(names, (size_t)*n, sizeof(char *), by_name);
@@ -111,8 +112,9 @@ int lube_cores(void) {
 #include <pthread.h>
 #include <unistd.h>
 
-/* The .lube files in a folder, sorted (NULL with *n = -1 if it is not one). */
-char **os_lube_files(const char *dir, int *n) {
+/* The files in a folder whose names end in ext, sorted (NULL with *n = -1
+ * if it is not a folder). */
+char **os_files(const char *dir, const char *ext, int *n) {
     DIR *d = opendir(dir);
     *n = -1;
     if (!d) return NULL;
@@ -120,7 +122,7 @@ char **os_lube_files(const char *dir, int *n) {
     int cap = 0;
     struct dirent *e;
     *n = 0;
-    while ((e = readdir(d))) add_lube(&names, n, &cap, e->d_name);
+    while ((e = readdir(d))) add_named(&names, n, &cap, e->d_name, ext);
     closedir(d);
     if (*n) qsort(names, (size_t)*n, sizeof(char *), by_name);
     return names;

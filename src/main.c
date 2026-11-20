@@ -25,8 +25,10 @@ static void usage(FILE *out) {
             "                        run FILE in the debugger (h at its prompt lists the commands)\n"
             "  lube --hot FILE [ARGS...]\n"
             "                        run FILE, applying changes to its files while it runs\n"
-            "  lube --build FILE [-o OUT]\n"
-            "                        build FILE and its imports into a standalone executable\n"
+            "  lube --build [--native] FILE [-o OUT]\n"
+            "                        build FILE and its imports into a standalone executable; --native also\n"
+            "                        compiles its fns that compute only with Numbers and Bools to machine\n"
+            "                        code (needs a C compiler, and Lube's sources: LUBE_SRC)\n"
             "  lube -v, --version    print the version\n"
             "  lube -h, --help       show this help\n",
             LUBE_VERSION);
@@ -192,30 +194,32 @@ int main(int argc, char **argv) {
             status = lube_run_file(I, argv[2]);
         }
     } else if (!strcmp(argv[1], "--build")) {
-        /* lube --build app.lube [-o app]: the output is named after the file by default */
-        if (argc != 3 && !(argc == 5 && !strcmp(argv[3], "-o"))) {
+        /* lube --build [--native] app.lube [-o app]: the output is named after the file by default */
+        int native = argc > 2 && !strcmp(argv[2], "--native");
+        char **a = argv + native;  /* a[2]: the file, a[4]: the output */
+        if (argc - native != 3 && !(argc - native == 5 && !strcmp(a[3], "-o"))) {
             usage(stderr);
             status = 64;
         } else {
             StrBuf out;
             sb_init(&out);
-            lube_slashes(argv[2]);
-            if (argc == 5) lube_slashes(argv[4]);
-            if (argc == 5) {
-                sb_puts(&out, argv[4]);
+            lube_slashes(a[2]);
+            if (argc - native == 5) lube_slashes(a[4]);
+            if (argc - native == 5) {
+                sb_puts(&out, a[4]);
             } else {
-                const char *name = strrchr(argv[2], '/') ? strrchr(argv[2], '/') + 1 : argv[2];
+                const char *name = strrchr(a[2], '/') ? strrchr(a[2], '/') + 1 : a[2];
                 const char *dot = strrchr(name, '.');
                 sb_putn(&out, name, dot && dot != name ? (size_t)(dot - name) : strlen(name));
 #ifdef _WIN32
                 sb_puts(&out, ".exe");
 #endif
             }
-            if (!strcmp(out.data, argv[2])) {
-                fprintf(stderr, "lube: the executable would replace '%s': name it with -o\n", argv[2]);
+            if (!strcmp(out.data, a[2])) {
+                fprintf(stderr, "lube: the executable would replace '%s': name it with -o\n", a[2]);
                 status = 64;
             } else {
-                status = lube_build(I, argv[0], argv[2], out.data);
+                status = lube_build(I, argv[0], a[2], out.data, native);
             }
             sb_free(&out);
         }

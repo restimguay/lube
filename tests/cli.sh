@@ -112,6 +112,18 @@ run "build a missing file" "$LUBE" --build "$TMP/none.lube" -o "$TMP/x"
 run "build to a folder that does not exist" "$LUBE" --build "$TMP/tool.lube" -o "$TMP/no/such/dir/app"
 run "build with bad options" "$LUBE" --build "$TMP/tool.lube" -x out
 
+# ---- native code: lube --build --native (machine code for the fns on Numbers and Bools) ----
+# The same output as a script and built; then the ways it gives up.
+SRC="$PWD/src"
+run "native: the program as a script" "$LUBE" tests/cli/native.lube
+run "native: the program built" sh -c 'LUBE_SRC="$3" "$1" --build --native tests/cli/native.lube -o "$2/native_app" && "$2/native_app"' sh "$ABS" "$TMP" "$SRC"
+run "native: nothing can be" env LUBE_SRC="$SRC" "$LUBE" --build --native tests/cli/args.lube -o "$TMP/args_native"
+run "native: without Lube's sources" env LUBE_SRC=/no/such/dir "$LUBE" --build --native tests/cli/native.lube -o "$TMP/x"
+mkdir -p "$TMP/bin" && cp "$ABS" "$TMP/bin/lube"
+run "native: no sources next to lube" env -u LUBE_SRC "$TMP/bin/lube" --build --native tests/cli/native.lube -o "$TMP/x"
+run "native: the C compiler fails" env LUBE_SRC="$SRC" CC=false "$LUBE" --build --native tests/cli/native.lube -o "$TMP/x"
+run "native: an output folder that does not exist" env LUBE_SRC="$SRC" "$LUBE" --build --native tests/cli/native.lube -o "$TMP/no/such/dir/app"
+
 # ---- isolates (several write at once, so their lines are sorted) ----
 run "isolates that fail with nobody joining, and one left waiting at the end" sh -c '"$1" -e "$2" 2>&1 | sort' sh "$ABS" 'fn boom(n) => 1 / n
 fn waits(c: Channel) { c.receive() }

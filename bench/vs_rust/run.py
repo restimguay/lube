@@ -88,6 +88,7 @@ def main():
     ap.add_argument("--runs", type=int, default=3, help="runs of each program (the best counts)")
     ap.add_argument("--lube", default=os.path.join(ROOT, "lube"), help="the lube to test")
     ap.add_argument("--base", help="another lube to compare with (runs alternate, so both see the same load)")
+    ap.add_argument("--native", action="store_true", help="build each program with lube --build --native first")
     ap.add_argument("names", nargs="*", help="benchmarks to run (default: all)")
     args = ap.parse_args()
     names = args.names or sorted(f[:-5] for f in os.listdir(HERE) if f.endswith(".lube"))
@@ -102,7 +103,12 @@ def main():
         rs, bin_ = os.path.join(HERE, name + ".rs"), os.path.join(OUT, name)
         if not os.path.exists(bin_) or os.path.getmtime(bin_) < os.path.getmtime(rs):
             subprocess.run(["rustc", "-C", "opt-level=3", "-o", bin_, rs], check=True)
-        lt, lm, lout, lcode = best([args.lube, os.path.join(HERE, name + ".lube")], args.runs)
+        prog = [args.lube, os.path.join(HERE, name + ".lube")]
+        if args.native:  # the program built with its typed fns as machine code
+            exe = os.path.join(OUT, name + "_native")
+            subprocess.run([args.lube, "--build", "--native", prog[1], "-o", exe], check=True, stdout=subprocess.DEVNULL)
+            prog = [exe]
+        lt, lm, lout, lcode = best(prog, args.runs)
         rt, rm, rout, _ = best([bin_], args.runs)
         same = "same" if lout == rout and lcode == 0 else "DIFFERENT"
         ratio = lt / rt

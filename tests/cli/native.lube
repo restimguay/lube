@@ -1,0 +1,144 @@
+// lube --build --native compiles the functions here that compute only with
+// Numbers and Bools to machine code; run as a script and built, the output
+// is the same.
+fn fib(n: Number): Number {
+  if n < 2 { return n }
+  return fib(n - 1) + fib(n - 2)
+}
+
+fn sum_mod(n: Number): Number {  // whole numbers in a while loop
+  var total = 0
+  var i = 0
+  while i < n {
+    total += i % 7
+    i += 1
+  }
+  return total
+}
+
+fn mixed(x: Number): Number {  // whole and fractional Numbers together
+  var t = 0
+  for i in 0..5 { t += i * x }
+  for i, v in 1..=3 { t -= i + v / 2 }
+  for f in 0.5..3 { t += f }
+  return t
+}
+
+fn ops(a: Number, b: Number): Number => a * b - a / b + a ** 2 - a % b + -a
+
+fn compare(a: Number, b: Number): Bool => a < b and b <= 10 or a == b or not (a > 1) or a >= b and a != 2
+
+fn flags(start: Bool, n: Number): Number {
+  var count = 0
+  var keep = start
+  for i in 0..n {
+    if keep == true { count += 1 } else { count -= 1 }
+    keep = not keep
+    if count > 100 { break }
+    if i < 0 { continue }
+  }
+  return count
+}
+
+fn maths(x: Number): Number {
+  let a = sqrt(x) + sin(x) + cos(x) + tan(x) + exp(x / 10) + floor(x / 3) + ceil(x / 3)
+  let b = abs(-x) + log(x) + round(x / 4) + pow(x, 0.5) + atan2(x, 2) + log(x, 2)
+  return a + b + floor(7) + abs(-7) + round(3) + ceil(4) + abs(x)
+}
+
+fn nothing(n: Number) {  // returns nothing
+  var k = n
+  k *= 2
+  k /= 2
+  k -= 1
+  k %= 5
+  if k > 100 { return }
+}
+
+fn halves(n: Number): Number {  // a whole number's slot that also holds a fraction
+  var h = n
+  h = h / 2
+  h += 1
+  return h
+}
+
+fn neg(n: Number): Number => -n + -(n * 0)
+fn calls(n: Number): Number => fib(n) + halves(n) + sum_mod(n)
+fn is_even(n: Number): Bool => n % 2 == 0
+fn evens(n: Number): Number {
+  var count = 0
+  for i in 0..n { if is_even(i) { count += 1 } }
+  nothing(n)
+  return count
+}
+fn by_fraction(n: Number): Number => halves(n / 3) + fib(2.5)
+
+// these give up, and the VM runs the call: its errors, its limits
+fn zero_div(n: Number): Number => n / (n - n)
+fn zero_mod(n: Number): Number => n % 0
+fn deep(n: Number): Number {  // deeper than machine code goes
+  if n == 0 { return 0 }
+  return deep(n - 1) + 1
+}
+fn no_return(n: Number): Number {
+  if n > 100 { return n }
+}
+fn big(n: Number): Number => n * n * n + n  // past 2^53: the double version
+fn neg_zero(n: Number): Number => n % 7  // -7 % 7 is -0 as a double
+
+// these are not native: lists, text, untyped, closures, objects...
+fn uses_list(n: Number): Number => len([n])
+fn untyped(n) => n + 1
+fn text(n: Number): str => "{n}"
+fn returns_any(n: Number) { return n }
+fn calls_untyped(n: Number): Number => untyped(n)
+var counter = 0
+fn sets_global(n: Number): Number {
+  counter = n
+  return n
+}
+fn has_list(n: Number): Number {
+  let xs = [n]
+  return n
+}
+fn inner_fn(n: Number): Number {
+  fn twice(x) => x * 2
+  return twice(n)
+}
+fn num_cond(n: Number): Number {
+  if n { return 1 }
+  return 0
+}
+fn while_num(n: Number): Number {
+  while n { break }
+  return n
+}
+fn for_call(n: Number): Number {
+  var t = 0
+  for i in range(0, 3) { t += i }
+  return t + n
+}
+fn with_try(n: Number): Number {
+  try { return n } catch e { return 0 }
+}
+fn statement(n: Number): Number {
+  n + 1
+  return n
+}
+fn negate_bool(b: Bool): Number => -b
+fn contains(n: Number): Bool => n in 5
+
+print(fib(20), sum_mod(1000), mixed(2), mixed(2.5), ops(7, 3), ops(7.5, 2), ops(-7, 3))
+print(compare(1, 2), compare(5, 5), compare(3, 2), compare(0, 20), flags(true, 7), flags(false, 300))
+nothing(9)
+print(maths(10), halves(7), neg(0), neg(3), calls(10), evens(10), by_fraction(9))
+print(big(300000), big(3000000), neg_zero(-7), neg_zero(-7) == 0, neg_zero(15), deep(30000))
+print([5, 6, 7].map(fib), uses_list(3), untyped(1), text(4), returns_any(5), calls_untyped(2))
+print(sets_global(7), counter, has_list(2), inner_fn(3), num_cond(0), while_num(4), for_call(1), with_try(2), statement(5))
+try { print(negate_bool(true)) } catch e { print(e) }
+try { print(contains(1)) } catch e { print(e) }
+try { print(zero_div(3)) } catch e { print(e) }
+try { print(zero_mod(3)) } catch e { print(e) }
+try { print(no_return(5)) } catch e { print(e) }
+try { print(fib("x")) } catch e { print(e) }
+try { print(deep(200000)) } catch e { print(e) }

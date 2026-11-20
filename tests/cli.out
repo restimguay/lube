@@ -17,8 +17,10 @@ usage:
                         run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build FILE [-o OUT]
-                        build FILE and its imports into a standalone executable
+  lube --build [--native] FILE [-o OUT]
+                        build FILE and its imports into a standalone executable; --native also
+                        compiles its fns that compute only with Numbers and Bools to machine
+                        code (needs a C compiler, and Lube's sources: LUBE_SRC)
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 0]
@@ -35,8 +37,10 @@ usage:
                         run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build FILE [-o OUT]
-                        build FILE and its imports into a standalone executable
+  lube --build [--native] FILE [-o OUT]
+                        build FILE and its imports into a standalone executable; --native also
+                        compiles its fns that compute only with Numbers and Bools to machine
+                        code (needs a C compiler, and Lube's sources: LUBE_SRC)
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 0]
@@ -55,8 +59,10 @@ usage:
                         run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build FILE [-o OUT]
-                        build FILE and its imports into a standalone executable
+  lube --build [--native] FILE [-o OUT]
+                        build FILE and its imports into a standalone executable; --native also
+                        compiles its fns that compute only with Numbers and Bools to machine
+                        code (needs a C compiler, and Lube's sources: LUBE_SRC)
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 64]
@@ -73,8 +79,10 @@ usage:
                         run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build FILE [-o OUT]
-                        build FILE and its imports into a standalone executable
+  lube --build [--native] FILE [-o OUT]
+                        build FILE and its imports into a standalone executable; --native also
+                        compiles its fns that compute only with Numbers and Bools to machine
+                        code (needs a C compiler, and Lube's sources: LUBE_SRC)
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 64]
@@ -123,8 +131,10 @@ usage:
                         run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build FILE [-o OUT]
-                        build FILE and its imports into a standalone executable
+  lube --build [--native] FILE [-o OUT]
+                        build FILE and its imports into a standalone executable; --native also
+                        compiles its fns that compute only with Numbers and Bools to machine
+                        code (needs a C compiler, and Lube's sources: LUBE_SRC)
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 64]
@@ -169,11 +179,61 @@ usage:
                         run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build FILE [-o OUT]
-                        build FILE and its imports into a standalone executable
+  lube --build [--native] FILE [-o OUT]
+                        build FILE and its imports into a standalone executable; --native also
+                        compiles its fns that compute only with Numbers and Bools to machine
+                        code (needs a C compiler, and Lube's sources: LUBE_SRC)
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 64]
+--- native: the program as a script
+6765 2997 18.5 23.5 59.66666666666667 58.5 35.33333333333333
+true true true true 1 0
+66.30601929111549 4.5 0 -3 85 5 4.5
+2.70000000003e+16 2.7000000000003e+19 0 true 1 30000
+[5, 8, 13] 1 2 4 5 3
+7 7 2 6 1 4 4 2 5
+cannot negate a Bool
+cannot look inside a Number (expected a List, str, Object or Range)
+division by zero
+modulo by zero
+no_return() must return a Number, but it ended without returning a value
+parameter 'n' of fib() is a Number, so it cannot take a str
+stack overflow: too much recursion
+[exit 0]
+--- native: the program built
+native: fib, sum_mod, mixed, ops, compare, flags, maths, nothing, halves, neg, calls, is_even, evens, by_fraction, zero_div, zero_mod, deep, no_return, big, neg_zero, statement
+built TMP/native_app: 1 file, N bytes
+6765 2997 18.5 23.5 59.66666666666667 58.5 35.33333333333333
+true true true true 1 0
+66.30601929111549 4.5 0 -3 85 5 4.5
+2.70000000003e+16 2.7000000000003e+19 0 true 1 30000
+[5, 8, 13] 1 2 4 5 3
+7 7 2 6 1 4 4 2 5
+cannot negate a Bool
+cannot look inside a Number (expected a List, str, Object or Range)
+division by zero
+modulo by zero
+no_return() must return a Number, but it ended without returning a value
+parameter 'n' of fib() is a Number, so it cannot take a str
+stack overflow: too much recursion
+[exit 0]
+--- native: nothing can be
+native: none of its functions can be (a plain build)
+built TMP/args_native: 1 file, N bytes
+[exit 0]
+--- native: without Lube's sources
+lube: --native needs Lube's C sources: set LUBE_SRC to the folder that has lube.h
+[exit 69]
+--- native: no sources next to lube
+lube: --native needs Lube's C sources: set LUBE_SRC to the folder that has lube.h
+[exit 69]
+--- native: the C compiler fails
+lube: the C compiler (false) failed
+[exit 70]
+--- native: an output folder that does not exist
+lube: cannot write 'TMP/no/such/dir/app.native-tmp.c'
+[exit 73]
 --- isolates that fail with nobody joining, and one left waiting at the end
 lube: an isolate running boom() failed: division by zero
 lube: an isolate running boom() failed: division by zero
@@ -500,8 +560,10 @@ usage:
                         run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build FILE [-o OUT]
-                        build FILE and its imports into a standalone executable
+  lube --build [--native] FILE [-o OUT]
+                        build FILE and its imports into a standalone executable; --native also
+                        compiles its fns that compute only with Numbers and Bools to machine
+                        code (needs a C compiler, and Lube's sources: LUBE_SRC)
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 64]
@@ -560,8 +622,10 @@ usage:
                         run FILE in the debugger (h at its prompt lists the commands)
   lube --hot FILE [ARGS...]
                         run FILE, applying changes to its files while it runs
-  lube --build FILE [-o OUT]
-                        build FILE and its imports into a standalone executable
+  lube --build [--native] FILE [-o OUT]
+                        build FILE and its imports into a standalone executable; --native also
+                        compiles its fns that compute only with Numbers and Bools to machine
+                        code (needs a C compiler, and Lube's sources: LUBE_SRC)
   lube -v, --version    print the version
   lube -h, --help       show this help
 [exit 64]
