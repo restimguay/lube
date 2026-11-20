@@ -312,7 +312,9 @@ run "plugin: one that cannot start" env LUBE_PLUGINS="$TMP/plugins" "$LUBE" -e '
 run "plugin: a library that is not one" env LUBE_PLUGINS="$TMP/plugins" "$LUBE" -e 'import noinit'
 run "plugin: a file that is not a library" env LUBE_PLUGINS="$TMP/plugins" "$LUBE" -e 'import junk'
 run "plugin: none of that name" env LUBE_PLUGINS="$TMP/plugins" "$LUBE" -e 'import nothing.of.the.kind'
-run "plugin: empty folders in LUBE_PLUGINS" env LUBE_PLUGINS=":$TMP/nope:$TMP/plugins" "$LUBE" -e 'import greet.hello
+PSEP=':'  # (between folders: ';' on Windows, whose paths have colons)
+[ "$OS" = Windows ] && PSEP=';'
+run "plugin: empty folders in LUBE_PLUGINS" env LUBE_PLUGINS="$PSEP$TMP/nope$PSEP$TMP/plugins" "$LUBE" -e 'import greet.hello
 print(hello("found"))'
 run "plugin: in ../lib/lube/plugins from lube" env -u LUBE_PLUGINS "$TMP/inst/bin/$(basename "$ABS")" -e 'import greet
 print(greet.hello("installed"))'
