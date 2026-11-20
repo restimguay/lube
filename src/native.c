@@ -42,7 +42,13 @@
  * itself and only indexes, changes, pushes to and measures: they never
  * leave it, so they are plain C arrays (Ln and Lb), freed when it returns. */
 enum { NT_NONE, NT_NUM, NT_BOOL, NT_INT, NT_LNUM, NT_LBOOL, NT_TLNUM, NT_TLBOOL,  /* (TL: typed, Number[]) */
-       NT_RLIST, NT_REC };
+       NT_RLIST, NT_REC, NT_VAL };
+/* NT_VAL: any Lube value (a C Value), for fns on lists of lists and the
+ * like: a parameter's is borrowed, read with len(v) and v[i] (borrowed
+ * too), passed on, and unboxed where a Number or Bool is wanted; a list
+ * literal makes a new one, and a fn without a written result type may
+ * return one. The ones a fn makes are its own (vt<k>, released on its way
+ * out unless given away: returned, or put in a list). */
 /* NT_RLIST and NT_REC: an untyped parameter used as a list of records
  * (xs[i].x, len(xs), for r in xs) or as a record (p.x): objects whose
  * fields it uses all hold Numbers. The wrapper the VM calls copies those
@@ -72,6 +78,7 @@ typedef struct {
     int written[NATIVE_MAX_PARAMS];  /* ...that it may change */
     int fixed[NATIVE_MAX_PARAMS];    /* ...declared with let */
     int method;         /* a method (key Class.name): parameter 0 is `this`, a record of exactly that class */
+    int vals;           /* its untyped parameters are values (NT_VAL): tried when they cannot be records */
     int cls[NATIVE_MAX_PARAMS];      /* a record parameter's class + 1 (0: any), when methods are called on it
                                         (a list's: its records'): its wrapper checks it */
 } Cand;
@@ -100,6 +107,7 @@ typedef struct {
     unsigned char *dneg;  /* a whole-number declaration may be negative (else, so far, every value it got was not) */
     unsigned char *tnn;   /* tnn[k]: temporary t<k> is a whole number that is not negative */
     int captnn;
+    int nvt;            /* the values this fn makes: vt0, vt1, ... */
     int *live;
     int *acc;           /* acc[slot]: an accumulator of the loop with flag ovf<acc - 1> (see loop_accs), else 0 */
     /* shapes: the fields a record parameter's uses need, found as it is translated. A record
@@ -115,6 +123,7 @@ typedef struct {
 static int gen_expr(Gen *g, Node *n, char *res);
 static void gen_stmt(Gen *g, Node *n);
 static int writes_to(Node *n, int s);
+static int is_value(Gen *g, Node *n);
 static int gen_invoke(Gen *g, Cand *c, const char *fn, Node **argv, int argc, int self, char *res, int need);
 
 uint64_t lube_hash_text(const char *text, size_t len) {
@@ -316,7 +325,7 @@ static int field_place(Gen *g, Node *n, char *place) {
 static int slot_store(Gen *g, int slot, int t, const char *v, char *how) {
     if (g->live[slot] < 0) return fail(g);  /* (a slot assigned with no declaration: not one of the fn's) */
     int *pt = &g->dtypes[g->live[slot]], st = *pt;
-    if (st < 0) return fail(g);  /* (a record parameter given another value) */
+    if (st < 0 || st == NT_VAL || t == NT_VAL) return fail(g);  /* (a record parameter given another value; values: in parameters only) */
     if (!st) st = *pt = t;
     if (st >= NT_LNUM || t >= NT_LNUM) return st == t ? st : fail(g);  /* (handled by the caller) */
     if (st == NT_INT && t == NT_NUM) {
@@ -343,6 +352,35 @@ static void number_literal(char *res, double x) {  /* (in parentheses: -x of -2.
     snprintf(res, 64, "(%.17g", x);
     if (!strpbrk(res, ".en")) strcat(res, ".0");  /* a double, never an int (1/2 is not 0) */
     strcat(res, ")");
+}
+
+/* A value of this fn's own, released on its way out unless given away (see NT_VAL). */
+static int new_vt(Gen *g) { return g->nvt++; }
+
+/* Done with value e: released, when it is this fn's own. */
+static void done_with(Gen *g, const char *e) {
+    if (!strncmp(e, "vt", 2)) sb_printf(g->out, "release(%s);\n%s = NIL_VAL;\n", e, e);
+}
+
+/* Value e (of type *t, NT_VAL) as a Number or a Bool (want), or the VM
+ * runs the call: *t and e become those. */
+static void unbox(Gen *g, int *t, char *e, int want) {
+    if (*t != NT_VAL) return;
+    int k = new_tmp(g);
+    if (want == NT_BOOL) sb_printf(g->out, "int t%d;\nif (lube_nv_bool(%s, &t%d)) %s\n", k, e, k, bail(g));
+    else sb_printf(g->out, "double t%d;\nif (lube_nv_num(%s, &t%d)) %s\n", k, e, k, bail(g));
+    done_with(g, e);
+    snprintf(e, 64, "t%d", k);
+    *t = want == NT_BOOL ? NT_BOOL : NT_NUM;
+}
+
+/* Number, Bool or value e (of type t) as a value: res is e's own when it was. */
+static int boxed(int t, const char *e, char *res) {
+    if (t == NT_VAL) snprintf(res, 64, "%s", e);
+    else if (NUMERIC(t)) snprintf(res, 64, t == NT_INT ? "NUM_VAL((double)%s)" : "NUM_VAL(%s)", e);
+    else if (t == NT_BOOL) snprintf(res, 64, "BOOL_VAL(%s)", e);
+    else return 0;
+    return 1;
 }
 
 /* a op b (of types ta, tb, both Numbers or both Bools); returns the result's type. */
@@ -488,6 +526,7 @@ static int gen_list_into(Gen *g, int s, Node *n) {
 static void gen_push(Gen *g, Node *list, Node *value) {
     char v[64], d[64];
     int lt = list_slot(g, list), t = lt ? gen_expr(g, value, v) : 0;
+    unbox(g, &t, v, LIST_NUM(lt) ? NT_NUM : NT_BOOL);
     if (!lt || (LIST_NUM(lt) ? !NUMERIC(t) : t != NT_BOOL)) {
         fail(g);
         return;
@@ -572,6 +611,15 @@ static int gen_call(Gen *g, Node *n, char *res, int need) {
         snprintf(res, 64, "Rn%d", rs - 1);
         return NT_INT;
     }
+    if (is_builtin(g, callee, "len") && args->count == 1 && is_value(g, args->items[0])) {  /* a list value's length */
+        char v[64];
+        gen_expr(g, args->items[0], v);
+        int k = new_tmp(g);
+        sb_printf(g->out, "int64_t t%d;\nif (lube_nv_len(%s, &t%d)) %s\n", k, v, k, bail(g));
+        g->tnn[k] = 1;
+        snprintf(res, 64, "t%d", k);
+        return NT_INT;
+    }
     if (is_builtin(g, callee, "push") && args->count == 2 && args->items[0]->kind == N_REF && !need) {
         gen_push(g, args->items[0]->as.expr, args->items[1]);
         return g->failed ? 0 : NT_NUM;
@@ -605,6 +653,14 @@ static int gen_invoke(Gen *g, Cand *c, const char *fn, Node **argv, int argc, in
             continue;
         }
         ta[i] = gen_expr(g, argv[i], a[i]);
+        if (want == NT_VAL) {  /* a value: as it is (borrowed by the callee), or a Number or Bool boxed */
+            char bx[64];
+            if (!boxed(ta[i], a[i], bx)) return fail(g);
+            snprintf(a[i], 64, "%s", bx);
+            ta[i] = NT_VAL;
+            continue;
+        }
+        unbox(g, &ta[i], a[i], want);
         if (want < 0 || !ta[i] || (want == NT_NUM ? !NUMERIC(ta[i]) : ta[i] != want)) return fail(g);
         whole &= ta[i] != NT_NUM;
     }
@@ -637,18 +693,33 @@ static int gen_invoke(Gen *g, Cand *c, const char *fn, Node **argv, int argc, in
         snprintf(res, 64, c->ret == NT_BOOL ? "((int)t%d)" : "t%d", t);
         return c->ret == NT_BOOL ? NT_BOOL : NT_INT;
     }
-    sb_printf(g->out, "double t%d;\nif (nf_%d(", t, k);
+    int vt = c->ret == NT_VAL ? new_vt(g) : -1;  /* (a value it returns: this fn's own) */
+    if (vt < 0) sb_printf(g->out, "double t%d;\n", t);
+    sb_printf(g->out, "if (nf_%d(", k);
     for (int i = 0; i < argc; i++) {
-        if (RECORD(ta[i])) {
+        if (RECORD(ta[i]) || ta[i] == NT_VAL) {
             sb_printf(g->out, "%s, ", a[i]);
             continue;
         }
         as_double(ta[i], a[i], x[0]);
         sb_printf(g->out, "%s, ", x[0]);
     }
-    sb_printf(g->out, "&t%d, left - 1)) %s\n", t, bail(g));
+    if (vt >= 0) sb_printf(g->out, "&vt%d, left - 1)) %s\n", vt, bail(g));
+    else sb_printf(g->out, "&t%d, left - 1)) %s\n", t, bail(g));
+    for (int i = 0; i < argc; i++)
+        if (ta[i] == NT_VAL) done_with(g, a[i]);  /* (values it made for the call) */
+    if (vt >= 0) {
+        snprintf(res, 64, "vt%d", vt);
+        return NT_VAL;
+    }
     snprintf(res, 64, c->ret == NT_BOOL ? "(t%d != 0)" : "t%d", t);
     return c->ret == NT_BOOL ? NT_BOOL : NT_NUM;
+}
+
+/* Is n a borrowed value: a value parameter, or an item of one (v[i][j])? */
+static int is_value(Gen *g, Node *n) {
+    if (n->kind == N_INDEX) return is_value(g, n->as.index.object);
+    return n->kind == N_VAR && n->as.var.kind == VAR_LOCAL && type_of(g, n->as.var.index) == NT_VAL;
 }
 
 /* Is a method named `name` one of class k's own? */
@@ -701,6 +772,13 @@ static int gen_method(Gen *g, Node *n, char *res, int need) {
     return gen_invoke(g, m, NULL, argv, args->count + 1, 1, res, need);
 }
 
+/* n, where a Bool is wanted (a value unboxed). */
+static int bool_expr(Gen *g, Node *n, char *res) {
+    int t = gen_expr(g, n, res);
+    unbox(g, &t, res, NT_BOOL);
+    return t;
+}
+
 static int gen_expr(Gen *g, Node *n, char *res) {
     char a[64], b[64];
     if (!g->failed) g->line = n->line;
@@ -720,13 +798,19 @@ static int gen_expr(Gen *g, Node *n, char *res) {
         return NT_BOOL;
     case N_VAR: {
         int t = n->as.var.kind == VAR_LOCAL ? type_of(g, n->as.var.index) : 0;
+        if (t == NT_VAL) {  /* a parameter's value, or a variable's (borrowed) */
+            snprintf(res, 64, "%c%d", n->as.var.index < g->cur->d->nparams ? 'p' : 'V', n->as.var.index);
+            return NT_VAL;
+        }
         if (t == UNTYPED && g->cur->loop) t = loop_scalar(g, n->as.var.index, g->cur->hint[n->as.var.index]);
         if (t <= 0 || t >= NT_LNUM) return fail(g);  /* (a list or record is not a value here: it never leaves the fn) */
         snprintf(res, 64, "%c%d", letter(t), n->as.var.index);
         return t;
     }
     case N_UNARY: {
-        int t = gen_expr(g, n->as.unary.operand, a), k = new_tmp(g);
+        int t = gen_expr(g, n->as.unary.operand, a);
+        unbox(g, &t, a, n->as.unary.op != T_MINUS ? NT_BOOL : NT_NUM);
+        int k = new_tmp(g);
         if (n->as.unary.op != T_MINUS) {  /* not */
             if (t != NT_BOOL) return fail(g);
             sb_printf(g->out, "int t%d = !%s;\n", k, a);
@@ -744,16 +828,45 @@ static int gen_expr(Gen *g, Node *n, char *res) {
     }
     case N_BINARY: {
         int ta = gen_expr(g, n->as.binary.left, a);
-        int tb = ta ? gen_expr(g, n->as.binary.right, b) : 0;
+        int tb = ta ? gen_expr(g, n->as.binary.right, b) : 0;  /* (values: unboxed as the other side is) */
+        unbox(g, &ta, a, tb == NT_BOOL ? NT_BOOL : NT_NUM);
+        unbox(g, &tb, b, ta == NT_BOOL ? NT_BOOL : NT_NUM);
         if (!ta || !tb) return fail(g);
         return gen_binop(g, n->as.binary.op, ta, a, tb, b, res);
     }
+    case N_LIST: {  /* [a, b]: a new value (its items given to it) */
+        NodeList *items = &n->as.items;
+        char it[64], bx[64];
+        int k = new_vt(g), owned[64], nowned = 0;
+        StrBuf all;
+        sb_init(&all);
+        sb_putc(&all, ' ');
+        for (int i = 0; i < items->count && !g->failed; i++) {
+            int t = gen_expr(g, items->items[i], it);
+            if (items->count > 64 || !boxed(t, it, bx)) {
+                fail(g);
+                break;
+            }
+            if (t == NT_VAL && !strncmp(it, "vt", 2)) owned[nowned++] = atoi(it + 2);
+            if (t == NT_VAL && strncmp(it, "vt", 2)) sb_printf(&all, "retain(%s), ", bx);  /* (borrowed: one more owner) */
+            else sb_printf(&all, "%s, ", bx);
+        }
+        if (!g->failed && items->count)
+            sb_printf(g->out, "{\nValue it%d[] = {%s};\nvt%d = lube_nv_list(%d, it%d);\n}\n", k, all.data, k, items->count, k);
+        else if (!g->failed)
+            sb_printf(g->out, "vt%d = lube_nv_list(0, 0);\n", k);
+        for (int i = 0; i < nowned; i++) sb_printf(g->out, "vt%d = NIL_VAL;\n", owned[i]);  /* (the list's now) */
+        sb_free(&all);
+        if (g->failed) return 0;
+        snprintf(res, 64, "vt%d", k);
+        return NT_VAL;
+    }
     case N_AND:
     case N_OR: {  /* both Bools; the right one only runs when it decides */
-        if (gen_expr(g, n->as.binary.left, a) != NT_BOOL) return fail(g);
+        if (bool_expr(g, n->as.binary.left, a) != NT_BOOL) return fail(g);
         int k = new_tmp(g);
         sb_printf(g->out, "int t%d = %s;\nif (%st%d) {\n", k, a, n->kind == N_AND ? "" : "!", k);
-        if (gen_expr(g, n->as.binary.right, b) != NT_BOOL) return fail(g);
+        if (bool_expr(g, n->as.binary.right, b) != NT_BOOL) return fail(g);
         sb_printf(g->out, "t%d = %s;\n}\n", k, b);
         snprintf(res, 64, "t%d", k);
         return NT_BOOL;
@@ -771,6 +884,17 @@ static int gen_expr(Gen *g, Node *n, char *res) {
         return NT_NUM;
     }
     case N_INDEX: {  /* xs[i], xs a list of the fn's own */
+        if (is_value(g, n->as.index.object)) {  /* v[i], v a value (borrowed): its item, borrowed too */
+            char ix[64], dx[64];
+            int to = gen_expr(g, n->as.index.object, a), ti = to ? gen_expr(g, n->as.index.index, ix) : 0;
+            unbox(g, &ti, ix, NT_NUM);
+            if (to != NT_VAL || !NUMERIC(ti)) return fail(g);
+            int k = new_tmp(g);
+            as_double(ti, ix, dx);
+            sb_printf(g->out, "Value vb%d;\nif (lube_nv_index(%s, %s, &vb%d)) %s\n", k, a, dx, k, bail(g));
+            snprintf(res, 64, "vb%d", k);
+            return NT_VAL;
+        }
         int lt = list_slot(g, n->as.index.object), k;
         if (!lt || !(k = gen_index(g, n->as.index.object->as.var.index, lt, n->as.index.index))) return fail(g);
         k--;
@@ -793,6 +917,7 @@ static void gen_item_assign(Gen *g, Node *n) {
     int lt = list_slot(g, list), k = lt ? gen_index(g, list->as.var.index, lt, target->as.index.index) : 0;
     char v[64], d[64], cur[64], r[64], L = LCHAR(lt);
     int t = k ? gen_expr(g, n->as.assign.value, v) : 0, s = list->as.var.index;
+    unbox(g, &t, v, LIST_NUM(lt) ? NT_NUM : NT_BOOL);
     TokenType op = n->as.assign.op;
     if (!t || (LIST_NUM(lt) ? !NUMERIC(t) : t != NT_BOOL || op != T_ASSIGN)) {
         fail(g);
@@ -814,6 +939,7 @@ static void gen_item_assign(Gen *g, Node *n) {
 static void gen_field_assign(Gen *g, Node *n) {
     char place[64], v[64], r[64];
     int t = field_place(g, n->as.assign.target, place) ? gen_expr(g, n->as.assign.value, v) : 0;
+    unbox(g, &t, v, NT_NUM);
     TokenType op = n->as.assign.op;
     if (!NUMERIC(t)) {
         fail(g);
@@ -852,6 +978,11 @@ static void gen_assign(Gen *g, Node *n) {
     }
     int slot = target->as.var.index, st = type_of(g, slot);
     TokenType op = n->as.assign.op;
+    if (t == NT_VAL && st == NT_VAL && op == T_ASSIGN && strncmp(v, "vt", 2)) {  /* a value variable: another borrowed one */
+        sb_printf(g->out, "%c%d = %s;\n", slot < g->cur->d->nparams ? 'p' : 'V', slot, v);
+        return;
+    }
+    unbox(g, &t, v, st == NT_BOOL ? NT_BOOL : NT_NUM);
     if (st == UNTYPED) st = loop_scalar(g, slot, op == T_ASSIGN ? t : NT_NUM);  /* (a loop's global) */
     if (op == T_ASSIGN) {
         store(g, slot, t, v);
@@ -1047,9 +1178,16 @@ static void gen_stmt(Gen *g, Node *n) {
             gen_list_into(g, n->as.let.var.index, n->as.let.value);
             break;
         }
-        int t = n->as.let.is_fn ? 0 : gen_expr(g, n->as.let.value, v);
-        if (t) store(g, n->as.let.var.index, t, v);
-        else fail(g);
+        int t = n->as.let.is_fn ? 0 : gen_expr(g, n->as.let.value, v), s = n->as.let.var.index;
+        int *dt = &g->dtypes[g->live[s]];
+        if (t == NT_VAL && strncmp(v, "vt", 2) && (!*dt || *dt == NT_VAL)) {  /* let x = v[i]: a borrowed value */
+            *dt = NT_VAL;
+            sb_printf(g->out, "V%d = %s;\n", s, v);
+        } else if (t) {
+            store(g, s, t, v);
+        } else {
+            fail(g);
+        }
     } break;
     case N_BLOCK:
         sb_puts(g->out, "{\n");
@@ -1057,7 +1195,7 @@ static void gen_stmt(Gen *g, Node *n) {
         sb_puts(g->out, "}\n");
         break;
     case N_IF:
-        if (gen_expr(g, n->as.if_s.cond, v) != NT_BOOL) {
+        if (bool_expr(g, n->as.if_s.cond, v) != NT_BOOL) {
             fail(g);
             break;
         }
@@ -1072,7 +1210,7 @@ static void gen_stmt(Gen *g, Node *n) {
     case N_WHILE: {  /* the condition again on each turn (and after continue) */
         int acc = loop_accs(g, n);
         sb_puts(g->out, "for (;;) {\n");
-        if (gen_expr(g, n->as.while_s.cond, v) != NT_BOOL) {
+        if (bool_expr(g, n->as.while_s.cond, v) != NT_BOOL) {
             fail(g);
             break;
         }
@@ -1140,8 +1278,23 @@ static void gen_stmt(Gen *g, Node *n) {
         break;
     }
     case N_RETURN: {
-        int want = g->cur->ret, t = n->as.expr ? gen_expr(g, n->as.expr, v) : NT_NONE;
+        Cand *c = g->cur;
+        if (c->ret == NT_NONE && !c->d->ret.set && n->as.expr && !c->loop && !c->method) {
+            c->ret = NT_VAL;  /* (no result type written, a value returned: a value it returns) */
+            g->widened = 1;
+        }
+        int want = c->ret, t = n->as.expr ? gen_expr(g, n->as.expr, v) : NT_NONE;
         if (n->as.expr && !t) break;
+        if (want == NT_VAL) {  /* (return alone: nothing, which the VM gives) */
+            char bx[64];
+            if (!n->as.expr) sb_printf(g->out, "%s\n", bail(g));
+            else if (!boxed(t, v, bx)) fail(g);
+            else if (t == NT_VAL && strncmp(v, "vt", 2)) sb_printf(g->out, "{\n*out = retain(%s);\nR = 0;\ngoto done;\n}\n", bx);
+            else if (t == NT_VAL) sb_printf(g->out, "{\n*out = %s;\n%s = NIL_VAL;\nR = 0;\ngoto done;\n}\n", v, v);  /* (given away) */
+            else sb_printf(g->out, "{\n*out = %s;\nR = 0;\ngoto done;\n}\n", bx);
+            break;
+        }
+        unbox(g, &t, v, want);
         if (want == NT_NUM ? !NUMERIC(t) || (g->mode && t != NT_INT) : t != want) {  /* (whole: an int) */
             fail(g);
             break;
@@ -1169,43 +1322,53 @@ static void gen_pass(Gen *g, Cand *c, StrBuf *out) {
     int nslots = d->nslots > 0 ? d->nslots : 1, k = (int)(c - g->cands);
     g->out = out;
     g->tmp = 0;
+    g->nvt = 0;
     g->widened = 0;
     g->line = d->line;  /* (where it stops, if before any of its code) */
+    if (g->mode && c->ret == NT_VAL) fail(g);  /* (a value: no whole-number version) */
     for (int i = 0; i < nslots; i++) g->live[i] = -1, g->acc[i] = 0;
     if (g->mode) sb_printf(out, "static int64_t ni_%d(", k);
     else sb_printf(out, "static int nf_%d(", k);
     for (int i = 0; i < d->nparams; i++) {
         int t = c->params[i];
         if (t == NT_REC) sb_printf(out, "double *r%d, ", i);
+        else if (t == NT_VAL) sb_printf(out, "Value p%d, ", i);
         else if (t == UNTYPED || t == NT_RLIST) sb_printf(out, "double *r%d, int64_t rn%d, ", i, i);
         else if (t >= NT_LNUM) sb_printf(out, "%s *pl%d, ", LTYPE(t), i);  /* (a loop's list: given back at the end) */
         else if (c->loop) sb_printf(out, "double *p%d, ", i);  /* (a global: given back at the end) */
         else sb_printf(out, "%s p%d, ", g->mode ? "int64_t" : "double", i);
     }
     /* one way out (done:), where the lists are let go; R: the result, or that it gave up */
-    sb_printf(out, "%sint left) {\n%s R = %s;\n", g->mode ? "" : "double *out, ", g->mode ? "int64_t" : "int",
-              g->mode ? "LUBE_FAIL" : "1");
+    sb_printf(out, "%sint left) {\n%s R = %s;\n", g->mode ? "" : c->ret == NT_VAL ? "Value *out, " : "double *out, ",
+              g->mode ? "int64_t" : "int", g->mode ? "LUBE_FAIL" : "1");
     sb_puts(out, "LubeNNum Lnt = {0, 0, 0};\nLubeNBool Lbt = {0, 0, 0};\n");
     for (int i = 0; i < nslots; i++)
         sb_printf(out, "double d%d = 0; int64_t i%d = 0; int b%d = 0; LubeNNum Ln%d = {0, 0, 0}; LubeNBool Lb%d = {0, 0, 0};\n"
-                       "double *R%d = 0; int64_t Rn%d = 0; double *Bp%d = 0; double Bs%d[LUBE_REC_MAX];\n"
-                       "(void)d%d; (void)i%d; (void)b%d; (void)R%d; (void)Rn%d; (void)Bp%d; (void)Bs%d;\n",
-                  i, i, i, i, i, i, i, i, i, i, i, i, i, i, i, i);
-    sb_puts(out, "if (left <= 0) goto done;\n");
+                       "double *R%d = 0; int64_t Rn%d = 0; double *Bp%d = 0; double Bs%d[LUBE_REC_MAX]; Value V%d = NIL_VAL;\n"
+                       "(void)d%d; (void)i%d; (void)b%d; (void)R%d; (void)Rn%d; (void)Bp%d; (void)Bs%d; (void)V%d;\n",
+                  i, i, i, i, i, i, i, i, i, i, i, i, i, i, i, i, i, i);
+    StrBuf body;  /* (after it: the values this fn makes, which the body says) */
+    sb_init(&body);
+    g->out = &body;
+    sb_puts(&body, "if (left <= 0) goto done;\n");
     for (int i = 0; i < d->nparams; i++) {
         char p[64];
         int t = c->params[i];
         declare(g, &d->params[i], i);
+        if (t == NT_VAL) {  /* a value: the caller's, borrowed */
+            g->dtypes[g->live[i]] = NT_VAL;
+            continue;
+        }
         if (t >= NT_LNUM && t <= NT_TLBOOL) {  /* a loop's list: its array is this fn's until it gives it back */
             g->dtypes[g->live[i]] = t;
-            sb_printf(out, "L%c%d = *pl%d;\n", LCHAR(t), i, i);
+            sb_printf(&body, "L%c%d = *pl%d;\n", LCHAR(t), i, i);
             continue;
         }
         if (t == UNTYPED || RECORD(t)) {  /* a record parameter: the wrapper's copy of its fields */
             g->dtypes[g->live[i]] = t;
             g->dshape[g->live[i]] = c->shape[i];
-            if (t == NT_REC) sb_printf(out, "Bp%d = r%d;\n", i, i);
-            else sb_printf(out, "R%d = r%d;\nRn%d = rn%d;\n", i, i, i, i);
+            if (t == NT_REC) sb_printf(&body, "Bp%d = r%d;\n", i, i);
+            else sb_printf(&body, "R%d = r%d;\nRn%d = rn%d;\n", i, i, i, i);
             continue;
         }
         if (c->loop) snprintf(p, sizeof p, t == NT_BOOL ? "(*p%d != 0)" : "(*p%d)", i);
@@ -1218,14 +1381,19 @@ static void gen_pass(Gen *g, Cand *c, StrBuf *out) {
         memset(&ret, 0, sizeof ret);
         ret.kind = N_RETURN;
         ret.as.expr = d->body;
-        if (c->ret == NT_NONE) fail(g);
-        else gen_stmt(g, &ret);
+        if (c->ret == NT_NONE && (c->loop || c->method)) fail(g);
+        else gen_stmt(g, &ret);  /* (no result type: the value it returns) */
     } else {
         gen_block(g, &d->body->as.block.stmts);
     }
     /* (fell off the end: nothing to return, or the VM's error that the value is missing) */
-    if (c->ret == NT_NONE) sb_puts(out, "R = 0;\n");
+    if (c->ret == NT_NONE) sb_puts(&body, "R = 0;\n");
+    g->out = out;
+    for (int i = 0; i < g->nvt; i++) sb_printf(out, "Value vt%d = NIL_VAL;\n", i);
+    sb_putn(out, body.data, body.len);
+    sb_free(&body);
     sb_puts(out, "done:\nfree(Lnt.a);\nfree(Lbt.a);\n");
+    for (int i = 0; i < g->nvt; i++) sb_printf(out, "release(vt%d);\n", i);
     for (int i = 0; c->loop && i < d->nparams; i++) {  /* a loop's Numbers, Bools and lists go back to its globals */
         int t = c->params[i];
         if (t >= NT_LNUM && t <= NT_TLBOOL)
@@ -1264,6 +1432,13 @@ static int gen_function(Gen *g, Cand *c, int mode, StrBuf *out) {
 }
 
 /* ---------- the program ---------- */
+
+/* Has candidate k a parameter without a written type? */
+static int untyped_params(Cand *k) {
+    for (int p = 0; p < k->d->nparams; p++)
+        if (!(k->d->types && k->d->types[p].set)) return 1;
+    return 0;
+}
 
 /* A fn the program declares that can be a candidate: Number and Bool in and out. */
 static void consider(Gen *g, Node *s, uint64_t hash) {
@@ -1527,8 +1702,8 @@ static void consider_loop(Gen *g, Interp *I, Node *s, int index, uint64_t hash, 
  * calls the machine code, and writes back to & parameters the fields that
  * changed. Returns 0 when the fn has no record parameter. */
 static int records_wrapper(Gen *g, Cand *k, int i, StrBuf *c) {
-    int recs = k->loop;  /* (a loop's wrapper takes its globals) */
-    for (int p = 0; p < k->d->nparams; p++) recs |= RECORD(k->params[p]);
+    int recs = k->loop || k->ret == NT_VAL;  /* (a loop's wrapper takes its globals; a value goes back as it is) */
+    for (int p = 0; p < k->d->nparams; p++) recs |= RECORD(k->params[p]) || k->params[p] == NT_VAL;
     if (!recs) return 0;
     if (k->loop) {
         sb_printf(c, "static const char *const gn_%d[] = {", i);
@@ -1542,7 +1717,8 @@ static int records_wrapper(Gen *g, Cand *k, int i, StrBuf *c) {
         for (int f = 0; f < SHAPE(g, sh)->n; f++) sb_printf(c, "\"%s\", ", SHAPE(g, sh)->fields[f]->chars);
         sb_printf(c, "0};\nstatic LUBE_THREAD_LOCAL LubeRecCache rc_%d_%d;\n", i, p);
     }
-    sb_printf(c, "static int wv_%d(Interp *I, Value *args, double *out, int left) {\n    int R = 1, called = 0;\n    (void)called;\n", i);
+    sb_printf(c, "static int wv_%d(Interp *I, Value *args, %s *out, int left) {\n    int R = 1, called = 0;\n    (void)called;\n", i,
+              k->ret == NT_VAL ? "Value" : "double");
     if (k->loop && k->d->nparams) {  /* its globals, as the arguments (taken back at the end) */
         sb_printf(c, "    Value *gv[%d], ga[%d];\n    args = ga;\n", k->d->nparams, k->d->nparams);
         for (int p = 0; p < k->d->nparams; p++)
@@ -1555,6 +1731,7 @@ static int records_wrapper(Gen *g, Cand *k, int i, StrBuf *c) {
             sb_printf(c, "    double rs%d[256], os%d[256], *r%d = rs%d, *o%d = os%d;\n    int64_t rn%d = 0;\n", p, p, p, p, p, p, p);
         else if (t == NT_REC) sb_printf(c, "    double rb%d[LUBE_REC_MAX], ob%d[LUBE_REC_MAX];\n", p, p);
         else if (t >= NT_LNUM && t <= NT_TLBOOL) sb_printf(c, "    %s l%d = {0, 0, 0};\n", LTYPE(t), p);
+        else if (t == NT_VAL) continue;  /* (a value: the argument itself) */
         else sb_printf(c, "    double a%d = 0;\n", p);
     }
     for (int p = 0; p < k->d->nparams; p++) {
@@ -1569,6 +1746,8 @@ static int records_wrapper(Gen *g, Cand *k, int i, StrBuf *c) {
             if (ref) sb_printf(c, "    if (r%d != rs%d) o%d = malloc(sizeof(double) * (size_t)(rn%d * %d + 1));\n"
                                   "    if (!o%d) goto done;\n    memcpy(o%d, r%d, sizeof(double) * (size_t)(rn%d * %d));\n",
                                p, p, p, p, nf, p, p, p, p, nf);
+        } else if (t == NT_VAL) {
+            continue;
         } else if (t >= NT_LNUM && t <= NT_TLBOOL) {  /* (a loop's list: its items, copied) */
             sb_printf(c, "    if (lube_numlist_load(args[%d], %d, %d, (void **)&l%d.a, &l%d.n)) goto done;\n    l%d.cap = l%d.n;\n",
                       p, !LIST_NUM(t), t == NT_TLNUM || t == NT_TLBOOL, p, p, p, p);
@@ -1586,6 +1765,7 @@ static int records_wrapper(Gen *g, Cand *k, int i, StrBuf *c) {
         if (t == NT_RLIST) sb_printf(c, "r%d, rn%d, ", p, p);
         else if (t == NT_REC) sb_printf(c, "rb%d, ", p);
         else if (t >= NT_LNUM && t <= NT_TLBOOL) sb_printf(c, "&l%d, ", p);
+        else if (t == NT_VAL) sb_printf(c, "args[%d], ", p);
         else sb_printf(c, k->loop ? "&a%d, " : "a%d, ", p);
     }
     sb_puts(c, "out, left);\n    if (R == 0) {\n");
@@ -1714,7 +1894,28 @@ static const char *const HEADER[] = {  /* (pieces: C99 promises string literals 
     "    }\n"
     "LUBE_NLIST(LubeNNum, double)\n"
     "LUBE_NLIST(LubeNBool, unsigned char)\n"
-    "static double lube_nlog2(double x, double base) { return lube_m_log(x) / lube_m_log(base); }\n\n",
+    "static double lube_nlog2(double x, double base) { return lube_m_log(x) / lube_m_log(base); }\n"
+    "static int lube_nv_len(Value v, int64_t *n) {  /* values (NT_VAL): a list's length... */\n"
+    "    if (!IS_LIST(v)) return 1;\n"
+    "    *n = (int64_t)AS_LIST(v)->count;\n"
+    "    return 0;\n"
+    "}\n"
+    "static int lube_nv_index(Value v, double d, Value *out) {  /* ...an item (borrowed), as the VM finds it... */\n"
+    "    int64_t k;\n"
+    "    if (!IS_LIST(v) || lube_nidx((int64_t)AS_LIST(v)->count, d, &k)) return 1;\n"
+    "    *out = AS_LIST(v)->items[k];\n"
+    "    return 0;\n"
+    "}\n"
+    "static int lube_nv_num(Value v, double *d) {  /* ...a Number, a Bool (else: the VM runs the call) */\n"
+    "    if (!IS_NUM(v)) return 1;\n"
+    "    *d = v.as.number;\n"
+    "    return 0;\n"
+    "}\n"
+    "static int lube_nv_bool(Value v, int *b) {\n"
+    "    if (!IS_BOOL(v)) return 1;\n"
+    "    *b = v.as.boolean;\n"
+    "    return 0;\n"
+    "}\n\n",
     NULL};
 
 /* Compiles the program (its files: keys and texts, read from dir) into the
@@ -1774,6 +1975,12 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
                 sb_init(&body);
                 if (!gen_function(&g, k, mode, &body) && round == 0) {
                     changed = 1;  /* (the first round learns what kinds of records fns pass each other) */
+                } else if (g.failed && !mode && !k->vals && !k->loop && !k->method && untyped_params(k)) {
+                    k->vals = 1;  /* (its untyped parameters cannot be records: values, then) */
+                    for (int p = 0; p < k->d->nparams; p++)
+                        if (!(k->d->types && k->d->types[p].set)) k->params[p] = NT_VAL, k->cls[p] = 0;
+                    k->ok_int = 0;
+                    changed = 1;
                 } else if (g.failed) {
                     if (!mode) {
                         k->ok = 0;
@@ -1799,10 +2006,11 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
         sb_printf(&c, "static int nf_%d(", i);
         for (int p = 0; p < k->d->nparams; p++)
             sb_puts(&c, k->params[p] == NT_REC ? "double *, " : k->params[p] == NT_RLIST ? "double *, int64_t, "
+                        : k->params[p] == NT_VAL ? "Value, "
                         : k->params[p] == NT_LNUM || k->params[p] == NT_TLNUM ? "LubeNNum *, "
                         : k->params[p] == NT_LBOOL || k->params[p] == NT_TLBOOL ? "LubeNBool *, "
                         : k->loop ? "double *, " : "double, ");  /* (a loop's Numbers and lists: given back) */
-        sb_puts(&c, "double *, int);\n");
+        sb_puts(&c, k->ret == NT_VAL ? "Value *, int);\n" : "double *, int);\n");
         if (!k->ok_int) continue;
         sb_printf(&c, "static int64_t ni_%d(", i);
         for (int p = 0; p < k->d->nparams; p++) sb_puts(&c, "int64_t, ");
@@ -1839,14 +2047,16 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
         sb_printf(&c, "    {\"%s\", \"", k->key->chars);  /* (names are plain identifiers, :: in a package) */
         for (int p = 0; p < k->d->nparams; p++) {
             int t = k->params[p];
-            sb_putc(&c, t == NT_NUM ? 'N' : t == NT_BOOL ? 'B' : t == NT_RLIST ? 'L' : 'O');
-            recs |= RECORD(t);
+            sb_putc(&c, t == NT_NUM ? 'N' : t == NT_BOOL ? 'B' : t == NT_RLIST ? 'L' : t == NT_VAL ? 'V' : 'O');
+            recs |= RECORD(t) || t == NT_VAL;
         }
-        sb_printf(&c, ":%s\", 0x%llxull, ", k->ret == NT_NUM ? "N" : k->ret == NT_BOOL ? "B" : "", (unsigned long long)k->hash);
-        if (recs || k->loop) sb_printf(&c, "0, wv_%d},\n", i);
-        else sb_printf(&c, "w_%d, 0},\n", i);
+        sb_printf(&c, ":%s\", 0x%llxull, ", k->ret == NT_NUM ? "N" : k->ret == NT_BOOL ? "B" : k->ret == NT_VAL ? "V" : "",
+                  (unsigned long long)k->hash);
+        if (k->ret == NT_VAL) sb_printf(&c, "0, 0, wv_%d},\n", i);
+        else if (recs || k->loop) sb_printf(&c, "0, wv_%d, 0},\n", i);
+        else sb_printf(&c, "w_%d, 0, 0},\n", i);
     }
-    sb_printf(&c, "    {0, 0, 0, 0, 0}\n};\nconst int lube_nnatives = %d;\n", count);
+    sb_printf(&c, "    {0, 0, 0, 0, 0, 0}\n};\nconst int lube_nnatives = %d;\n", count);
 
     int status = count ? 0 : -1;  /* -1: nothing to compile (a plain build will do) */
     char *srcdir = count ? find_sources(argv0) : NULL;
@@ -2043,6 +2253,15 @@ double lube_m_exp(double x) { return exp(x); }
 double lube_m_log(double x) { return log(x); }
 double lube_m_pow(double x, double y) { return pow(x, y); }
 double lube_m_atan2(double y, double x) { return atan2(y, x); }
+
+/* A new list of the n values in items (it takes them over). */
+Value lube_nv_list(int n, const Value *items) {
+    ObjList *l = new_list();
+    list_reserve(l, (size_t)n);
+    for (int i = 0; i < n; i++) l->items[i] = items[i];
+    l->count = (size_t)n;
+    return OBJ_VAL(l);
+}
 
 /* A loop's global list (of Numbers, or bools: of Bools; typed: Number[] or
  * Bool[], else untyped) into a new array *a, of *n: 1 if it is not one. */

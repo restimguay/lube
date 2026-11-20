@@ -5,5 +5,5 @@
  */
 #include "lube.h"
 
-const LubeNative lube_natives[1] = {{NULL, NULL, 0, NULL, NULL}};
+const LubeNative lube_natives[1] = {{NULL, NULL, 0, NULL, NULL, NULL}};
 const int lube_nnatives = 0;

@@ -1453,12 +1453,13 @@ static int check_items(Interp *I, OnDesc *od);
  * call itself (arguments of other types, which it reports; an error the
  * machine code leaves to it; calls too deep; the debugger). */
 #define NATIVE_DEPTH 20000  /* (C stack enough for this many) */
-static int call_native(Interp *I, FuncDecl *d, int base, int argc, Value *out) {
+static int native_call(Interp *I, FuncDecl *d, int base, int argc, Value *out) {
     const char *sig = d->native->sig;
     double args[8], result;
-    if (I->dbg || argc != d->nparams) return 0;
     int left = LUBE_MAX_FRAMES - I->depth < NATIVE_DEPTH ? LUBE_MAX_FRAMES - I->depth : NATIVE_DEPTH;
-    if (d->native->fnv) {  /* records: its wrapper takes the arguments as they are */
+    if (d->native->fnval) {  /* a value back (its own: the VM's now) */
+        return !d->native->fnval(I, &I->stack[base], out, left);
+    } else if (d->native->fnv) {  /* records: its wrapper takes the arguments as they are */
         if (d->native->fnv(I, &I->stack[base], &result, left)) return 0;
     } else {
         for (int i = 0; i < argc; i++) {
@@ -1472,6 +1473,17 @@ static int call_native(Interp *I, FuncDecl *d, int base, int argc, Value *out) {
     char ret = sig[argc + 1];
     *out = ret == 'N' ? NUM_VAL(result) : ret == 'B' ? BOOL_VAL(result != 0) : NIL_VAL;
     return 1;
+}
+
+static int call_native(Interp *I, FuncDecl *d, int base, int argc, Value *out) {
+    if (I->dbg || argc != d->nparams) return 0;
+    if (I->native_off) {  /* (see Interp.native_off) */
+        if (I->depth >= I->native_off) return 0;
+        I->native_off = 0;
+    }
+    if (native_call(I, d, base, argc, out)) return 1;
+    I->native_off = I->depth + 1;
+    return 0;
 }
 
 /* on x { ... } in a function: registers the block for the running frame and

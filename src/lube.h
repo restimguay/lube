@@ -412,11 +412,13 @@ typedef struct OnList OnList;
 typedef int (*LubeNativeFn)(const double *args, double *out, int depth_left);
 typedef struct LubeNative {
     const char *key;            /* the fn's global */
-    const char *sig;            /* its parameters' types, ':', its return type: N (Number), B (Bool), or none;
-                                   L, O: a list of records, a record (then fnv takes the arguments as they are) */
+    const char *sig;            /* its parameters' types, ':', its return type: N (Number), B (Bool), V (any
+                                   value: then fnval), or none; L, O, V: a list of records, a record, a value
+                                   (then fnv or fnval takes the arguments as they are) */
     uint64_t src_hash;          /* of the source file it was compiled from (natives fit only that text) */
     LubeNativeFn fn;
     int (*fnv)(Interp *I, Value *args, double *out, int depth_left);
+    int (*fnval)(Interp *I, Value *args, Value *out, int depth_left);  /* (returns a value of its own: the VM's now) */
 } LubeNative;
 
 /* Records (native.c): the Number fields of an object, copied to and from an array. */
@@ -434,6 +436,7 @@ int lube_reclist_load(Interp *I, LubeRecCache *c, Value v, const char *const *fi
 void lube_rec_store(Interp *I, LubeRecCache *c, Value *slot, int nf, const double *vals, const double *orig);
 void lube_reclist_store(Interp *I, LubeRecCache *c, Value *list, int nf, const double *vals, const double *orig);
 Value *lube_native_global(Interp *I, const char *name, int written);
+Value lube_nv_list(int n, const Value *items);
 double lube_round(double x);
 double lube_m_sin(double x);
 double lube_m_cos(double x);
@@ -838,6 +841,9 @@ struct Interp {
     Source *error_src;
     StrBuf trace;                   /* traceback collected while unwinding */
     StrBuf interp;                  /* OP_INTERP's text, kept between uses */
+    int native_off;                 /* a native call at depth native_off - 1 gave up: what the VM runs for it
+                                       (deeper) runs on the VM too (else recursion that never ends would retry
+                                       machine code at every level); 0: none */
     int trace_count;                /* frames the error passed through */
     int trace_shown;                /* distinct lines kept in `trace` */
     int trace_hidden;               /* frames left out after the first lines */

@@ -69,6 +69,50 @@ fn with_text(n: Number): Number {  // text: not native
   return t
 }
 fn rounded(x: Number): Number => round(x)  // halves up; a whole number is itself
+// values (any Lube value): lists of lists, and lists given by the VM
+fn tree(d: Number) {  // a value back
+  if d == 0 { return [] }
+  return [tree(d - 1), tree(d - 1)]
+}
+fn nodes(t): Number {
+  if len(t) == 0 { return 1 }
+  return 1 + nodes(t[0]) + nodes(t[1])
+}
+fn sum_all(xs): Number {  // a list from the VM: its items unboxed
+  var t = 0
+  for i in 0..len(xs) { t += xs[i] }
+  return t
+}
+fn corner(m): Number => m[0][1] + m[-1][-1]
+fn depth(t): Number {  // values in variables (borrowed)
+  var d = 0
+  var at = t
+  while len(at) > 0 {
+    let left = at[0]
+    at = left
+    d += 1
+  }
+  return d
+}
+fn flags_on(fs): Number {
+  var n = 0
+  for i in 0..len(fs) {
+    if fs[i] { n += 1 }
+  }
+  return n
+}
+fn pair(a, b) => [a, b, [a], 1, true]  // borrowed values in it: one more owner each
+fn first(xs) => xs[0]
+fn same(x) => x
+fn negated(xs): Bool => not xs[0] and xs[1] == false
+fn boxed_back(n: Number) => n * 2
+fn nothing_back(n: Number) {  // falls off the end: the VM gives nothing
+  if n > 5 { return [n] }
+}
+fn deep_fail(d: Number) {  // gives up after making values: they are let go
+  if d == 0 { return [1 / (d - d)] }
+  return [deep_fail(d - 1), deep_fail(d - 1)]
+}
 fn constants(y: Number): Number {  // math on constants: the VM's bits, not what the C compiler works out
   return 8 ** y + pow(4503599627370496, y) + sin(2.5) * cos(1.5) + exp(0.1) + log(10) + log(10, 3) + tan(y) + atan2(1, 3)
 }
@@ -218,7 +262,8 @@ fn no_return(n: Number): Number {
 fn big(n: Number): Number => n * n * n + n  // past 2^53: the double version
 fn neg_zero(n: Number): Number => n % 7  // -7 % 7 is -0 as a double
 
-// these are not native: lists, text, untyped, closures, objects...
+// these are not native: lists that leave, text, closures, objects... (untyped
+// parameters and results are values: untyped, returns_any and calls_untyped are)
 fn uses_list(n: Number): Number => len([n])
 fn untyped(n) => n + 1
 fn text(n: Number): str => "{n}"
@@ -269,7 +314,7 @@ fn makes_closure(n: Number): Number {
   let f = fn(x) => x
   return f(n)
 }
-fn passes(xs) => xs
+fn passes(xs) => xs  // native (a value), but a list of the caller's own is not one
 fn list_leaves(n: Number): Number {
   let xs = [n]
   return len(passes(xs))
@@ -328,6 +373,12 @@ print(maths(10), halves(7), neg(0), neg(3), calls(10), evens(10), by_fraction(9)
 print(constants(0.1), constants(0.0123), constants(-0.37), constants(1.0001))
 print(sums([{x: 1}], 10), sums([{x: -1}], 4), past_2_53(1), past_2_53(3), with_text(4))
 print(rounded(9007199254740991), rounded(4503599627370497), rounded(0.49999999999999994), rounded(-2.5), rounded(2.5))
+print(nodes(tree(5)), tree(2), sum_all([1, 2.5, 3]), corner([[1, 2], [3, 4]]), flags_on([true, false, true]), depth(tree(4)))
+print(pair([1], "x"), first([[7]]), same("text"), negated([false, false]), boxed_back(21), nothing_back(9))
+try { print(sum_all([1, "two"])) } catch e { print(e) }
+try { print(nodes([[], 5])) } catch e { print(e) }
+try { print(deep_fail(3)) } catch e { print(e) }
+try { print(nothing_back(1) + 1) } catch e { print(e) }
 print(big(300000), big(3000000), neg_zero(-7), neg_zero(-7) == 0, neg_zero(15), deep(30000))
 print([5, 6, 7].map(fib), uses_list(3), untyped(1), text(4), returns_any(5), calls_untyped(2))
 print(sieve(100), lists(3), lists(1), many(30))
