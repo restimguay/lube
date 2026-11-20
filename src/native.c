@@ -97,7 +97,11 @@ typedef struct {
     void **dkeys;
     int *dtypes, ndecls, capdecls;
     int *dshape;        /* a record declaration's shape */
+    unsigned char *dneg;  /* a whole-number declaration may be negative (else, so far, every value it got was not) */
+    unsigned char *tnn;   /* tnn[k]: temporary t<k> is a whole number that is not negative */
+    int captnn;
     int *live;
+    int *acc;           /* acc[slot]: an accumulator of the loop with flag ovf<acc - 1> (see loop_accs), else 0 */
     /* shapes: the fields a record parameter's uses need, found as it is translated. A record
      * passed to another fn is laid out as that fn's parameter is: their shapes join (parent:
      * the shape it joined, or itself), and shape_changes counts what grew */
@@ -136,7 +140,14 @@ static int fail(Gen *g) {
 }
 
 static const char *bail(Gen *g) { (void)g; return "goto done;"; }  /* (R still says it gave up) */
-static int new_tmp(Gen *g) { return g->tmp++; }
+static int new_tmp(Gen *g) {
+    if (g->tmp == g->captnn) {
+        g->captnn = g->captnn ? g->captnn * 2 : 64;
+        g->tnn = xrealloc(g->tnn, (size_t)g->captnn);
+    }
+    g->tnn[g->tmp] = 0;
+    return g->tmp++;
+}
 static char letter(int t) { return t == NT_NUM ? 'd' : t == NT_INT ? 'i' : 'b'; }
 static const char *ctype(int t) { return t == NT_NUM ? "double" : t == NT_INT ? "int64_t" : "int"; }
 
@@ -154,10 +165,12 @@ static void declare(Gen *g, void *key, int slot) {
             g->dkeys = xrealloc(g->dkeys, sizeof(void *) * (size_t)g->capdecls);
             g->dtypes = xrealloc(g->dtypes, sizeof(int) * (size_t)g->capdecls);
             g->dshape = xrealloc(g->dshape, sizeof(int) * (size_t)g->capdecls);
+            g->dneg = xrealloc(g->dneg, (size_t)g->capdecls);
         }
         g->dkeys[i] = key;
         g->dtypes[i] = 0;
         g->dshape[i] = -1;
+        g->dneg[i] = 0;  /* (none yet: see nonneg) */
         g->ndecls++;
     }
     g->live[slot] = i;
@@ -165,6 +178,30 @@ static void declare(Gen *g, void *key, int slot) {
 
 /* The type slot's variable holds (0: none yet). */
 static int type_of(Gen *g, int slot) { return g->live[slot] >= 0 ? g->dtypes[g->live[slot]] : 0; }
+
+/* Is whole-number C expression e (a literal, a slot, a temporary, a
+ * length) known not to be negative? A slot is while every value it gets is
+ * not: an inductive guess, dropped (and the fn translated again) when one
+ * might be (mark_neg). */
+static int nonneg(Gen *g, const char *e) {
+    if (e[0] == '(' && e[1] >= '0' && e[1] <= '9') return 1;  /* (5LL) */
+    if (e[0] == 'k' && e[1] >= '0' && e[1] <= '9' && !strchr(e, ' ')) return 1;  /* (a position: checked, or counted from 0) */
+    if ((e[0] == 'i' || e[0] == 't') && e[1] >= '0' && e[1] <= '9') {
+        char *end;
+        long k = strtol(e + 1, &end, 10);
+        if (*end) return 0;
+        return e[0] == 't' ? k < g->tmp && g->tnn[k] : g->live[k] >= 0 && type_of(g, (int)k) == NT_INT && !g->dneg[g->live[k]];
+    }
+    return (e[0] == 'L' && strstr(e, ".n") && !strchr(e, ' ')) || (e[0] == 'R' && e[1] == 'n');  /* (lengths) */
+}
+
+static void mark_neg(Gen *g, int slot) {
+    int d = g->live[slot];
+    if (d >= 0 && !g->dneg[d]) {
+        g->dneg[d] = 1;
+        g->widened = 1;  /* (what relied on it: translated again) */
+    }
+}
 
 /* In a loop: slot is a global whose kind is not known yet (UNTYPED), now
  * used as a Number or Bool: it is one from here on. Returns its type, or 0
@@ -295,6 +332,7 @@ static int slot_store(Gen *g, int slot, int t, const char *v, char *how) {
 static void store(Gen *g, int slot, int t, const char *v) {
     char how[64];
     int st = slot_store(g, slot, t, v, how);
+    if (st == NT_INT && !nonneg(g, how)) mark_neg(g, slot);
     if (st) sb_printf(g->out, "%c%d = %s;\n", letter(st), slot, how);
 }
 
@@ -319,6 +357,7 @@ static int gen_binop(Gen *g, TokenType op, int ta, const char *a, int tb, const 
         sb_printf(g->out, "int t%d = %s %s %s;\n", t, a, cmp[c], b);
     } else if (ta == NT_INT && tb == NT_INT && (op == T_PLUS || op == T_MINUS)) {  /* exact while within 2^53 */
         sb_printf(g->out, "int64_t t%d = %s %c %s;\nif (LUBE_OUT(t%d)) %s\n", t, a, op == T_PLUS ? '+' : '-', b, t, bail(g));
+        g->tnn[t] = op == T_PLUS && nonneg(g, a) && nonneg(g, b);
         snprintf(res, 64, "t%d", t);
         return NT_INT;
     } else if (ta == NT_INT && tb == NT_INT && op == T_STAR) {  /* (as a double: exact when it fits; never -0) */
@@ -326,6 +365,12 @@ static int gen_binop(Gen *g, TokenType op, int ta, const char *a, int tb, const 
         sb_printf(g->out, "if (m%d > LUBE_BIGD || m%d < -LUBE_BIGD || (m%d == 0 && (%s < 0 || %s < 0))) %s\n", t, t,
                   t, a, b, bail(g));
         sb_printf(g->out, "int64_t t%d = (int64_t)m%d;\n", t, t);
+        g->tnn[t] = nonneg(g, a) && nonneg(g, b);
+        snprintf(res, 64, "t%d", t);
+        return NT_INT;
+    } else if (ta == NT_INT && tb == NT_INT && op == T_PERCENT && nonneg(g, a) && b[0] == '(' && b[1] >= '1' && b[1] <= '9') {
+        sb_printf(g->out, "int64_t t%d = %s %% %s;\n", t, a, b);  /* (neither negative: C's %, never -0) */
+        g->tnn[t] = 1;
         snprintf(res, 64, "t%d", t);
         return NT_INT;
     } else if (ta == NT_INT && tb == NT_INT && op == T_PERCENT) {  /* Lube's %: the sign of b; never -0 */
@@ -350,7 +395,7 @@ static int gen_binop(Gen *g, TokenType op, int ta, const char *a, int tb, const 
             snprintf(res, 64, "t%d", t);
             return NT_NUM;
         } else if (op == T_POW) {
-            sb_printf(g->out, "double t%d = pow(%s, %s);\n", t, x, y);
+            sb_printf(g->out, "double t%d = lube_m_pow(%s, %s);\n", t, x, y);
             snprintf(res, 64, "t%d", t);
             return NT_NUM;
         } else {
@@ -465,10 +510,12 @@ static int is_list_expr(Node *n) {
 
 /* A math built-in: its C, or NULL. */
 static const char *builtin(ObjString *name, int nargs) {
-    static const char *const one[][2] = {{"sqrt", "sqrt"}, {"sin", "sin"}, {"cos", "cos"}, {"tan", "tan"},
-                                         {"exp", "exp"}, {"floor", "floor"}, {"ceil", "ceil"}, {"abs", "fabs"},
-                                         {"log", "log"}, {"round", "lube_nround"}};
-    static const char *const two[][2] = {{"pow", "pow"}, {"atan2", "atan2"}, {"log", "lube_nlog2"}};
+    /* (those not exact to the last bit call Lube's: see lube_m_pow) */
+    static const char *const one[][2] = {{"sqrt", "sqrt"}, {"sin", "lube_m_sin"}, {"cos", "lube_m_cos"},
+                                         {"tan", "lube_m_tan"}, {"exp", "lube_m_exp"}, {"floor", "floor"},
+                                         {"ceil", "ceil"}, {"abs", "fabs"}, {"log", "lube_m_log"},
+                                         {"round", "lube_nround"}};
+    static const char *const two[][2] = {{"pow", "lube_m_pow"}, {"atan2", "lube_m_atan2"}, {"log", "lube_nlog2"}};
     for (size_t i = 0; nargs == 1 && i < sizeof one / sizeof one[0]; i++)
         if (!strcmp(name->chars, one[i][0])) return one[i][1];
     for (size_t i = 0; nargs == 2 && i < sizeof two / sizeof two[0]; i++)
@@ -810,6 +857,12 @@ static void gen_assign(Gen *g, Node *n) {
         store(g, slot, t, v);
         return;
     }
+    if (g->acc[slot] && st == NT_INT && t == NT_INT && (op == T_PLUS_EQ || op == T_MINUS_EQ)) {  /* (see loop_accs) */
+        if (op == T_MINUS_EQ || !nonneg(g, v)) mark_neg(g, slot);
+        sb_printf(g->out, "i%d = (int64_t)((uint64_t)i%d %c (uint64_t)%s);\novf%d |= LUBE_OUT(i%d);\n", slot, slot,
+                  op == T_PLUS_EQ ? '+' : '-', v, g->acc[slot] - 1, slot);
+        return;
+    }
     TokenType bin = op == T_PLUS_EQ ? T_PLUS : op == T_MINUS_EQ ? T_MINUS : op == T_STAR_EQ ? T_STAR
                   : op == T_SLASH_EQ ? T_SLASH : T_PERCENT;
     snprintf(cur, sizeof cur, "%c%d", letter(st), slot);
@@ -859,6 +912,105 @@ static int writes_list(NodeList *l, int s) {
     for (int i = 0; i < l->count; i++)
         if (writes_to(l->items[i], s)) return 1;
     return 0;
+}
+
+static int acc_list(NodeList *l, int s);
+
+/* How code n uses slot s: only as an accumulator (s += x, s -= x, x not
+ * reading s): how many times; -1 if any other way (or code it does not know). */
+static int acc_uses(Node *n, int s) {
+    int a, b;
+    if (!n) return 0;
+    switch (n->kind) {
+    case N_LITERAL: case N_BREAK: case N_CONTINUE: return 0;
+    case N_VAR: return n->as.var.kind == VAR_LOCAL && n->as.var.index == s ? -1 : 0;
+    case N_ASSIGN: {
+        Node *t = n->as.assign.target;
+        if (t->kind == N_VAR && t->as.var.kind == VAR_LOCAL && t->as.var.index == s)
+            return (n->as.assign.op == T_PLUS_EQ || n->as.assign.op == T_MINUS_EQ) && !acc_uses(n->as.assign.value, s) ? 1 : -1;
+        a = acc_uses(t, s);
+        b = acc_uses(n->as.assign.value, s);
+        break;
+    }
+    case N_UNARY: return acc_uses(n->as.unary.operand, s);
+    case N_BINARY: case N_AND: case N_OR:
+        a = acc_uses(n->as.binary.left, s);
+        b = acc_uses(n->as.binary.right, s);
+        break;
+    case N_CALL:
+        a = acc_uses(n->as.call.callee, s);
+        b = acc_list(&n->as.call.args, s);
+        break;
+    case N_METHOD:
+        a = acc_uses(n->as.method.object, s);
+        b = acc_list(&n->as.method.args, s);
+        break;
+    case N_INDEX:
+        a = acc_uses(n->as.index.object, s);
+        b = acc_uses(n->as.index.index, s);
+        break;
+    case N_FIELD: return acc_uses(n->as.field.object, s);
+    case N_RANGE:
+        a = acc_uses(n->as.range.start, s);
+        b = acc_uses(n->as.range.end, s);
+        break;
+    case N_REF: case N_EXPR: case N_RETURN: return acc_uses(n->as.expr, s);
+    case N_LIST: return acc_list(&n->as.items, s);
+    case N_TYPED_LIST: return acc_list(&n->as.tlist.items, s);
+    case N_LET: return n->as.let.is_fn ? -1 : acc_uses(n->as.let.value, s);
+    case N_BLOCK: return acc_list(&n->as.block.stmts, s);
+    case N_IF:
+        a = acc_uses(n->as.if_s.cond, s);
+        b = acc_uses(n->as.if_s.then_branch, s);
+        if (a < 0 || b < 0) return -1;
+        a += b;
+        b = acc_uses(n->as.if_s.else_branch, s);
+        break;
+    case N_WHILE:
+        a = acc_uses(n->as.while_s.cond, s);
+        b = acc_uses(n->as.while_s.body, s);
+        break;
+    case N_FOR:
+        a = acc_uses(n->as.for_s.iter, s);
+        b = acc_uses(n->as.for_s.body, s);
+        break;
+    default: return -1;
+    }
+    return a < 0 || b < 0 ? -1 : a + b;
+}
+
+static int acc_list(NodeList *l, int s) {
+    int c = 0;
+    for (int i = 0; i < l->count; i++) {
+        int k = acc_uses(l->items[i], s);
+        if (k < 0) return -1;
+        c += k;
+    }
+    return c;
+}
+
+/* Loop n's accumulators: whole-number variables it only adds to (total +=
+ * x). Nothing in it depends on them, so their bound (2^53) is checked once,
+ * after it (they add with wraparound meanwhile, sticking in ovf<k> when out
+ * of bounds): a return in it cannot be using them. Returns k (-1: none). */
+static int loop_accs(Gen *g, Node *n) {
+    int k = -1, nslots = g->cur->d->nslots;
+    for (int s = 0; s < nslots; s++) {
+        if (type_of(g, s) != NT_INT || g->acc[s] || acc_uses(n, s) <= 0) continue;
+        if (k < 0) {
+            k = new_tmp(g);
+            sb_printf(g->out, "uint64_t ovf%d = 0;\n", k);
+        }
+        g->acc[s] = k + 1;
+    }
+    return k;
+}
+
+static void loop_accs_end(Gen *g, int k) {
+    if (k < 0) return;
+    for (int s = 0; s < g->cur->d->nslots; s++)
+        if (g->acc[s] == k + 1) g->acc[s] = 0;
+    sb_printf(g->out, "if (ovf%d) %s\n", k, bail(g));
 }
 
 static void gen_block(Gen *g, NodeList *stmts) {
@@ -917,7 +1069,8 @@ static void gen_stmt(Gen *g, Node *n) {
             sb_puts(g->out, "}\n");
         }
         break;
-    case N_WHILE:  /* the condition again on each turn (and after continue) */
+    case N_WHILE: {  /* the condition again on each turn (and after continue) */
+        int acc = loop_accs(g, n);
         sb_puts(g->out, "for (;;) {\n");
         if (gen_expr(g, n->as.while_s.cond, v) != NT_BOOL) {
             fail(g);
@@ -926,7 +1079,9 @@ static void gen_stmt(Gen *g, Node *n) {
         sb_printf(g->out, "if (!%s) break;\n", v);
         gen_stmt(g, n->as.while_s.body);
         sb_puts(g->out, "}\n");
+        loop_accs_end(g, acc);
         break;
+    }
     case N_FOR: {  /* over a range: the same items as the VM's (see range_length); whole from a whole start */
         Node *it = n->as.for_s.iter;
         int rs = it->kind == N_VAR ? record(g, it, NT_RLIST) : 0;
@@ -956,7 +1111,7 @@ static void gen_stmt(Gen *g, Node *n) {
             fail(g);
             break;
         }
-        int k = new_tmp(g);
+        int acc = loop_accs(g, n), k = new_tmp(g);
         as_double(ts, v, x);
         as_double(te, e, y);
         sb_printf(g->out, "{\n%s s%d = %s;\ndouble n%d = lube_nrange(%s, %s, %d);\n", ctype(ts), k, v, k, x, y,
@@ -964,6 +1119,12 @@ static void gen_stmt(Gen *g, Node *n) {
         if (ts == NT_INT) sb_printf(g->out, "if ((double)s%d + n%d > LUBE_BIGD) %s\n", k, k, bail(g));
         sb_printf(g->out, "for (int64_t k%d = 0; (double)k%d < n%d; k%d++) {\n", k, k, k, k);
         snprintf(x, sizeof x, ts == NT_INT ? "s%d + k%d" : "s%d + (double)k%d", k, k);
+        if (ts == NT_INT) {  /* (as a temporary: not negative when the start is not) */
+            int u = new_tmp(g);
+            sb_printf(g->out, "int64_t t%d = %s;\n", u, x);
+            g->tnn[u] = nonneg(g, v);
+            snprintf(x, sizeof x, "t%d", u);
+        }
         declare(g, &n->as.for_s.first, n->as.for_s.first.index);
         if (n->as.for_s.two) declare(g, &n->as.for_s.second, n->as.for_s.second.index);
         if (n->as.for_s.two) {  /* for i, x in a..b: the index, then the item */
@@ -975,6 +1136,7 @@ static void gen_stmt(Gen *g, Node *n) {
         }
         gen_block(g, &n->as.for_s.body->as.block.stmts);
         sb_puts(g->out, "}\n}\n");
+        loop_accs_end(g, acc);
         break;
     }
     case N_RETURN: {
@@ -1009,7 +1171,7 @@ static void gen_pass(Gen *g, Cand *c, StrBuf *out) {
     g->tmp = 0;
     g->widened = 0;
     g->line = d->line;  /* (where it stops, if before any of its code) */
-    for (int i = 0; i < nslots; i++) g->live[i] = -1;
+    for (int i = 0; i < nslots; i++) g->live[i] = -1, g->acc[i] = 0;
     if (g->mode) sb_printf(out, "static int64_t ni_%d(", k);
     else sb_printf(out, "static int nf_%d(", k);
     for (int i = 0; i < d->nparams; i++) {
@@ -1049,6 +1211,7 @@ static void gen_pass(Gen *g, Cand *c, StrBuf *out) {
         if (c->loop) snprintf(p, sizeof p, t == NT_BOOL ? "(*p%d != 0)" : "(*p%d)", i);
         else snprintf(p, sizeof p, t == NT_BOOL ? "(p%d != 0)" : "p%d", i);
         store(g, i, t == NT_NUM && g->mode ? NT_INT : t, p);
+        mark_neg(g, i);  /* (a parameter: any) */
     }
     if (d->is_arrow) {  /* fn f(x: Number): Number => x * x */
         Node ret;
@@ -1082,6 +1245,7 @@ static int gen_function(Gen *g, Cand *c, int mode, StrBuf *out) {
     g->mode = mode;
     g->failed = 0;
     g->live = xmalloc(sizeof(int) * (size_t)nslots);
+    g->acc = xmalloc(sizeof(int) * (size_t)nslots);
     g->ndecls = 0;
     StrBuf pass;
     do {
@@ -1095,6 +1259,7 @@ static int gen_function(Gen *g, Cand *c, int mode, StrBuf *out) {
     if (!g->failed) sb_putn(out, pass.data, pass.len);
     sb_free(&pass);
     free(g->live);
+    free(g->acc);
     return !g->failed;
 }
 
@@ -1509,7 +1674,7 @@ static const char *const HEADER[] = {  /* (pieces: C99 promises string literals 
     "    double n = inclusive ? floor(span + 1e-9) + 1 : ceil(span - 1e-9);\n"
     "    return n > 0 ? n : 0;\n"
     "}\n"
-    "static double lube_nround(double x) { return floor(x + 0.5); }\n"
+    "static double lube_nround(double x) { return lube_round(x); }\n"
     ,
     "static int lube_nidx(int64_t n, double d, int64_t *k) {  /* a list position, as list_index finds it */\n"
     "    if (d != floor(d)) return 1;\n"
@@ -1549,7 +1714,7 @@ static const char *const HEADER[] = {  /* (pieces: C99 promises string literals 
     "    }\n"
     "LUBE_NLIST(LubeNNum, double)\n"
     "LUBE_NLIST(LubeNBool, unsigned char)\n"
-    "static double lube_nlog2(double x, double base) { return log(x) / log(base); }\n\n",
+    "static double lube_nlog2(double x, double base) { return lube_m_log(x) / lube_m_log(base); }\n\n",
     NULL};
 
 /* Compiles the program (its files: keys and texts, read from dir) into the
@@ -1710,7 +1875,8 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
 #else
         const char *dflt = "cc";
 #endif
-        sb_printf(&cmd, "\"%s\" -O3 -std=c99 -DLUBE_STACK_SIZE=0x%lx", cc && *cc ? cc : dflt, (unsigned long)LUBE_STACK_SIZE);
+        sb_printf(&cmd, "\"%s\" -O3 -std=c99 -ffp-contract=off -DLUBE_STACK_SIZE=0x%lx", cc && *cc ? cc : dflt,
+                  (unsigned long)LUBE_STACK_SIZE);  /* (no a * b + c in one rounding: the VM's two) */
 #if defined(__APPLE__)
         sb_printf(&cmd, " -Wl,-stack_size,0x%lx", (unsigned long)LUBE_STACK_SIZE);
 #elif defined(_WIN32)
@@ -1773,6 +1939,8 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
     free(g.dkeys);
     free(g.dtypes);
     free(g.dshape);
+    free(g.dneg);
+    free(g.tnn);
     free(g.shapes);
     free(g.classes);
     return status;
@@ -1864,6 +2032,17 @@ Value *lube_native_global(Interp *I, const char *name, int written) {
     if (!v || v->type == VAL_LENT || (written && lube_global_watched(I, s))) return NULL;
     return v;
 }
+
+/* The math built-ins machine code calls: here, apart from it, so that its C
+ * compiler cannot work them out itself (for a constant) or rewrite them
+ * (pow(8, y) as exp2(3 * y)), which would not always give the VM's bits. */
+double lube_m_sin(double x) { return sin(x); }
+double lube_m_cos(double x) { return cos(x); }
+double lube_m_tan(double x) { return tan(x); }
+double lube_m_exp(double x) { return exp(x); }
+double lube_m_log(double x) { return log(x); }
+double lube_m_pow(double x, double y) { return pow(x, y); }
+double lube_m_atan2(double y, double x) { return atan2(y, x); }
 
 /* A loop's global list (of Numbers, or bools: of Bools; typed: Number[] or
  * Bool[], else untyped) into a new array *a, of *n: 1 if it is not one. */

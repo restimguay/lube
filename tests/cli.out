@@ -190,6 +190,9 @@ usage:
 6765 2997 18.5 23.5 59.66666666666667 58.5 35.33333333333333
 true true true true 1 0
 66.30601929111549 4.5 0 -3 85 5 4.5
+43.9575705298412 8.463848895874637 5.943176568833556 4519861535090529
+65 18 13510798882111488 3.152519739159347e+16 6
+9007199254740991 4503599627370497 0 -2 3
 2.70000000003e+16 2.7000000000003e+19 0 true 1 30000
 [5, 8, 13] 1 2 4 5 3
 25 148 46 30
@@ -230,12 +233,15 @@ stack overflow: too much recursion
 300
 [exit 0]
 --- native: the program built
-native: fib, sum_mod, mixed, ops, compare, flags, maths, nothing, halves, neg, calls, is_even, evens, by_fraction, sieve, lists, bad_index, bad_repeat, many, step, total_x, push_one, moved, local_copy, by_number, halve, then_fails, zero_div, zero_mod, deep, no_return, big, neg_zero, has_list, statement, record_passed, bool_add, the loop on line 314
-not native: uses_list (line 190), returns_any (line 193), calls_untyped (line 194), sets_global (line 197), inner_fn (line 205), num_cond (line 209), while_num (line 213), for_call (line 218), with_try (line 222), negate_bool (line 228), bool_row (line 230), bad_field (line 231), many_fields (line 235), makes_closure (line 237), list_leaves (line 243), empty_list (line 246), mixed_list (line 250), list_retyped (line 260), index_bool (line 265), push_bool (line 269), text_list (line 273), bool_list_add (line 278), repeat_bool (line 282), index_number (line 285), push_value (line 288), contains (line 290)
+native: fib, sum_mod, mixed, ops, compare, flags, sums, past_2_53, rounded, constants, maths, nothing, halves, neg, calls, is_even, evens, by_fraction, sieve, lists, bad_index, bad_repeat, many, step, total_x, push_one, moved, local_copy, by_number, halve, then_fails, zero_div, zero_mod, deep, no_return, big, neg_zero, has_list, statement, record_passed, bool_add, the loop on line 349
+not native: with_text (line 67), uses_list (line 222), returns_any (line 225), calls_untyped (line 226), sets_global (line 229), inner_fn (line 237), num_cond (line 241), while_num (line 245), for_call (line 250), with_try (line 254), negate_bool (line 260), bool_row (line 262), bad_field (line 263), many_fields (line 267), makes_closure (line 269), list_leaves (line 275), empty_list (line 278), mixed_list (line 282), list_retyped (line 292), index_bool (line 297), push_bool (line 301), text_list (line 305), bool_list_add (line 310), repeat_bool (line 314), index_number (line 317), push_value (line 320), contains (line 322)
 built TMP/native_app: 1 file, N bytes
 6765 2997 18.5 23.5 59.66666666666667 58.5 35.33333333333333
 true true true true 1 0
 66.30601929111549 4.5 0 -3 85 5 4.5
+43.9575705298412 8.463848895874637 5.943176568833556 4519861535090529
+65 18 13510798882111488 3.152519739159347e+16 6
+9007199254740991 4503599627370497 0 -2 3
 2.70000000003e+16 2.7000000000003e+19 0 true 1 30000
 [5, 8, 13] 1 2 4 5 3
 25 148 46 30
@@ -279,6 +285,9 @@ stack overflow: too much recursion
 6765 2997 18.5 23.5 59.66666666666667 58.5 35.33333333333333
 true true true true 1 0
 66.30601929111549 4.5 0 -3 85 5 4.5
+43.9575705298412 8.463848895874637 5.943176568833556 4519861535090529
+65 18 13510798882111488 3.152519739159347e+16 6
+9007199254740991 4503599627370497 0 -2 3
 2.70000000003e+16 2.7000000000003e+19 0 true 1 30000
 [5, 8, 13] 1 2 4 5 3
 25 148 46 30
@@ -322,6 +331,9 @@ lube: out of memory
 6765 2997 18.5 23.5 59.66666666666667 58.5 35.33333333333333
 true true true true 1 0
 66.30601929111549 4.5 0 -3 85 5 4.5
+43.9575705298412 8.463848895874637 5.943176568833556 4519861535090529
+65 18 13510798882111488 3.152519739159347e+16 6
+9007199254740991 4503599627370497 0 -2 3
 2.70000000003e+16 2.7000000000003e+19 0 true 1 30000
 [5, 8, 13] 1 2 4 5 3
 25 148 46 30

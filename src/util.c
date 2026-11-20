@@ -4,6 +4,8 @@
  */
 #include "lube.h"
 
+#include <math.h>
+
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -92,6 +94,14 @@ void arena_free(Arena *a) {
 }
 
 /* ---------- string buffer ---------- */
+
+/* x to the nearest whole number, halves up (2.5 is 3, -2.5 is -2), -0 to 0.
+ * (floor(x + 0.5) is not it: x + 0.5 rounds when x is past 2^52, or is
+ * 0.49999999999999994.) x - floor(x) is exact. */
+double lube_round(double x) {
+    double f = floor(x);
+    return x - f >= 0.5 ? f + 1 : f + 0.0;
+}
 
 void sb_init(StrBuf *sb) {
     sb->data = NULL;

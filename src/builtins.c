@@ -1184,7 +1184,7 @@ NATIVE(n_round) {
     NEED_NUM(0);
     if (IS_INT(argv[0])) return argv[0];
     double x = numeric_value(argv[0]);
-    if (argc < 2) return NUM_VAL(floor(x + 0.5));
+    if (argc < 2) return NUM_VAL(lube_round(x));
     NEED_INT(1);
     double m = pow(10, numeric_value(argv[1]));
     return NUM_VAL(floor(x * m + 0.5) / m);
