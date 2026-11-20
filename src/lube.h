@@ -428,6 +428,8 @@ int lube_reclist_load(Interp *I, LubeRecCache *c, Value v, const char *const *fi
 void lube_rec_store(Interp *I, LubeRecCache *c, Value *slot, int nf, const double *vals, const double *orig);
 void lube_reclist_store(Interp *I, LubeRecCache *c, Value *list, int nf, const double *vals, const double *orig);
 Value *lube_native_global(Interp *I, const char *name, int written);
+int lube_numlist_load(Value v, int bools, int typed, void **a, int64_t *n);
+void lube_numlist_store(Value *slot, int bools, void *a, int64_t n);
 extern const LubeNative lube_natives[];  /* (nativetab.c, or the native build's own) */
 extern const int lube_nnatives;
 

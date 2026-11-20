@@ -175,5 +175,24 @@ for i in 0..1 {
 }
 print(g1, g2, g3)
 
+// global lists of Numbers and Bools: their items go in and come back out
+var nums = Number[]
+var marks = [false] * 6
+var plain = [1, 2]
+let table = [10, 20, 30]
+var odd_one = [1, 2]
+odd_one.push("three")  // not only Numbers now: its loop runs on the VM
+var names = str[]
+let shared = nums
+for i in 0..8 {
+  nums.push(i * i + table[i % 3])
+  marks[i % 4] = true
+  push(&plain, len(nums))
+  plain[0] += 1
+}
+for i in 0..2 { odd_one[0] += i }
+for i in 0..2 { names.push("n") }
+print(nums, marks, plain, shared, odd_one, names)
+
 for i in 0..10 { n += 100 / (5 - i) }  // division by zero: the VM runs it again, from the start, and says so
 print(n)

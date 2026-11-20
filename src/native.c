@@ -170,7 +170,7 @@ static int type_of(Gen *g, int slot) { return g->live[slot] >= 0 ? g->dtypes[g->
  * used as a Number or Bool: it is one from here on. Returns its type, or 0
  * when slot is not such a global. */
 static int loop_scalar(Gen *g, int slot, int t) {
-    if (!g->cur->loop || slot >= g->cur->d->nparams || type_of(g, slot) != UNTYPED) return 0;
+    if (!g->cur->loop || slot >= g->cur->d->nparams || type_of(g, slot) != UNTYPED || g->cur->hint[slot] >= NT_LNUM) return 0;
     t = t == NT_BOOL ? NT_BOOL : NT_NUM;
     g->dtypes[g->live[slot]] = g->cur->params[slot] = t;
     g->widened = 1;
@@ -207,6 +207,7 @@ static int shape_join(Gen *g, int a, int b) {
 static int record(Gen *g, Node *n, int want) {
     if (n->kind != N_VAR || n->as.var.kind != VAR_LOCAL || g->live[n->as.var.index] < 0) return 0;
     int d = g->live[n->as.var.index], *t = &g->dtypes[d];
+    if (*t == UNTYPED && g->cur->loop && g->cur->hint[n->as.var.index] >= NT_LNUM) return 0;  /* (a loop's list) */
     if (*t == UNTYPED) {  /* (its parameter now has a kind: the fn's signature changes) */
         *t = want;
         g->cur->params[n->as.var.index] = want;
@@ -360,9 +361,14 @@ static int gen_binop(Gen *g, TokenType op, int ta, const char *a, int tb, const 
     return NT_BOOL;
 }
 
-/* n is a local list of the fn's own: its type (NT_LNUM, NT_LBOOL); else 0. */
+/* n is a local list of the fn's own (or a loop's global list, of the kind
+ * it was declared as): its type (NT_LNUM, NT_LBOOL...); else 0. */
 static int list_slot(Gen *g, Node *n) {
-    int t = n->kind == N_VAR && n->as.var.kind == VAR_LOCAL ? type_of(g, n->as.var.index) : 0;
+    int s = n->kind == N_VAR && n->as.var.kind == VAR_LOCAL ? n->as.var.index : -1, t = s >= 0 ? type_of(g, s) : 0;
+    if (t == UNTYPED && g->cur->loop && s < g->cur->d->nparams && g->cur->hint[s] >= NT_LNUM) {
+        t = g->dtypes[g->live[s]] = g->cur->params[s] = g->cur->hint[s];
+        g->widened = 1;
+    }
     return t >= NT_LNUM && t <= NT_TLBOOL ? t : 0;
 }
 
@@ -1010,6 +1016,7 @@ static void gen_pass(Gen *g, Cand *c, StrBuf *out) {
         int t = c->params[i];
         if (t == NT_REC) sb_printf(out, "double *r%d, ", i);
         else if (t == UNTYPED || t == NT_RLIST) sb_printf(out, "double *r%d, int64_t rn%d, ", i, i);
+        else if (t >= NT_LNUM) sb_printf(out, "%s *pl%d, ", LTYPE(t), i);  /* (a loop's list: given back at the end) */
         else if (c->loop) sb_printf(out, "double *p%d, ", i);  /* (a global: given back at the end) */
         else sb_printf(out, "%s p%d, ", g->mode ? "int64_t" : "double", i);
     }
@@ -1027,6 +1034,11 @@ static void gen_pass(Gen *g, Cand *c, StrBuf *out) {
         char p[64];
         int t = c->params[i];
         declare(g, &d->params[i], i);
+        if (t >= NT_LNUM && t <= NT_TLBOOL) {  /* a loop's list: its array is this fn's until it gives it back */
+            g->dtypes[g->live[i]] = t;
+            sb_printf(out, "L%c%d = *pl%d;\n", LCHAR(t), i, i);
+            continue;
+        }
         if (t == UNTYPED || RECORD(t)) {  /* a record parameter: the wrapper's copy of its fields */
             g->dtypes[g->live[i]] = t;
             g->dshape[g->live[i]] = c->shape[i];
@@ -1051,9 +1063,13 @@ static void gen_pass(Gen *g, Cand *c, StrBuf *out) {
     /* (fell off the end: nothing to return, or the VM's error that the value is missing) */
     if (c->ret == NT_NONE) sb_puts(out, "R = 0;\n");
     sb_puts(out, "done:\nfree(Lnt.a);\nfree(Lbt.a);\n");
-    for (int i = 0; c->loop && i < d->nparams; i++)  /* a loop's Numbers and Bools go back to its globals */
-        if (!RECORD(c->params[i]) && c->params[i] != UNTYPED && c->written[i])
+    for (int i = 0; c->loop && i < d->nparams; i++) {  /* a loop's Numbers, Bools and lists go back to its globals */
+        int t = c->params[i];
+        if (t >= NT_LNUM && t <= NT_TLBOOL)
+            sb_printf(out, "if (R == 0) {\n*pl%d = L%c%d;\nL%c%d.a = 0;\n}\n", i, LCHAR(t), i, LCHAR(t), i);
+        else if (!RECORD(t) && t != UNTYPED && c->written[i])
             sb_printf(out, "if (R == 0) *p%d = %c%d;\n", i, letter(type_of(g, i)), i);
+    }
     for (int i = 0; i < nslots; i++) sb_printf(out, "free(Ln%d.a);\nfree(Lb%d.a);\n", i, i);
     sb_puts(out, "return R;\n}\n\n");
 }
@@ -1157,13 +1173,19 @@ static void note_declared(Gen *g, Node *s) {
     Value v;
     double n = map_get(g->declared, OBJ_VAL(key), &v) ? v.as.number : 0;
     map_set(g->declared, retain(OBJ_VAL(key)), NUM_VAL(n + 1));
-    if (s->kind == N_LET && !s->as.let.is_fn) {  /* a variable: a Bool when it starts as one */
-        Node *x = s->as.let.value;
+    if (s->kind == N_LET && !s->as.let.is_fn) {  /* a variable: a Bool when it starts as one, or a list */
+        Node *x = s->as.let.value, *l = x;
+        if (l->kind == N_BINARY && l->as.binary.op == T_STAR)  /* ([x] * n) */
+            l = l->as.binary.left->kind == N_LIST || l->as.binary.left->kind == N_TYPED_LIST ? l->as.binary.left : l->as.binary.right;
+        Node *first = l->kind == N_LIST && l->as.items.count ? l->as.items.items[0] : NULL;
+        int list = l->kind == N_TYPED_LIST ? (l->as.tlist.elem == TT_NUMBER ? NT_TLNUM : l->as.tlist.elem == TT_BOOL ? NT_TLBOOL : 0)
+                 : first && first->kind == N_LITERAL ? (IS_NUM(first->as.literal) ? NT_LNUM : IS_BOOL(first->as.literal) ? NT_LBOOL : 0)
+                 : 0;
         int b = x->kind == N_LITERAL ? IS_BOOL(x->as.literal)
               : x->kind == N_AND || x->kind == N_OR || (x->kind == N_UNARY && x->as.unary.op == T_NOT)
               || (x->kind == N_BINARY && (x->as.binary.op == T_LT || x->as.binary.op == T_LE || x->as.binary.op == T_GT
                                           || x->as.binary.op == T_GE || x->as.binary.op == T_EQ || x->as.binary.op == T_NEQ));
-        map_set(g->vars, retain(OBJ_VAL(key)), NUM_VAL((b ? NT_BOOL : NT_NUM) + (s->as.let.is_var ? 0 : 16)));
+        map_set(g->vars, retain(OBJ_VAL(key)), NUM_VAL((list ? list : b ? NT_BOOL : NT_NUM) + (s->as.let.is_var ? 0 : 16)));
     }
     if (s->kind == N_CLASS) {
         g->classes = xrealloc(g->classes, sizeof(ClassInfo) * (size_t)(g->nclasses + 1));
@@ -1355,7 +1377,7 @@ static int records_wrapper(Gen *g, Cand *k, int i, StrBuf *c) {
         for (int f = 0; f < SHAPE(g, sh)->n; f++) sb_printf(c, "\"%s\", ", SHAPE(g, sh)->fields[f]->chars);
         sb_printf(c, "0};\nstatic LUBE_THREAD_LOCAL LubeRecCache rc_%d_%d;\n", i, p);
     }
-    sb_printf(c, "static int wv_%d(Interp *I, Value *args, double *out, int left) {\n    int R = 1;\n", i);
+    sb_printf(c, "static int wv_%d(Interp *I, Value *args, double *out, int left) {\n    int R = 1, called = 0;\n    (void)called;\n", i);
     if (k->loop && k->d->nparams) {  /* its globals, as the arguments (taken back at the end) */
         sb_printf(c, "    Value *gv[%d], ga[%d];\n    args = ga;\n", k->d->nparams, k->d->nparams);
         for (int p = 0; p < k->d->nparams; p++)
@@ -1367,6 +1389,7 @@ static int records_wrapper(Gen *g, Cand *k, int i, StrBuf *c) {
         if (t == NT_RLIST)
             sb_printf(c, "    double rs%d[256], os%d[256], *r%d = rs%d, *o%d = os%d;\n    int64_t rn%d = 0;\n", p, p, p, p, p, p, p);
         else if (t == NT_REC) sb_printf(c, "    double rb%d[LUBE_REC_MAX], ob%d[LUBE_REC_MAX];\n", p, p);
+        else if (t >= NT_LNUM && t <= NT_TLBOOL) sb_printf(c, "    %s l%d = {0, 0, 0};\n", LTYPE(t), p);
         else sb_printf(c, "    double a%d = 0;\n", p);
     }
     for (int p = 0; p < k->d->nparams; p++) {
@@ -1381,6 +1404,9 @@ static int records_wrapper(Gen *g, Cand *k, int i, StrBuf *c) {
             if (ref) sb_printf(c, "    if (r%d != rs%d) o%d = malloc(sizeof(double) * (size_t)(rn%d * %d + 1));\n"
                                   "    if (!o%d) goto done;\n    memcpy(o%d, r%d, sizeof(double) * (size_t)(rn%d * %d));\n",
                                p, p, p, p, nf, p, p, p, p, nf);
+        } else if (t >= NT_LNUM && t <= NT_TLBOOL) {  /* (a loop's list: its items, copied) */
+            sb_printf(c, "    if (lube_numlist_load(args[%d], %d, %d, (void **)&l%d.a, &l%d.n)) goto done;\n    l%d.cap = l%d.n;\n",
+                      p, !LIST_NUM(t), t == NT_TLNUM || t == NT_TLBOOL, p, p, p, p);
         } else if (t == NT_REC) {
             sb_printf(c, "    if (lube_rec_load(I, &rc_%d_%d, args[%d], fs_%d_%d, %d, %s, rb%d)) goto done;\n", i, p, p, i, p, nf, cls, p);
             if (ref) sb_printf(c, "    memcpy(ob%d, rb%d, sizeof(double) * %d);\n", p, p, nf);
@@ -1389,18 +1415,25 @@ static int records_wrapper(Gen *g, Cand *k, int i, StrBuf *c) {
             sb_printf(c, "    if (!IS_%s(args[%d])) goto done;\n    a%d = args[%d].as.%s;\n", t == NT_NUM ? "NUM" : "BOOL", p, p, p,
                       t == NT_NUM ? "number" : "boolean");
     }
-    sb_printf(c, "    R = nf_%d(", i);
+    sb_printf(c, "    called = 1;\n    R = nf_%d(", i);  /* (its lists are the machine code's from here) */
     for (int p = 0; p < k->d->nparams; p++) {
         int t = k->params[p];
         if (t == NT_RLIST) sb_printf(c, "r%d, rn%d, ", p, p);
         else if (t == NT_REC) sb_printf(c, "rb%d, ", p);
+        else if (t >= NT_LNUM && t <= NT_TLBOOL) sb_printf(c, "&l%d, ", p);
         else sb_printf(c, k->loop ? "&a%d, " : "a%d, ", p);
     }
     sb_puts(c, "out, left);\n    if (R == 0) {\n");
-    for (int p = 0; k->loop && p < k->d->nparams; p++)  /* (its Numbers and Bools: as the machine code left them) */
-        if (k->written[p] && !RECORD(k->params[p]))
-            sb_printf(c, "        *gv[%d] = %s_VAL(a%d%s);\n", p, k->params[p] == NT_BOOL ? "BOOL" : "NUM", p,
-                      k->params[p] == NT_BOOL ? " != 0" : "");
+    for (int p = 0; k->loop && p < k->d->nparams; p++) {  /* (its Numbers, Bools and lists: as the machine code left them) */
+        int t = k->params[p];
+        if (t >= NT_LNUM && t <= NT_TLBOOL) {
+            if (k->written[p]) sb_printf(c, "        lube_numlist_store(&ga[%d], %d, l%d.a, l%d.n);\n        *gv[%d] = ga[%d];\n",
+                                         p, !LIST_NUM(t), p, p, p, p);
+            else sb_printf(c, "        free(l%d.a);\n", p);
+        } else if (k->written[p] && !RECORD(t)) {
+            sb_printf(c, "        *gv[%d] = %s_VAL(a%d%s);\n", p, t == NT_BOOL ? "BOOL" : "NUM", p, t == NT_BOOL ? " != 0" : "");
+        }
+    }
     for (int p = 0; p < k->d->nparams; p++) {
         int t = k->params[p], nf = RECORD(t) ? SHAPE(g, k->shape[p])->n : 0;
         if (!RECORD(t) || !lent_param(k, p)) continue;  /* (& parameters and this only: the others were copies) */
@@ -1411,8 +1444,11 @@ static int records_wrapper(Gen *g, Cand *k, int i, StrBuf *c) {
         if (k->loop) sb_printf(c, "        *gv[%d] = ga[%d];\n", p, p);  /* (a copy, if the global's was shared) */
     }
     sb_puts(c, "    }\ndone:\n");
-    for (int p = 0; p < k->d->nparams; p++)
-        if (k->params[p] == NT_RLIST) sb_printf(c, "    if (r%d != rs%d) free(r%d);\n    if (o%d != os%d) free(o%d);\n", p, p, p, p, p, p);
+    for (int p = 0; p < k->d->nparams; p++) {
+        int t = k->params[p];
+        if (t == NT_RLIST) sb_printf(c, "    if (r%d != rs%d) free(r%d);\n    if (o%d != os%d) free(o%d);\n", p, p, p, p, p, p);
+        if (t >= NT_LNUM && t <= NT_TLBOOL) sb_printf(c, "    if (!called) free(l%d.a);\n", p);
+    }
     sb_puts(c, "    return R;\n}\n\n");
     return 1;
 }
@@ -1598,7 +1634,9 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
         sb_printf(&c, "static int nf_%d(", i);
         for (int p = 0; p < k->d->nparams; p++)
             sb_puts(&c, k->params[p] == NT_REC ? "double *, " : k->params[p] == NT_RLIST ? "double *, int64_t, "
-                        : k->loop ? "double *, " : "double, ");  /* (a loop's Numbers: given back) */
+                        : k->params[p] == NT_LNUM || k->params[p] == NT_TLNUM ? "LubeNNum *, "
+                        : k->params[p] == NT_LBOOL || k->params[p] == NT_TLBOOL ? "LubeNBool *, "
+                        : k->loop ? "double *, " : "double, ");  /* (a loop's Numbers and lists: given back) */
         sb_puts(&c, "double *, int);\n");
         if (!k->ok_int) continue;
         sb_printf(&c, "static int64_t ni_%d(", i);
@@ -1825,6 +1863,38 @@ Value *lube_native_global(Interp *I, const char *name, int written) {
     Value *v = map_find(I->globals, OBJ_VAL(s));
     if (!v || v->type == VAL_LENT || (written && lube_global_watched(I, s))) return NULL;
     return v;
+}
+
+/* A loop's global list (of Numbers, or bools: of Bools; typed: Number[] or
+ * Bool[], else untyped) into a new array *a, of *n: 1 if it is not one. */
+int lube_numlist_load(Value v, int bools, int typed, void **a, int64_t *n) {
+    if (!IS_LIST(v) || AS_LIST(v)->elem != (typed ? (bools ? TT_BOOL : TT_NUMBER) : TT_ANY)) return 1;
+    ObjList *l = AS_LIST(v);
+    double *d = bools ? NULL : xmalloc(sizeof(double) * (l->count ? l->count : 1));
+    unsigned char *b = bools ? xmalloc(l->count ? l->count : 1) : NULL;
+    for (size_t i = 0; i < l->count; i++) {
+        if (bools ? !IS_BOOL(l->items[i]) : !IS_NUM(l->items[i])) {
+            free(d);
+            free(b);
+            return 1;
+        }
+        if (bools) b[i] = (unsigned char)l->items[i].as.boolean;
+        else d[i] = l->items[i].as.number;
+    }
+    *a = bools ? (void *)b : (void *)d;
+    *n = (int64_t)l->count;
+    return 0;
+}
+
+/* The list in *slot (copied first if shared) takes the n items of array a, which it frees. */
+void lube_numlist_store(Value *slot, int bools, void *a, int64_t n) {
+    make_unique(slot);
+    ObjList *l = AS_LIST(*slot);
+    list_reserve(l, (size_t)n);
+    for (int64_t i = 0; i < n; i++)
+        l->items[i] = bools ? BOOL_VAL(((unsigned char *)a)[i]) : NUM_VAL(((double *)a)[i]);
+    l->count = (size_t)n;
+    free(a);
 }
 
 /* Top-level statement `index` of src: the machine code this executable has

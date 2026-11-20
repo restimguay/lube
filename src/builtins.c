@@ -443,30 +443,82 @@ static int sort_before(Interp *I, Value cmp, Value b, Value a) {
 /* sort() of plain Numbers: the same merge sort and the same comparisons
  * (b < a, and nan cannot be ordered) on the doubles themselves. Fills out;
  * 0, or -1 after an error. */
+/* The n Numbers in a, in order, by their bits (a stable radix sort: what
+ * the merge sort below makes, faster on many). Each one's key orders like
+ * the Number; -0 has 0's, and the zeros get back their signs in their first
+ * order (as a stable sort leaves them). 0 when there is a nan. */
+static int radix_numbers(double *a, double *tmp, size_t n) {
+    uint64_t *k = (uint64_t *)(void *)a, *t = (uint64_t *)(void *)tmp;
+    unsigned char *signs = NULL;
+    size_t zeros = 0, (*count)[256] = xmalloc(8 * sizeof *count);
+    memset(count, 0, 8 * sizeof *count);
+    for (size_t i = 0; i < n; i++) {
+        double x = a[i];
+        if (x != x) {
+            free(count);
+            return 0;
+        }
+        if (x == 0) {  /* (its sign, kept for later) */
+            if (!signs) signs = xmalloc(n - i);
+            signs[zeros++] = signbit(x) != 0;
+            x = 0;
+        }
+        uint64_t b;
+        memcpy(&b, &x, sizeof b);
+        k[i] = b >> 63 ? ~b : b | 0x8000000000000000ull;  /* (negatives: reversed) */
+        for (int d = 0; d < 8; d++) count[d][(k[i] >> (8 * d)) & 255]++;
+    }
+    for (int d = 0; d < 8; d++) {
+        if (count[d][(k[0] >> (8 * d)) & 255] == n) continue;  /* (every key has this byte) */
+        size_t at = 0;
+        for (int b = 0; b < 256; b++) {
+            size_t c = count[d][b];
+            count[d][b] = at;
+            at += c;
+        }
+        for (size_t i = 0; i < n; i++) t[count[d][(k[i] >> (8 * d)) & 255]++] = k[i];
+        uint64_t *swap = k;
+        k = t;
+        t = swap;
+    }
+    size_t z = 0;
+    for (size_t i = 0; i < n; i++) {
+        uint64_t b = k[i] >> 63 ? k[i] & 0x7fffffffffffffffull : ~k[i];
+        memcpy(&a[i], &b, sizeof b);  /* (a may be where k is: same place, same size) */
+        if (a[i] == 0 && signs[z++]) a[i] = -0.0;
+    }
+    free(signs);
+    free(count);
+    return 1;
+}
+
 static int sort_numbers(Interp *I, ObjList *src, ObjList *out) {
     size_t n = src->count;
     double *a = xmalloc(sizeof(double) * (n ? n : 1)), *tmp = xmalloc(sizeof(double) * (n ? n : 1));
     for (size_t i = 0; i < n; i++) a[i] = src->items[i].as.number;
     int failed = 0;
-    for (size_t width = 1; width < n && !failed; width *= 2) {
-        for (size_t lo = 0; lo < n && !failed; lo += 2 * width) {
-            size_t mid = lo + width < n ? lo + width : n;
-            size_t hi = lo + 2 * width < n ? lo + 2 * width : n;
-            size_t i = lo, j = mid, k = lo;
-            while (i < mid && j < hi) {
-                if (a[j] != a[j] || a[i] != a[i]) {
-                    lube_error(I, "sort() cannot order nan");
-                    failed = 1;
-                    break;
+    if (n < 64 || !radix_numbers(a, tmp, n)) {  /* few, or a nan (and its error): a merge sort */
+        for (size_t i = 0; i < n; i++) a[i] = src->items[i].as.number;
+        for (size_t width = 1; width < n && !failed; width *= 2) {
+            for (size_t lo = 0; lo < n && !failed; lo += 2 * width) {
+                size_t mid = lo + width < n ? lo + width : n;
+                size_t hi = lo + 2 * width < n ? lo + 2 * width : n;
+                size_t i = lo, j = mid, k = lo;
+                while (i < mid && j < hi) {
+                    if (a[j] != a[j] || a[i] != a[i]) {
+                        lube_error(I, "sort() cannot order nan");
+                        failed = 1;
+                        break;
+                    }
+                    tmp[k++] = a[j] < a[i] ? a[j++] : a[i++];
                 }
-                tmp[k++] = a[j] < a[i] ? a[j++] : a[i++];
+                while (i < mid) tmp[k++] = a[i++];
+                while (j < hi) tmp[k++] = a[j++];
             }
-            while (i < mid) tmp[k++] = a[i++];
-            while (j < hi) tmp[k++] = a[j++];
+            double *t = a;
+            a = tmp;
+            tmp = t;
         }
-        double *t = a;
-        a = tmp;
-        tmp = t;
     }
     if (!failed) {
         list_reserve(out, n);

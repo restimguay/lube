@@ -382,11 +382,12 @@ cannot change 'this' here: the method was called on something that cannot change
 turn 0
 turn 1
 89 14 4
-tests/cli/native_loops.lube:178: error: division by zero
-  178 | for i in 0..10 { n += 100 / (5 - i) }  // division by zero: the VM runs it again, from the start, and says so
+[10, 21, 34, 19, 36, 55, 46, 69] [true, true, true, true, false, false] [9, 2, 1, 2, 3, 4, 5, 6, 7, 8] [] [2, 2, "three"] ["n", "n"]
+tests/cli/native_loops.lube:197: error: division by zero
+  197 | for i in 0..10 { n += 100 / (5 - i) }  // division by zero: the VM runs it again, from the start, and says so
 [exit 70]
 --- native: top-level loops, built
-native: nudge, spread, sum_x, move_all, total_mass, both, Body.move, Body.speed, Body.fast, Body.bounce, Body.absorb, Body.mass, Moon.speed, Rock.fast, the loop on line 24, the loop on line 32, the loop on line 43, the loop on line 51, the loop on line 59, the loop on line 64, the loop on line 72, the loop on line 139, the loop on line 164, the loop on line 178
+native: nudge, spread, sum_x, move_all, total_mass, both, Body.move, Body.speed, Body.fast, Body.bounce, Body.absorb, Body.mass, Moon.speed, Rock.fast, the loop on line 24, the loop on line 32, the loop on line 43, the loop on line 51, the loop on line 59, the loop on line 64, the loop on line 72, the loop on line 139, the loop on line 164, the loop on line 187, the loop on line 193, the loop on line 197
 not native: named (line 107), twice_passed (line 114), texts (line 116), peek (line 120)
 built TMP/loops_app: 1 file, N bytes
 570 true 7.9792266297612e+16
@@ -409,8 +410,9 @@ cannot change 'this' here: the method was called on something that cannot change
 turn 0
 turn 1
 89 14 4
-native_loops.lube:178: error: division by zero
-  178 | for i in 0..10 { n += 100 / (5 - i) }  // division by zero: the VM runs it again, from the start, and says so
+[10, 21, 34, 19, 36, 55, 46, 69] [true, true, true, true, false, false] [9, 2, 1, 2, 3, 4, 5, 6, 7, 8] [] [2, 2, "three"] ["n", "n"]
+native_loops.lube:197: error: division by zero
+  197 | for i in 0..10 { n += 100 / (5 - i) }  // division by zero: the VM runs it again, from the start, and says so
 [exit 70]
 --- native: nothing can be
 native: none of its functions can be (a plain build)
