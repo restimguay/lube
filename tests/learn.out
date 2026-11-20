@@ -1,0 +1,425 @@
+[150, 4] float64 int64 [5.1, 3.5, 1.4, 0.2] [5.9, 3, 5.1, 1.8] 0 1 2 ["sepal length (cm)", "sepal width (cm)", "petal length (cm)", "petal width (cm)"] ["setosa", "versicolor", "virginica"]
+2 true true
+[[-2.187732, 3.333521],
+ [-0.794152, 2.104951],
+ [0.085252, 3.645283],
+ [-9.678673, -4.202719],
+ [-8.535605, -6.013489],
+ [-7.387299, -8.537282],
+ [-5.931113, -9.253119]] [0, 0, 0, 1, 1, 2, 2]
+[[9.793562, 10.821197],
+ [0.933779, -0.488639],
+ [11.900177, 9.697286],
+ [0.489369, 1.120447],
+ [0.882026, 0.200079]] [1, 0, 1, 0, 0]
+[[0.435322, 0.420368, 0.330335],
+ [0.435995, 0.025926, 0.549662],
+ [0.435995, 0.025926, 0.549662],
+ [0.435322, 0.420368, 0.330335]] [1, 0, 0, 1] [100, 2]
+[[1.788628, 0.43651, 0.096497, -1.863493],
+ [-0.277388, -0.354759, -0.082741, -0.627001],
+ [-0.043818, -0.477218, -1.313865, 0.884622],
+ [0.881318, 1.709573, 0.050034, -0.404677],
+ [-0.54536, -1.546477, 0.982367, -1.101068]] [86.371312, -17.664332, -9.927891, 65.27917, -47.967199] [44.045372, 15.686774, 0, 0]
+[4, 2] [3, 2] 2
+[[1, 0],
+ [0, 1],
+ [-1, 0],
+ [0, 0.5],
+ [1, -0.5],
+ [2, 0.5]] [0, 0, 0, 1, 1, 1] [7, 2] [[0, 0.5]]
+[200, 20] [99, 101] [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2]
+[10, 3]
+error: load_iris(): there is no option "return_x_y" (it has return_X_y)
+error: load_iris(): return_X_y must be true or false, not 1
+error: load_iris() takes its options as an object (argument 1), got a Number
+error: make_blobs(): n_samples must be a whole Number from 1 to 1e+09, not 0
+error: make_blobs(): n_samples must be a whole Number from 1 to 1e+09, not 2.5
+error: make_blobs(): centers must be a whole Number, 1 or more, or the centers
+error: make_blobs() expects an Array (or a list) as argument 1 (centers), got a str
+error: make_blobs(): cluster_std must be a Number, 0 or more, or a list of one per center
+error: make_blobs(): cluster_std must be a Number, 0 or more, or a list of one per center
+error: make_blobs(): center_box must be a list [low, high] with low below high
+error: make_blobs(): n_features must be a whole Number from 1 to 1e+06, not 0
+error: make_blobs(): random_state must be a whole Number from 0 to 4.29497e+09, not -1
+error: make_blobs(): shuffle must be true or false, not "yes"
+error: make_moons(): noise must be a Number from 0 to inf, not -1
+error: make_regression(): noise must be a Number from 0 to inf, not "lots"
+error: make_classification(): n_informative + n_redundant must be at most n_features
+error: make_classification(): flip_y must be a Number from 0 to 1, not 2
+error: make_classification(): n_classes * n_clusters_per_class must be at most 2^n_informative
+LinearRegression() true LinearRegression true
+[-0.111906, -0.040079, 0.228645, 0.609252] 0.186495 0.930394 4 [-0.082549, -0.040128, 1.202484, 1.284824, 2.244226, 1.752895]
+LinearRegression(fit_intercept=false) [-0.084493, -0.023562, 0.224871, 0.599722] 0
+[[-0.238183, 0.095679, 0.547944],
+ [1, 0, 0]] [0.040087, 0] [[-0.072648, 5.1],
+ [-0.072851, 4.9],
+ [1.254315, 7],
+ [1.287636, 6.4],
+ [2.142938, 6.3],
+ [1.711472, 5.8]] 0.955211
+[0.367371, -0.318905, 0.367371, -0.318905] [2]
+Ridge(alpha=0.5) [-0.113691, -0.034899, 0.246079, 0.569756] 0.162941 [[-0.058221, -0.04065, 0.318524, 0.323621],
+ [0.674666, 0.131763, 0.152027, -0.020026]]
+[0.367371, -0.318905, 0.367371, -0.318905] [-0.092915, -0.01918, 0.256439, 0.530935]
+Lasso(alpha=0.1) [0, 0, 0.408119, 0] -0.533711 5 [[0, 0, 0.424271, 0],
+ [0.819498, 0, 0.057659, 0]]
+[-0.112796, -0.039314, 0.229665, 0.60793] [0, 0, 0, 0] 2
+[0, 0, 0.408119, 0, 0]
+ElasticNet(alpha=0.1, l1_ratio=0.3) [0, 0, 0.351539, 0.17139] -0.526638 33 [0.072024, -0.038017, 0.265796, 0.132983]
+[-0.112796, -0.039314, 0.229665, 0.60793] [-0.091598, -0.020388, 0.266655, 0.496824]
+LogisticRegression(tol=1e-08) [[0.14, -0.5148, 2.4803, 3.1408]] [-3.8016] [0, 1] 0.9733333333333334
+[0, 0, 0, 0, 1, 1] [[1, 0],
+ [0.8344, 0.1656],
+ [0.0107, 0.9893],
+ [0.1973, 0.8027]] [[0, -11.9078],
+ [-4.5369, -0.0108]] [-11.9078, 4.5262]
+[[-1.645, 1.861, -3.611, -3.397],
+ [1.26, -0.34, -1.492, -1.432],
+ [0.385, -1.522, 5.103, 4.828]] [0.105, 4.05, -4.155] 0.98 [0, 1, 2] [[0.9982, 0.0018, 0],
+ [0.001, 0.9796, 0.0193]]
+[[-6.874, -0.021, -3.946]] [[-3.26, 3.593, -0.332]] [[-0.1704, 0.7126, 0.517, 2.1869]]
+[5, 5, 15, 15, 25, 25] [5, 15, 25]
+LinearSVC() [[-0.8506, -0.9866, 1.381, 1.8651]] [-1.7108] 0.98 [0, 0, 0, 0, 1, 1] [-7.1953, -6.5319]
+[[0.1763, 0.4535, -0.757, -0.4085],
+ [0.2856, -0.7016, 0.3343, -0.9462],
+ [-0.9689, -0.9968, 1.2667, 1.6417]] [0, 0, 0] 0.96 [0, 0, 1, 1, 2, 2] [[1.345, -0.721, -6.328]] true
+error: fit(): LogisticRegression needs at least 2 classes in y, got 1
+KNeighborsClassifier(n_neighbors=5) [0, 1, 2] 0.9666666666666667 [0, 0, 1, 1, 2, 2] [[0, 0.4, 0.6],
+ [0, 0.2, 0.8]]
+[[0, 0.1, 0.141421, 0.141421, 0.141421],
+ [0, 0.223607, 0.3, 0.360555, 0.424264]] [[0, 17, 4, 39, 27],
+ [70, 138, 127, 149, 85]] [[0, 17]]
+KNeighborsClassifier(n_neighbors=7, weights="distance", p=1) 1 [[0, 1, 0],
+ [0, 1, 0]] [2] [[0, 0, 1]]
+[0.266667, 0.2, 1.466667, 1.5, 2.366667, 2.066667] 0.967682 [0.167653, 0.25]
+[[1.4, 0.25],
+ [1.5, 0.2]] [[7]]
+[3, 4, 3] [1]
+[[0, 1, 2],
+ [70, 71, 72]] [0]
+0.9666666666666667 [[0, 17, 4, 39, 27]]
+[[0, 1, 2]] [100, 101, 102, 103, 104, 0]
+error: predict(): n_neighbors is 10, but fit had only 5 samples
+error: kneighbors(): n_neighbors must be a whole Number, 1 or more
+error: kneighbors(): n_neighbors is 200, but fit had only 150 samples
+DecisionTreeClassifier() 1 5 9 [0.026667, 0, 0.550723, 0.422611] [0, 1, 2]
+17 5 [2, -2, 3, 2, 3, -2, -2, 3, -2, 0, -2, -2, 2, 0, -2, -2, -2] [2.449999988079071, -2, 1.75] [1, -1, 3, 4, 5] [2, -1, 12, 7, 6]
+[150, 50, 100, 54, 48] [0.666667, 0, 0.5] 150 [[0.333333, 0.333333, 0.333333],
+ [1, 0, 0],
+ [0, 0.5, 0.5]]
+[0, 0, 1, 1, 2, 2] [[1, 0, 0],
+ [0, 1, 0]] [1, 1, 5, 5, 16, 16]
+DecisionTreeClassifier(criterion="entropy", max_depth=2) 0.96 [0, 0, 0.666203, 0.333797] [1.584963, 0, 1, 0.445065, 0.151097] [[0, 0.021739130434782608, 0.9782608695652174]]
+6 3
+1 true true
+DecisionTreeRegressor(max_depth=3) 0.943802 [0.247619, 0.189474, 1.407692, 1.407692, 2.061905, 2.061905] [0.001061, 0.000142, 0.998797] [2.449999988079071, 4.950000047683716, 2.600000023841858]
+DecisionTreeRegressor(criterion="friedman_mse", max_depth=3) [2, 0, 1, -2, -2, 2, -2, -2, 2, 2, -2, -2, 2, -2, -2] [0.247619, 0.189474]
+1 [[0.5, 0.5]]
+RandomForestClassifier(n_estimators=20, random_state=0) 1 [0, 0, 1, 1, 2, 2] [1, 3] 1 [0, 1, 2]
+true true
+RandomForestClassifier(n_estimators=5, max_depth=3, max_features="sqrt", bootstrap=false, random_state=1) true
+RandomForestClassifier(n_estimators=5, max_depth=3, max_features="log2", bootstrap=false, random_state=1) true
+RandomForestClassifier(n_estimators=5, max_depth=3, max_features="all", bootstrap=false, random_state=1) true
+RandomForestClassifier(n_estimators=5, max_depth=3, max_features=0.5, bootstrap=false, random_state=1) true
+RandomForestClassifier(n_estimators=5, max_depth=3, max_features=3, bootstrap=false, random_state=1) true
+RandomForestRegressor(n_estimators=10, min_samples_leaf=3, random_state=0) true [6] 1
+[1]
+error: fit(): y must be 1-dimensional, not 2-dimensional
+GaussianNB() 0.96 [[5.006, 3.428, 1.462, 0.246],
+ [5.936, 2.77, 4.26, 1.326],
+ [6.588, 2.974, 5.552, 2.026]] [[0.121764, 0.140816, 0.029556, 0.010884],
+ [0.261104, 0.0965, 0.2164, 0.038324],
+ [0.396256, 0.101924, 0.298496, 0.073924]] [0.3333333333333333, 0.3333333333333333, 0.3333333333333333] [50, 50, 50] 3.095503
+[0, 0, 1, 1, 2, 2] [[0, 0.1545, 0.8455],
+ [0, 0.6122, 0.3878]] [[-310.0879, -0.4908, -0.9472]] 0.9333333333333333
+KMeans(n_clusters=3, random_state=0) [[5.8836, 2.741, 4.3885, 1.4344],
+ [5.006, 3.428, 1.462, 0.246],
+ [6.8538, 3.0769, 5.7154, 2.0538]] 78.8557 7 [1, 1, 1, 1, 1, 1, 1, 1, 1, 1] [61, 50, 39]
+[1, 1, 2, 0, 2, 0] [[3.4125, 0.1414, 5.0313],
+ [3.3896, 0.4476, 5.0875]] -78.8557 -78.8557
+KMeans(n_clusters=3, init="random", n_init=4, max_iter=50, tol=0, random_state=1) [50, 62, 38] 78.8514 [6, 3]
+[1, 1, 1, 0, 0, 0, 0] [0, 0, 0, 1]
+1 2
+DBSCAN(eps=0.5, min_samples=5) [17, 49, 84] [0, 1, 2, 3, 4] [117, 4] [-1, -1, -1, -1, -1, -1, -1]
+[-1, -1, -1, -1, -1, -1, -1] [0, 0, 0, 1, 1, 1, 1]
+KMeans(init="random", n_init="auto") 3 auto
+error: KMeans(): n_init must be a whole Number, 1 or more, or "auto", not "many"
+error: fit(): KMeans has n_clusters=5, more than the 3 samples
+PCA(n_components=2) [[0.361387, -0.084523, 0.856671, 0.358289],
+ [0.656589, 0.730161, -0.173373, -0.075481]] [4.228242, 0.242671] [0.924619, 0.053066] [25.09996, 6.013147]
+[5.843333, 3.057333, 3.758, 1.199333] 2 0.051022 [[-2.684126, 0.319397],
+ [-2.714142, -0.177001]] [[5.083039, 3.517414, 1.403214, 0.213532],
+ [4.746262, 3.1575, 1.463562, 0.240246]]
+[[-1.240194, 0.140874, 1.076559],
+ [-1.260388, -0.467968, -0.666684],
+ [0.486773, 1.617127, -0.584898],
+ [0.349619, 0.551686, -0.014814],
+ [1.086451, -0.650919, 1.327033],
+ [0.57774, -1.1908, -1.137195]] 3 [[5.108993, 3.492478, 1.385854, 0.223608]] 0.000666
+4 [0.924619, 0.053066, 0.017103, 0.005212] 0
+3 [[0.570519, 0.816654, 0.087092, 0],
+ [0.750598, 0.561515, 0.348287, 0]] [0.084469, 0.022197, 0] [[0.334781, 0.011992],
+ [-0.187649, 0.14263],
+ [-0.147132, -0.154622]]
+[[0, 1],
+ [1, 0]]
+error: fit(): PCA has n_components=5, but X has only 4 features
+error: inverse_transform(): X has 4 columns, but PCA has 2 components
+StandardScaler() [5.843333, 3.057333, 3.758, 1.199333] [0.825301, 0.434411, 1.759404, 0.759693] [0.681122, 0.188713, 3.095503, 0.577133] 150 [0, 0, 0, 0] [1, 1, 1, 1] [[5.1, 3.5, 1.4, 0.2],
+ [4.9, 3, 1.4, 0.2]]
+[[51, 14, 1.4, 0.2],
+ [49, 12, 1.4, 0.2]] [[-0.743333, 0.442667, -2.358, -0.999333]]
+[1, 1] [[0, -1],
+ [0, 1]]
+MinMaxScaler() [[0.095238, 1, 0, 0],
+ [0, 0.375, 0, 0],
+ [1, 0.625, 0.717391, 0.521739],
+ [0.714286, 0.625, 0.673913, 0.565217],
+ [0.666667, 0.75, 1, 1],
+ [0.428571, 0, 0.804348, 0.73913]] [4.9, 2.7, 1.4, 0.2] [7, 3.5, 6, 2.5] [2.1, 0.8, 4.6, 2.3] [0.47619, 1.25, 0.217391, 0.434783] [-2.333333, -3.375, -0.304348, -0.086957] 6
+MinMaxScaler(feature_range=[-1, 1], clip=true) [[-1, -1, -1, -1],
+ [-0.166667, -0.166667, 0.016949, 0],
+ [1, 1, 1, 1]] [[4.3, 4.4, 3.95, 1.9]]
+[[0],
+ [1]]
+error: inverse_transform(): X has 2 features, but MinMaxScaler was fitted with 4
+LabelEncoder() [1, 0, 1, 2] [1, 3, 7] [2, 0] [1, 7] [4]
+["bird", "cat", "dog"] [1, 2] ["bird", "dog"] [0, 1, 2]
+error: transform(): y has a label LabelEncoder did not see in fit: "cow"
+error: transform(): y has a label LabelEncoder did not see in fit: 1
+error: transform(): this LabelEncoder knows text labels: y must be a list of them
+error: transform(): y has a label LabelEncoder did not see in fit: 5
+error: inverse_transform(): 3 is not a label's number (0 to 1)
+error: inverse_transform(): 0.5 is not a label's number (0 to 1)
+error: fit(): y mixes text with a Number
+error: transform(): this LabelEncoder is not fitted yet: call fit() first
+error: inverse_transform(): this LabelEncoder is not fitted yet: call fit() first
+error: classes_: this LabelEncoder is not fitted yet: call fit() first
+OneHotEncoder() [[1, 0, 0, 1, 0, 0],
+ [0, 1, 0, 0, 1, 0],
+ [1, 0, 0, 0, 0, 1],
+ [0, 0, 1, 1, 0, 0]] [[1, 2, 3], [10, 20, 30]] [[2, 30]] [[0, 0, 1, 0, 1, 0]]
+OneHotEncoder(handle_unknown="ignore", drop="first") [[1, 0, 0, 1],
+ [0, 0, 0, 0]] [[1, 10]] [[0, 1, 0, 0],
+ [1, 0, 1, 0],
+ [1, 0, 0, 1]]
+[[1, 2]] [[1.5, 2]]
+error: transform(): X has 4 in column 0, which OneHotEncoder did not see in fit (handle_unknown: "ignore" gives zeros for it)
+error: inverse_transform(): row 0 has no category for feature 0
+error: inverse_transform(): X has 2 columns, but OneHotEncoder makes 6
+PolynomialFeatures() [[1, 2, 3, 4, 6, 9]] [[0, 0],
+ [1, 0],
+ [0, 1],
+ [2, 0],
+ [1, 1],
+ [0, 2]] 6 [[2, 3, 4, 6, 9, 8, 12, 18, 27]]
+[[0, 0, 0],
+ [1, 0, 0],
+ [0, 1, 0],
+ [0, 0, 1],
+ [1, 1, 0],
+ [1, 0, 1],
+ [0, 1, 1],
+ [1, 1, 1]] [[1]]
+error: fit(): PolynomialFeatures with degree 0 and no bias makes no features
+error: fit(): PolynomialFeatures would make 261233835270488605101387677696 features
+4 [120, 4] [30, 4] [120] [30]
+true true
+[[1, 2, 3], [4]] [[1, 2, 3], [4], ["a", "b", "c"], ["d"]]
+[[0, 1, 2, 3, 4], [5, 6, 7, 8, 9]] [[0, 1, 2], [3, 4]]
+[40, 40, 40] [10, 10, 10] [3]
+[15, 15, 15]
+error: train_test_split() takes at least 1 argument but got 0
+error: train_test_split() needs at least one Array (or list) to split
+error: train_test_split(): argument 2 has 10 samples, but argument 1 has 150
+error: train_test_split() expects Arrays or lists, got a Number as argument 1
+error: train_test_split(): 150 samples cannot make 150 to train on and 0 to test
+error: train_test_split(): 150 samples cannot make 148 to train on and 2 to test
+error: train_test_split(): test_size must be a Number from 0 to 150, not 200
+error: train_test_split(): 150 samples cannot make 90 to train on and 90 to test
+error: train_test_split(): stratify has 2 labels for 150 samples
+error: train_test_split() expects an Array (or a list) as argument 2 (stratify), got a str
+error: train_test_split(): there is no option "test_fraction" (it has test_size, train_size, shuffle, random_state, stratify)
+KFold(n_splits=3) 3 [[[3, 4, 5, 6], [0, 1, 2]], [[0, 1, 2, 5, 6], [3, 4]], [[0, 1, 2, 3, 4], [5, 6]]] [3]
+[true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true]
+StratifiedKFold(n_splits=3) [[[1, 2, 5, 6, 7, 8], [0, 3, 4]], [[0, 2, 3, 4, 7, 8], [1, 5, 6]], [[0, 1, 3, 4, 5, 6], [2, 7, 8]]] 3
+5 [10, 10, 10] [120]
+error: split(): KFold has n_splits=10, more than the 2 samples
+error: split() of StratifiedKFold needs X and y
+error: split(): X has 150 samples but y has 5
+error: split() expects an Array (or a list) as argument 2 (y), got a str
+error: split() expects an Array (or a list) as argument 1, got a Number
+[0.9333333333333333, 0.9666666666666667, 0.9333333333333333, 0.9333333333333333, 1] [0.903227, 0.92527, 0.942141]
+[0.98, 0.96, 0.96] [0.98, 0.94, 1]
+[0.9666, 1, 0.9327, 0.9666, 1] [0.92, 0.94, 0.96]
+balanced_accuracy [0.9688, 0.91, 0.8333]
+f1 [0.9677, 0.8649, 0.7556]
+precision [1, 0.8, 0.6071]
+recall [0.9375, 0.9412, 1]
+r2 [0.9047, 0.9226, 0.9412]
+neg_mean_squared_error [-0.0591, -0.0546, -0.0382]
+neg_root_mean_squared_error [-0.243, -0.2337, -0.1956]
+neg_mean_absolute_error [-0.1969, -0.1766, -0.145]
+[50, 50, 50] [-420.8291, -89.8058, -104.4247]
+[0.3, 0.28, 0.28] [0.3, 0.28, 0.28] [1, 1, 1]
+error: assertion failed: cannot fit
+error: cross_val_score(): a score must be a Number, not "high"
+error: cross_val_score(): a score must be a Number, not "x"
+error: a Wordy has no method 'predict'
+error: assertion failed: no score
+error: predict(): n_neighbors is 200, but fit had only 120 samples
+error: fit(): LogisticRegression needs at least 2 classes in y, got 1
+error: cross_val_score(): scoring must be one of accuracy, balanced_accuracy, f1, f1_macro, precision, recall, r2, neg_mean_squared_error, neg_root_mean_squared_error, neg_mean_absolute_error; not "auc"
+error: cross_val_score(): scoring must be a metric's name or a function, not a Number
+error: cross_val_score(): cv must be a whole Number from 2 to 150, not 1
+error: cross_val_score(): cv must be a number of folds, a KFold or a StratifiedKFold, not a GaussianNB
+error: cross_val_score(): a StandardScaler cannot be scored
+error: cross_val_score() expects a model as argument 1, got a Number
+error: cross_val_score(): X has 150 samples but y has 3
+error: cross_val_score(): there is no option "folds" (it has cv, scoring)
+error: cross_val_score(): KFold has n_splits=5, more than the 3 samples
+0.6666666666666666 6 0.6944444444444443
+0.6388888888888888 0.6666666666666666 0.644444
+[0.8, 0.4, 0.75] [0.75, 0.6666666666666666] 0.672078
+1 0.75 0.8571428571428571 0.8 0.9375
+0 1 0
+[[2, 0, 0],
+ [1, 1, 1],
+ [0, 1, 3]] [[3, 1],
+ [1, 1]] int64
+              precision    recall  f1-score   support
+
+           0       0.67      1.00      0.80         2
+           1       0.50      0.33      0.40         3
+           2       0.75      0.75      0.75         4
+
+    accuracy                           0.67         9
+   macro avg       0.64      0.69      0.65         9
+weighted avg       0.65      0.67      0.64         9
+
+              precision    recall  f1-score   support
+
+          no      0.667     1.000     0.800         2
+         yes      1.000     0.750     0.857         4
+
+    accuracy                          0.833         6
+   macro avg      0.833     0.875     0.829         6
+weighted avg      0.889     0.833     0.838         6
+
+              precision    recall  f1-score   support
+
+         one       0.50      0.33      0.40         3
+           0       0.67      1.00      0.80         2
+
+   micro avg       0.60      0.60      0.60         5
+   macro avg       0.58      0.67      0.60         5
+weighted avg       0.57      0.60      0.56         5
+
+0.375 1.4142135623730951 0.5
+0.948608 1 0 0.957173
+1 1 0
+0.279777 0.363548 0
+0.693147 0.356675
+0.75 0.75 0.75
+0.994933 0.9375
+0.551192 0.489898 1
+0.716342 0.571429 1
+error: accuracy_score(): y_true has 2 values and y_pred 1
+error: accuracy_score(): there is no option "normal" (it has normalize)
+error: accuracy_score() takes its options as an object (argument 3), got a Number
+error: accuracy_score() expects an Array (or a list) as argument 1 (y_true), got a str
+error: accuracy_score(): y_true must be Numbers, not text (LabelEncoder turns text labels into Numbers)
+error: accuracy_score(): y_pred must be 1-dimensional, not 2-dimensional
+error: accuracy_score(): y_true is empty
+error: accuracy_score(): y_true has NaN or infinity in it
+error: f1_score(): y has 3 classes, but average is "binary": give average "micro", "macro", "weighted" or "none"
+error: f1_score(): pos_label 3 is not one of the labels
+error: f1_score(): pos_label must be a Number, not a str
+error: f1_score(): average must be one of binary, micro, macro, weighted, none; not "samples"
+error: f1_score(): zero_division must be a Number from 0 to 1, not 2
+error: f1_score() expects an Array (or a list) as argument 3 (labels), got a str
+error: fbeta_score(): beta (argument 3) must be a Number more than 0
+error: confusion_matrix() expects an Array (or a list) as argument 3 (labels), got a str
+error: confusion_matrix(): y_true has 1 values and y_pred 2
+error: classification_report(): target_names must be a list of 2 names, one per label
+error: classification_report(): digits must be a whole Number from 0 to 15, not -1
+429
+error: classification_report() expects an Array (or a list) as argument 3 (labels), got a Number
+error: log_loss(): y_true has 2 samples of 2 labels, but y_proba is 1 x 3
+error: log_loss(): y_true has 2 samples of 1 labels, but y_proba is 2 x 1
+error: log_loss(): y_true has 1, which is not one of the labels
+error: log_loss() expects an Array (or a list) as argument 2 (y_proba), got a str
+error: log_loss() expects an Array (or a list) as argument 1 (y_true), got a str
+error: log_loss() expects an Array (or a list) as argument 3 (labels), got a str
+error: roc_auc_score(): y_true has only one class: the AUC is not defined
+error: roc_auc_score(): y_true has 3 samples of 3 classes, but y_score is 3 x 1
+error: roc_auc_score(): multi_class must be one of ovr; not "ovo"
+error: roc_auc_score(): average must be one of macro, weighted; not "micro"
+error: roc_auc_score() expects an Array (or a list) as argument 1 (y_true), got a str
+error: roc_auc_score() expects an Array (or a list) as argument 2 (y_score), got a str
+error: silhouette_score(): there are 1 clusters: it needs 2 to 149 (the samples less one)
+error: silhouette_score(): X has 150 samples but y has 3
+error: adjusted_rand_score(): y_true has 1 values and y_pred 2
+error: mean_squared_error(): y_true has 1 values and y_pred 2
+{n_clusters: 3, init: "k-means++", n_init: "auto", max_iter: 300, tol: 0.0001, random_state: 7} {criterion: "gini", min_samples_split: 2, min_samples_leaf: 1} {feature_range: [2, 3], clip: false}
+{n_estimators: 100, criterion: "gini", min_samples_split: 2, min_samples_leaf: 1, max_features: "sqrt", bootstrap: true} {n_components: 0.5, whiten: false} {} log2
+true Ridge(alpha=3) {alpha: 3, fit_intercept: true} DecisionTreeClassifier(criterion="entropy", max_depth=4, max_features=0.5)
+RandomForestRegressor(max_features="all", bootstrap=false) OneHotEncoder(handle_unknown="ignore") KNeighborsClassifier(weights="distance")
+error: Ridge(): there is no option "alfa" (it has alpha, fit_intercept)
+error: LabelEncoder(): there is no option "x" (it has no options)
+error: Ridge(): alpha must be a Number, 0 or more, not -1
+error: Ridge(): alpha must be a Number, 0 or more, not "big"
+error: ElasticNet(): l1_ratio must be a Number from 0 to 1, not 2
+error: LogisticRegression(): C must be a Number more than 0, not 0
+error: LogisticRegression(): max_iter must be a whole Number, 1 or more, not 1.5
+error: Ridge(): fit_intercept must be true or false, not 1
+error: KNeighborsClassifier(): weights must be "uniform" or "distance", not "far"
+error: KNeighborsClassifier(): p must be a whole Number from 1 to 2, not 3
+error: DecisionTreeClassifier(): criterion must be "gini", "entropy" or "log_loss", not "mse"
+error: DecisionTreeClassifier(): max_depth must be a whole Number, 1 or more, not 0
+error: DecisionTreeClassifier(): max_features must be a count, a share below 1, "sqrt", "log2" or "all", not "half"
+error: DecisionTreeClassifier(): max_features must be a count, a share below 1, "sqrt", "log2" or "all", not 0
+error: DecisionTreeClassifier(): random_state must be a whole Number from 0 to 4294967295, not -2
+error: DecisionTreeClassifier(): min_samples_split must be a whole Number, 2 or more, not 1
+error: PCA(): n_components must be a whole Number, 1 or more, or a share below 1, not 1.5
+error: MinMaxScaler(): feature_range must be a list [low, high] with low below high, not a List
+error: MinMaxScaler(): feature_range must be a list [low, high] with low below high, not 5
+error: DBSCAN(): eps must be a Number more than 0, not 0
+error: Ridge() takes its options as an object, such as Ridge({alpha: ...}); got a Number
+error: Ridge() takes options as one object, then nothing more
+error: LinearRegression() takes its options as an object, such as LinearRegression({fit_intercept: ...}); got a Number
+error: KFold(): n_splits must be a whole Number, 2 or more, not 1
+error: set_params() expects an object, got a Number
+error: set_params(): there is no option "beta" (it has alpha, fit_intercept)
+error: predict(): this Ridge is not fitted yet: call fit() first
+error: coef_: this Ridge is not fitted yet: call fit() first
+error: score(): this Ridge is not fitted yet: call fit() first
+error: tree_: this DecisionTreeClassifier is not fitted yet: call fit() first
+error: get_depth(): this DecisionTreeClassifier is not fitted yet: call fit() first
+error: get_n_leaves(): this DecisionTreeClassifier is not fitted yet: call fit() first
+error: categories_: this OneHotEncoder is not fitted yet: call fit() first
+error: inverse_transform(): this PCA is not fitted yet: call fit() first
+error: predict(): X has 2 features, but Ridge was fitted with 4
+error: predict(): X must be 2-dimensional (a row per sample), not 1-dimensional: x.reshape(-1, 1) makes a column of it
+error: predict(): X must be 2-dimensional (a row per sample), not 3-dimensional
+error: predict() expects an Array (or a list) as argument 1 (X), got a str
+error: array(): lists of different shapes
+error: predict(): X is empty
+error: predict(): X has NaN or infinity in it
+error: fit() of Ridge needs X and y
+error: fit(): X has 150 samples but y has 5
+error: fit(): y must be 1- or 2-dimensional, not 3-dimensional
+error: score() of Ridge needs X and y
+error: score() expects an Array (or a list) as argument 2 (y), got a str
+error: score(): y has 5 values, but there are 150 predictions
+error: fit(): y must be 1-dimensional, not 2-dimensional
+error: fit_predict() expects an Array (or a list) as argument 1 (X), got a str
+error: fit(): KMeans has n_clusters=200, more than the 150 samples
+error: fit_transform(): X must be 2-dimensional (a row per sample), not 1-dimensional: x.reshape(-1, 1) makes a column of it
+error: inverse_transform(): this PCA is not fitted yet: call fit() first
+error: fit(): y must be 1-dimensional, not 2-dimensional
+error: inverse_transform() expects an Array (or a list) as argument 1 (y), got a str
+error: kneighbors(): X has 2 features, but KNeighborsClassifier was fitted with 4
+error: apply(): X has 2 features, but DecisionTreeClassifier was fitted with 4
+float64 4 [-0.113465, -0.031843, 0.259368, 0.537641]

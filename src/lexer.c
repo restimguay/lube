@@ -286,7 +286,9 @@ int lex(Source *src, const char *begin, const char *end, int line, const char *l
         }
         if (is_ident_start(c)) {
             while (L.cur < L.end && is_ident_char(*L.cur)) L.cur++;
+            TokenType before = L.last;
             emit(&L, keyword_or_ident(start, (size_t)(L.cur - start)), start, tline, tls);
+            if (before == T_DOT) L.last = T_IDENT;  /* np.var, o.in: after '.', a keyword is a name, which ends a line */
             continue;
         }
         if (c == '"' || c == '\'') {
@@ -340,6 +342,7 @@ int lex(Source *src, const char *begin, const char *end, int line, const char *l
         case '*': t = match(&L, '*') ? T_POW : match(&L, '=') ? T_STAR_EQ : T_STAR; break;
         case '/': t = match(&L, '=') ? T_SLASH_EQ : T_SLASH; break;
         case '%': t = match(&L, '=') ? T_PERCENT_EQ : T_PERCENT; break;
+        case '@': t = T_AT; break;  /* a @ b: matrix product (plugins' types) */
         case '=': t = match(&L, '=') ? T_EQ : match(&L, '>') ? T_ARROW : T_ASSIGN; break;
         case '!': t = match(&L, '=') ? T_NEQ : T_BANG; break;
         case '<': t = match(&L, '=') ? T_LE : T_LT; break;

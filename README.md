@@ -198,7 +198,8 @@ Comments start with `#` or `//`. Statements end at the end of a line. Use `;` to
 | classes    | `Dog("rex")`: see Classes below          |
 | `Channel`, `Isolate` | `channel()`, `spawn(f, x)`: see Concurrency below |
 | `Bytes`    | `Bytes("hi")`, `Bytes(16)`: see Bytes and time below |
-| plugins' types | `File`, `Socket`, `Sound`, `Voice`: see Plugins below |
+| `Money`    | `m(19.99)`, `m(5, "EUR")`, `m(5, "₱")`: see Money below |
+| plugins' types | `File`, `Socket`, `Sound`, `Image`, `Complex`, `Array`, `Tensor`...: see Plugins below |
 
 `Bool`, `Number`, `str` and the sized integers are *primitives*. Everything else is an object, so `x is Object` is true for a list, a map, a `String` or a class instance, and false for `5` or `"text"`.
 
@@ -235,7 +236,7 @@ let r = greet("eve")                 // error: greet() does not return a value
 
 ### Types
 
-Every value has a type, and `type(x)` gives its name: `str`, `String`, `Number`, `Bool`, `Object`, `List`, `Map`, `Function`, `Range`, the sized integers such as `int32`, typed lists such as `String[]`, typed maps such as `Map[str, Number]`, and class names. `x is T` checks a type, including a class and its parents. Type names do three things:
+Every value has a type, and `type(x)` gives its name: `str`, `String`, `Number`, `Bool`, `Object`, `List`, `Map`, `Function`, `Range`, `Bytes`, `Money`, the sized integers such as `int32`, typed lists such as `String[]`, typed maps such as `Map[str, Number]`, and class names. `x is T` checks a type, including a class and its parents. Type names do three things:
 
 ```lube
 var o = Object               // a bare type name is its default value: {}
@@ -328,11 +329,13 @@ print("Lube"[0], len("Lube"), "a,b".split(","), "Hi".upper())
 | equality | `==` `!=` (lists and objects compare by contents) |
 | comparison | `<` `<=` `>` `>=` `in` |
 | range | `..` `..=` |
-| arithmetic | `+` `-`, then `*` `/` `%`, then unary `-` `!`, then `**` |
+| arithmetic | `+` `-`, then `*` `/` `%` `@`, then unary `-` `!`, then `**` |
 
 The pipe passes its left side as the first argument: `x | f(y)` is `f(x, y)`, and `x | f` is `f(x)`.
 
 `%` follows the sign of the divisor (`-7 % 3` is `2`), and dividing by zero is an error.
+
+`@` is the matrix product of Arrays and Tensors (the plugins `array` and `nn`): Lube's own values have none. A plugin's types can have any of the operators, and indexing with several indexes, `a[i, j]`, which lists, text and objects don't take. In brackets a range may leave out its start or its end: `a[2..]` runs to the end, `a[..3]` starts at 0, and `a[.., 1]` takes all of the first axis (`a..` before `,` or `]` is `a..inf`).
 
 ### Control flow
 
@@ -680,18 +683,42 @@ while running {
 }
 ```
 
-### Plugins: files, sockets, sound and graphics
+### Money: `m`
 
-Some of Lube comes as plugins: packages written in C, loaded when a program imports them, so a program that uses none of them doesn't load them. `make` builds the four that come with Lube into `plugins/` next to `lube`: `fs` for files and folders, `net` for sockets, `audio` for sound and `gfx` for graphics. They are imported as any package is:
+```lube
+let price = m(19.99)                   // $19.99: in the default currency, USD until currency() sets another
+print(m(0.1) + m(0.2) == m(0.3))       // true: exact, as 0.1 + 0.2 == 0.3 is not
+let tax = price * 0.0725               // $1.45: a Number joins in, and the result rounds half up to the cent
+print(price + tax, (price + tax) * 3)  // $21.44 $64.32
+print(m(100).split(3))                 // [$33.34, $33.33, $33.33]: shares that add up to the cent
+currency("PHP")                        // or currency("₱"): m() without a currency is in pesos now
+print(m(1500), m(5, "EUR"), m(1234.5, "JPY"))   // ₱1,500.00 €5.00 ¥1,235
+print(m(10, "USD").to("PHP", 58.25))   // ₱582.50
+```
+
+`m(amount, currency?)` (or `Money(...)`) makes an amount of money: a count of the currency's smallest unit (cents, yen, fils), held exactly in 64 bits, so sums never drift as floating point's do. The amount is a Number, a sized integer, or text (`m("19.99")`, `m("1,234.50")`). A Number counts as the decimal it is written as: `m(2.675)` is `$2.68`, though the double nearest 2.675 is a little less. The currency is an ISO code (`"EUR"`, any case) or a symbol (`"€"`, `"₱"`, `"R$"`); without one it is the default, which `currency("PHP")` sets and `currency()` gives (each isolate starts with its spawner's). `Money` alone is zero in the default currency.
+
+- Money adds to and subtracts money of its currency, or a Number (in that currency): `price + 1`. It multiplies and divides by Numbers, rounding half up (away from zero) to the smallest unit; money divided by money of its currency is a Number (`m(10) / m(4)` is 2.5), and `%` works as for Numbers. It compares with money of its currency and with Numbers. Money of two currencies doesn't mix: `m(1) + m(1, "EUR")` is an error, and `to("EUR", 0.92)` converts at a rate.
+- It prints as `$1,234.50`, `-€0.25`, `¥1,235`, `CHF 5.00`, in text and in interpolation; `format({symbol, code, thousands, decimal})` prints it another way (`{code: true}` gives `USD 1,234.50`, `{thousands: ".", decimal: ","}` gives `$1.234,50`, `{symbol: false}` leaves it out).
+- `split(n)` gives n shares as equal as can be, and `allocate(ratios)` shares in proportion (`m(100).allocate([1, 2])` is `[$33.33, $66.67]`); both add up exactly to the amount, the leftover units going to the shares that lost most to rounding. `round(decimals?)` rounds to whole units (or that many decimals), half up.
+- Properties: `amount` (a Number), `units` (in the smallest unit: `m(19.99).units` is 1999), `currency` (its code), `symbol` and `decimals`. `abs`, `sum`, `min`, `max` and `sort` take money, and `Number(x)` gives its amount.
+- The currencies are ISO 4217's, with their decimals (JPY and KRW have none, BHD, KWD and JOD three). `add_currency("BTC", "₿", 8)` adds one of one's own: a code, a symbol and its decimals.
+- An amount holds up to 2⁶³ of its smallest unit (92 quadrillion dollars); a result past that is an error, as is money that is nan or infinite.
+
+### Plugins: files, sockets, sound, graphics, maths and machine learning
+
+Some of Lube comes as plugins: packages written in C, loaded when a program imports them, so a program that uses none of them doesn't load them. `make` builds those that come with Lube into `plugins/` next to `lube`: `fs` for files and folders, `net` for sockets, `audio` for sound and `gfx` for graphics; `math`, `cmath`, `statistics` and `random`, Python's modules of those names; and `array`, `nn`, `learn` and `llm`, which do what numpy, PyTorch, scikit-learn and llama.cpp do. They are imported as any package is:
 
 ```lube
 import fs.*                // open, exists, list_dir...: their names, bare
 import net                 // net.tcp_listen(7777), net.Socket
 import audio as sfx        // sfx.Sound("jump.wav")
 import gfx.*               // window(320, 180), image(16, 16), rgb(255, 128, 0)...
+import math.*              // sqrt, gamma, fsum, comb... as Python's math
+import array as np         // np.zeros(3, 4), np.solve(a, b): Arrays, as numpy's
 ```
 
-A plugin's types (`File`, `Socket`, `Sound`, `Voice`, `Image`, `Window`) work as classes do: `x is Socket`, `fn send_all(s: Socket)`, `class_of(x)`, `methods(x)`. Their objects are the plugin's: a copy shares the one file or socket, and they stay in the isolate that made them. Anyone can write a plugin: see Writing a plugin below.
+A plugin's types (`File`, `Socket`, `Sound`, `Voice`, `Image`, `Window`, `Complex`, `Array`, `Tensor`...) work as classes do: `x is Socket`, `fn send_all(s: Socket)`, `class_of(x)`, `methods(x)`. Their objects are the plugin's: a copy shares the one file or socket, and they stay in the isolate that made them. Anyone can write a plugin: see Writing a plugin below.
 
 ### Files and folders: `fs`
 
@@ -834,6 +861,209 @@ if p.right_trigger > 0.5 { fire() }                  // a trigger: 0 to 1
 - They come from what each system has: XInput on Windows (Xbox controllers, and the many that work as one), GameController on macOS and iOS (Xbox, PlayStation, Switch and MFi controllers), the kernel's own on Linux (the controllers it knows: Xbox, PlayStation, Switch, Steam and most others), and Android's.
 - Windows need no library to build Lube: they use what the system has, loaded when the first window opens. That is Cocoa on macOS, X11 on Linux and the Raspberry Pi, and Win32 on Windows. With `LUBE_GFX=none` a window is shown nowhere (on a server, or in tests: everything works but the screen), and the static Linux binary from the releases has no windows (it can still draw images and save them).
 
+### Maths: `math` and `cmath`
+
+`math` is Python's math module, all of it, and `cmath` is Python's cmath module, with complex numbers (`import math.*`, or `import math` for `math.sqrt(2)`). Their answers are Python's: the same algorithms, and the same last bit wherever the C library's `exp`, `log`, `sin`... allow.
+
+```lube
+import math.*
+print(sqrt(2), hypot(3, 4), log(8, 2), degrees(pi))   // 1.4142135623730951 5 3 180
+print(fsum([0.1, 0.2, 0.3]), sum([0.1, 0.2, 0.3]))    // 0.6 0.6000000000000001: fsum rounds once, exactly
+print(factorial(15), comb(52, 5), gcd(12, 18, 27))    // 1307674368000 2598960 3
+print(isclose(1, 1.0000001, {rel_tol: 1e-6}))         // true: Python's keyword arguments come in an object
+sqrt(-1)                                              // error: sqrt() of a negative number (-1): cmath.sqrt gives complex roots
+```
+
+```lube
+import cmath.*
+let z = Complex(3, 4)                                 // or Complex("3+4j")
+print(z, abs(z), z.conjugate(), z * 2 + 1)            // (3+4j) 5 (3-4j) (7+8j)
+print(sqrt(-4), log(-1), exp(Complex(0, pi)))         // 2j 3.141592653589793j (-1+1.2246467991473532e-16j)
+print(polar(Complex(0, 2)), rect(2, 0))               // [2, 1.5707963267948966] (2+0j)
+```
+
+- `math` has every name of Python 3.15's: `sqrt`, `cbrt`, `exp`, `exp2`, `expm1`, `log(x, base?)`, `log2`, `log10`, `log1p`, `pow`; `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh`, `degrees`, `radians`, `hypot(x, y, ...)`, `dist(p, q)`; `floor`, `ceil`, `trunc`, `modf`, `frexp`, `ldexp`, `fmod`, `remainder`, `copysign`, `fabs`, `fma`, `fmax`, `fmin`, `nextafter`, `ulp`; `isfinite`, `isinf`, `isnan`, `isnormal`, `issubnormal`, `signbit`, `isclose`; `fsum`, `prod`, `sumprod`; `factorial`, `comb`, `perm`, `gcd`, `lcm`, `isqrt`; `gamma`, `lgamma`, `erf`, `erfc`; and `pi`, `e`, `tau`, `inf`, `nan`. (Python's `math.integer` is not there: its functions are math's own.)
+- Where Python raises an error, so does `math`: `sqrt(-1)`, `log(0)`, `acos(2)`, `exp(1000)` (*exp(1000): the result is too large for a Number*), `factorial(1.5)`. Lube's own `sqrt`, `log`, `pow`... give nan or inf there instead; `import math.*` replaces them. `floor`, `ceil` and `trunc` give Numbers, and keep inf, nan and sized integers as they are, as Lube's own `floor` does.
+- Python's keyword arguments come as an object at the end: `isclose(a, b, {rel_tol: 1e-6, abs_tol: 0})`, `prod(xs, {start: 2})`, `nextafter(x, y, {steps: 3})`. Its sequences are Lists (`fsum`, `prod`, `sumprod`, `dist`), and `gcd`, `lcm` and `hypot` take any number of arguments.
+- `factorial`, `comb`, `perm`, `gcd`, `isqrt`, and `prod` of whole numbers, work out the exact integer, as Python does, and give the Number nearest it: exact up to 2⁵³, and right to 17 digits beyond (`comb(1000, 500)` is `2.7028824094543655e+299`). An answer past the largest Number, such as `factorial(171)`, is an error. `isqrt` is exact below 2¹⁰⁶ and `lcm` below 2⁵³.
+- `fsum` is exactly rounded, `hypot` and `dist` nearly always are, `sumprod` adds in extended precision, and `fma(x, y, z)` rounds once: these give the same last bit on every system. What comes from the C library (`exp`, `log`, `sin`, `erf`, and `gamma` through `pow`) may differ in its last bit from one system to another, as Python's does.
+- `cmath`'s `Complex(re, im?)` makes a complex number; `Complex("1+2j")` reads Python's forms (`"2j"`, `"(1-2.5e3J)"`, `"inf+nanj"`). It has `z.real`, `z.imag`, `z.conjugate()`, the operators `+ - * / **`, `==`, `!=` and `-z`, with Numbers on either side, and prints as Python prints a complex: `(1+2j)`, `2j`, `(1-0j)`. A Number with a Complex is a real number, as in Python: `2 * Complex(inf, 1)` is `(inf+2j)`, not nan. `Complex(1) / 0` is an error, as is `%` or `<` (complex numbers have no order).
+- `cmath`'s `sqrt`, `exp`, `log(z, base?)`, `log10`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `sinh`, `cosh`, `tanh`, `asinh`, `acosh` and `atanh` take a Number or a Complex and give a Complex, with Python's branch cuts and its answers for infinities: `sqrt(-4)` is `2j`. Then `phase(z)`, `polar(z)` (`[r, phi]`), `rect(r, phi)`, `abs(z)` (which takes Numbers too, as the `abs` it replaces), `isfinite`, `isinf`, `isnan` and `isclose`; `pi`, `e`, `tau`, `inf` and `nan`; and `infj()` and `nanj()`, functions (a package's constants are Numbers).
+- The two share names (`sqrt`, `log`, `pi`...): with both, import one with `.*` and the other by name (`import math.*` and `import cmath`, then `cmath.sqrt(-1)`); with both as `.*`, the names of the one imported last win.
+
+### Statistics and random numbers: `statistics` and `random`
+
+Python's `statistics` and `random` modules, as two plugins that give Python's answers. The same seed gives the same random numbers as in Python, digit for digit, and the statistics come out as Python's do: `mean`, `harmonic_mean`, the variances and the standard deviations are worked out exactly (Python uses fractions for them) and rounded once, so even data that would trip up a running total gets the right last digit.
+
+```lube
+import random
+random.seed(42)
+print(random.random())                  // 0.6394267984578837, as in Python
+print(random.randint(1, 6), random.choice(["rock", "paper", "scissors"]))
+let deck = random.shuffle(cards)        // a new list: cards stays as it was
+let hand = random.sample(deck, 5)       // 5 cards, none twice
+let rolls = random.choices([1, 2, 3, 4, 5, 6], {weights: [1, 1, 1, 1, 1, 5], k: 10})
+let r = random.Random(7)                // a generator of its own: r.random(), r.gauss(0, 1)...
+```
+
+```lube
+import statistics.*
+let times = [2.75, 1.75, 1.25, 0.25, 0.5, 1.25, 3.5]
+print(mean(times), median(times), stdev(times))      // 1.6071428571428572 1.25 1.171334200612195
+print(quantiles(times, {n: 4, method: "inclusive"}))  // [0.875, 1.25, 2.25]
+print(correlation(xs, ys), linear_regression(xs, ys).slope)
+let iq = NormalDist(100, 15)
+print(iq.cdf(130), iq + 5)        // 0.9772498680518208 NormalDist(mu=105, sigma=15): it works with + - * / ==
+let f = kde(times, 0.5)                              // f.pdf(x), f.cdf(x)
+```
+
+- Python's keyword arguments come in an object at the end: `quantiles(data, {n: 10})`, `correlation(x, y, {method: "ranked"})`, `linear_regression(x, y, {proportional: true})`, `choices(xs, {cum_weights: cw, k: 3})`, `sample(xs, 5, {counts: [4, 2]})`, `NormalDist().samples(10, {seed: 1})`. Positional arguments stay positional: `fmean(data, weights)`, `variance(data, xbar)`, `choices(xs, weights, {k: 5})`.
+- `random`'s functions share one generator, under a lock, so isolates can call them at once; a `Random(seed?)` has one of its own (its methods are the same functions), and `SystemRandom()` draws the system's random bytes (it has no seed and no state). With `import random`, the name `random` is the package, so Lube's own `random()` is `random.random()` in that file, as in Python.
+- A seed is a whole Number (seeding as Python's int does: `seed(42)`), another Number (as Python's float), a str or `Bytes` (through SHA-512, as Python does; `seed(text, 1)` for Python 2's way), or nothing: `seed()` takes the system's randomness.
+- What differs from Python: `shuffle(xs)` gives a new list in the order Python's `shuffle` would leave `xs` (a plugin can't change a list in place); `getrandbits(k)` takes `k` up to 53, the bits a Number holds whole (`randbytes(n)` gives more); `getstate()` is a List, `[3, [625 Numbers], gauss]`, with `false` where Python has `None`, and `setstate` takes it back (or Python's, written as a list). `gammavariate`, `betavariate` and `vonmisesvariate` refuse a NaN or infinite shape, which makes Python's loop forever.
+- Python's `kde` returns a function and `kde_random` a function to call; here `kde(data, h, kernel?)` gives a `Kde` with `k.pdf(x)` and `k.cdf(x)` (Python's `cumulative=True` is `k.cdf`), and `kde_random(data, h, kernel?, {seed})` a `KdeRandom` with `r.sample()` and `r.samples(n)`. The kernels are Python's: `"normal"` (or `"gauss"`), `"logistic"`, `"sigmoid"`, `"rectangular"` (`"uniform"`), `"triangular"`, `"parabolic"` (`"epanechnikov"`), `"quartic"` (`"biweight"`), `"triweight"` and `"cosine"`.
+- `NormalDist.from_samples(data)` is `from_samples(data)`. A `NormalDist` has the properties `mean`, `median`, `mode`, `stdev` and `variance`, the methods `pdf`, `cdf`, `inv_cdf`, `overlap`, `quantiles`, `samples` and `zscore`, and works with `+` and `-` (a Number or another `NormalDist`), `*` and `/` (a Number), `-d` and `==`. Its draws, and `kde_random`'s, come from `random`'s generator, so `random.seed(1)` and a seed option give Python's numbers.
+- `StatisticsError` is a Lube error that says what is wrong: *variance() needs at least two data points*, *correlation(): at least one of the inputs is constant*. `mode` and `multimode` count Numbers, text and Bools.
+
+### Arrays: `array`
+
+```lube
+import array as np                     // (or import array.*: its names bare)
+let a = np.array([[1, 2, 3], [4, 5, 6]])
+print(a.shape, a.dtype, a.T.shape)     // [2, 3] float64 [3, 2]
+print(a * 2 + 1, a @ a.T)              // elementwise, broadcasting; @ is the matrix product
+print(a[0, 1], a[.., 0], a[1, 1..])    // 2 [1, 4] [5, 6]
+print(a[a > 2], a.sum(0), a.mean())    // [3, 4, 5, 6] [5, 7, 9] 3.5
+print(np.solve(np.array([[4, 1], [2, 3]]), [1, 2]))   // [0.1, 0.6]
+np.seed(0)
+print(np.rand(3))                      // [0.5488135039273248, 0.7151893663724195, 0.6027633760716439], as numpy's
+```
+
+An `Array` is n-dimensional (up to 16) and of one dtype: `"float64"` unless asked, `"float32"`, `"int64"`, `"int32"`, `"uint8"` or `"bool"`. Lube's Numbers don't split into ints and floats, so `array([1, 2])` is float64 where numpy's would be int64; what gives positions (`argmax`, `argsort`, `nonzero`, `randint`, `bincount`) gives int64.
+
+- Making them: `array(x, dtype?)` (Numbers, Bools, nested lists, ranges, Bytes, other Arrays), `asarray`, `zeros(2, 3)` or `zeros([2, 3])` (a dtype after the shape: `zeros(2, 3, "float32")`), `ones`, `empty`, `full(shape, value)`, `zeros_like`, `ones_like`, `full_like`, `arange(start?, stop, step?)`, `linspace(a, b, n?, {endpoint})`, `logspace`, `eye(n, m?, k?)`, `identity`, `diag`, `from_bytes(b, dtype?, shape?)`; and joined: `concatenate(xs, axis?)`, `stack`, `vstack`, `hstack`, `tile`, `repeat`.
+- The operators are elementwise and broadcast as numpy's: `+ - * / % **`, `-a`, and the comparisons, which give Arrays of Bools: `if a > 0` is an error (*a condition needs a Bool*): ask `any()` or `all()`, or `array_equal(a, b)`. `@` is `matmul`. `len(a)` is the length of the first axis, and `for row in a` goes over it.
+- Indexing: `a[i]`, `a[i, j]`, negative from the end; ranges are slices (`a[1..]`, `a[..3]`, `a[.., 0]`, `a[range(0, 10, 2)]`), lists or Arrays of positions pick those (`a[[0, 2]]`, `a[[0, 1], [2, 0]]`), and an Array of Bools picks where it is true (`a[a > 0]`). Numbers and slices give a view, in no time; the others give a copy. All of them can be assigned to: `a[a < 0] = 0`, `a[.., 0] = [7, 8]`.
+- Arrays are values, as lists are: after `var b = a`, `b[0, 0] = 100` leaves `a` as it was. They share their memory until one of them changes, so views and copies cost nothing until then; `a += 1` changes `a` in place when nothing else holds it.
+- Properties `shape`, `ndim`, `size`, `dtype`, `T`, `itemsize`, `nbytes`; methods `reshape(...)` (one axis may be `-1`), `flatten`, `ravel`, `transpose(axes?)`, `swapaxes`, `squeeze`, `astype(dtype)`, `copy`, `to_list`, `to_bytes`, `item(i?)`, `dot`, `clip`, `round`, `sort`, `argsort`, `nonzero`, and the reductions.
+- Elementwise functions, which take Numbers too (so `import array.*` can replace Lube's own `sqrt`, `abs`...): `abs`, `sqrt`, `cbrt`, `exp`, `exp2`, `expm1`, `log(x, base?)`, `log2`, `log10`, `log1p`, `sin`, `cos`, `tan`, `arcsin`, `arccos`, `arctan`, `sinh`, `cosh`, `tanh`, `arcsinh`, `arccosh`, `arctanh`, `erf`, `floor`, `ceil`, `trunc`, `rint`, `round(x, decimals?)` (half to even, as numpy's and Python's), `sign`, `square`, `reciprocal`, `negative`, `isnan`, `isinf`, `isfinite`, `logical_not`; and of two: `add`, `subtract`, `multiply`, `divide`, `mod`, `power`, `maximum`, `minimum`, `arctan2`, `hypot`, `fmod`, `floor_divide`, `copysign`, the comparisons by name (`less`, `equal`...), `logical_and`, `logical_or`, `logical_xor`, `where(cond, x, y)`, `clip`, `isclose`, `allclose`.
+- Reductions over everything or along an axis (`a.sum(0)`, `{keepdims: true}`): `sum`, `prod`, `mean`, `var` and `std` (`{ddof: 1}`), `min`, `max`, `argmin`, `argmax`, `any`, `all`, `ptp`, `cumsum`, `cumprod`, `count_nonzero`, `average(a, axis?, {weights})`, `median`, `percentile(a, q, axis?)`, `quantile`. `min` and `max` of several Numbers are still their smallest and largest. Then `sort` and `argsort` (along an axis; argsort keeps equal ones in order), `unique(a, {return_index, return_inverse, return_counts})`, `searchsorted`, `bincount`, `nonzero`, `flip`, `roll`.
+- Linear algebra: `matmul`, `dot`, `inner`, `outer`, `trace`, `det`, `slogdet`, `inv`, `solve`, `lstsq` (`[x, residuals, rank, s]`), `pinv`, `matrix_rank`, `qr` (`[q, r]`), `svd` (`[u, s, vh]`, `{full_matrices, compute_uv}`), `eigh` and `eigvalsh` (symmetric matrices), `cholesky`, `norm(x, ord?, axis?)`. Decompositions work in float64 and give float32 for float32.
+- Random Arrays give numpy's numbers for the same seed (its `RandomState`): `seed(n?)`, `rand(shape...)`, `randn`, `random(size?)`, `uniform(low, high, size?)`, `normal(loc, scale, size?)`, `standard_normal`, `exponential`, `randint(low, high?, size?)`, `choice(a, size?, {replace, p})`, `permutation(x)`, and `shuffle(x)` (a new Array). One generator for the process, under a lock.
+- Files: `save(path, a)` and `load(path)` write and read numpy's `.npy`, both ways; `loadtxt(path, {delimiter, skiprows, dtype})` and `savetxt(path, a, {fmt, delimiter, header})` numbers in columns; `load_safetensors(path)` and `save_safetensors(path, {name: a})` the format models come in (float16 and bfloat16 become float32).
+- Speed: the matrix product uses the system's BLAS where there is one (Accelerate on macOS, OpenBLAS on Linux or Windows when it is installed: `blas()` says which, and `use_blas(false)` turns to array's own kernel, blocked and packed), and loops over big Arrays share out among threads (`threads(n)`; their results don't depend on how many). Against numpy 2.5 on an M5: `exp` of 10 million numbers 5 times as fast, `sum` 1.5 times, sorting a million 1.2 times, small Arrays' operations about twice as fast (Lube's calls cost less), and big matrix products the same (both are Accelerate's).
+- What numpy has and this hasn't: complex Arrays (see `cmath` for complex numbers), the smaller dtypes (int8, int16, float16), structured dtypes, `np.linalg.eig` for matrices that aren't symmetric, and numpy's keyword arguments, which come as an object at the end.
+
+### Neural networks: `nn`
+
+```lube
+import nn
+let x = nn.tensor([2, 3], {requires_grad: true})
+let y = (x * x).sum()
+y.backward()
+print(y.item(), x.grad)                 // 13 [4, 6]
+
+nn.manual_seed(0)
+let model = nn.Sequential([nn.Linear(2, 8), nn.Tanh(), nn.Linear(8, 1)])
+let opt = nn.Adam(model.parameters(), {lr: 0.05})
+let X = nn.tensor([[0, 0], [0, 1], [1, 0], [1, 1]])
+let Y = nn.tensor([[0], [1], [1], [0]])
+for step in 0..500 {
+    opt.zero_grad()
+    let loss = nn.binary_cross_entropy_with_logits(model.forward(X), Y)
+    loss.backward()
+    opt.step()
+}
+print(nn.no_grad(fn() => nn.sigmoid(model.forward(X))))   // XOR: about 0, 1, 1, 0
+```
+
+`nn` is PyTorch's core: Tensors that record how they were computed, `backward()` that gives each leaf its gradient, and the layers, losses and optimizers to train with. A Tensor holds an Array (`t.data`, float32 unless asked), so everything `array` does applies to it.
+
+- Making them: `tensor(x, {requires_grad, dtype})`, `zeros`, `ones`, `rand`, `randn`, `full(shape, value)`, `arange`, each with those options; `manual_seed(n)` seeds the generator their random numbers come from (array's).
+- Operators `+ - * / ** @`, `-t`, indexing (`t[0]`, `t[.., 1]`, `t[[0, 2]]`, `t[mask]`), and the comparisons (which give Arrays of Bools, and no gradient). Methods `sum`, `mean`, `max` (`dim?`, `{keepdim}`), `argmax`, `exp`, `log`, `sqrt`, `tanh`, `sigmoid`, `relu`, `abs`, `softmax(dim)`, `log_softmax(dim)`, `pow`, `matmul`, `clamp(lo, hi)`, `reshape`/`view`, `flatten`, `transpose(d0, d1)`, `permute(...)`, `unsqueeze`, `squeeze`, `T`; `item()`, `numpy()` (the data as an Array), `to_list()`, `detach()`, `astype(dtype)`.
+- `t.backward(grad?, {retain_graph})` fills `.grad` (an Array) of every leaf with `requires_grad` it came from, adding to what is there; `zero_grad()` clears it. The graph is let go of as backward goes (as PyTorch's is: a second backward through it is an error unless the first kept it), so training loops don't grow. `no_grad(f)` runs `f` without recording anything (`set_grad_enabled(on)` too), and in-place updates, `add_(x, alpha?)`, `sub_`, `mul_`, `copy_`, `fill_`, `zero_`, record nothing either.
+- Functions: `relu`, `leaky_relu(x, slope?)`, `gelu`, `silu`, `sigmoid`, `tanh`, `softmax`, `log_softmax`, `exp`, `log`, `sqrt`, `abs`, `clamp`, `sum`, `mean`, `max`, `matmul`, `cat(ts, dim?)`, `stack`, `linear(x, w, b?)`, `conv2d(x, w, b?, {stride, padding})`, `max_pool2d(x, k, {stride})`, `avg_pool2d`, `dropout(x, p?, training?)`, `layer_norm(x, w?, b?, {eps})`, `embedding(indices, w)`; losses `mse_loss`, `l1_loss`, `cross_entropy(logits, classes)`, `nll_loss`, `binary_cross_entropy`, `binary_cross_entropy_with_logits`, each with `{reduction: "mean" | "sum" | "none"}`.
+- Modules, each with `forward(x)`, `parameters()`, `train()`, `eval()`, `state_dict()`, `load_state_dict(state)` and `zero_grad()`: `Linear(in, out, {bias})`, `Conv2d(in, out, k, {stride, padding, bias})`, `Embedding(n, dim)`, `LayerNorm(dim, {eps})`, `Dropout(p?)`, `ReLU`, `LeakyReLU`, `GELU`, `SiLU`, `Sigmoid`, `Tanh`, `Softmax(dim?)`, `LogSoftmax`, `Flatten`, `MaxPool2d(k, {stride})`, `AvgPool2d`, `Sequential([...])`, and the losses as modules (`MSELoss`, `L1Loss`, `CrossEntropyLoss`, `BCELoss`, `BCEWithLogitsLoss`: `forward(input, target)`). Starting weights are drawn as PyTorch draws them. A `Sequential` can hold objects of your own classes too: anything with `forward(x)` and `parameters()` methods.
+- Optimizers `SGD(params, {lr, momentum, dampening, weight_decay, nesterov})`, `Adam(params, {lr, betas, eps, weight_decay})` and `AdamW` (decoupled weight decay), with `step()`, `zero_grad()`, `lr` and `set_lr(x)`. `params` is a list of Tensors or a module.
+- `save(path, tensors)` writes an object of Tensors by name (or a module's `state_dict()`) as safetensors, the format of Hugging Face's models; `load(path)` reads one back as Tensors.
+- Every operation's gradient is checked against PyTorch's (and against finite differences in the tests), and to the 6th decimal they are the same. Training is faster: an MNIST-sized network (784, 256, 10, batches of 64) trains twice as fast as PyTorch 2.15 on an M5, a small CNN 1.4 times, and a tiny network 14 times (Lube's calls cost less than Python's).
+- What PyTorch has and this hasn't: GPUs, recurrent layers (LSTM, GRU) and attention as modules (build them from the operations: `softmax(q @ k.T / 8) @ v`), BatchNorm, learning-rate schedulers, and higher-order gradients.
+
+### Machine learning: `learn`
+
+```lube
+import array as np
+import learn
+let iris = learn.load_iris()
+let split = learn.train_test_split(iris.data, iris.target, {test_size: 0.25, random_state: 0})
+let X_train = split[0]
+let X_test = split[1]
+let y_train = split[2]
+let y_test = split[3]
+let forest = learn.RandomForestClassifier({n_estimators: 200, random_state: 0}).fit(X_train, y_train)
+print(forest.score(X_test, y_test))     // 0.9736842105263158
+let scale = learn.StandardScaler().fit(X_train)
+let logit = learn.LogisticRegression().fit(scale.transform(X_train), y_train)
+print(logit.predict(scale.transform(X_test[..3])))                   // [2, 1, 0]
+print(np.round(logit.predict_proba(scale.transform(X_test[..1])), 3))  // [[0, 0.031, 0.969]]
+print(learn.confusion_matrix(y_test, logit.predict(scale.transform(X_test))))
+print(learn.cross_val_score(learn.KNeighborsClassifier(5), iris.data, iris.target))
+                                        // [0.9666666666666667, 1, 0.9333333333333333, 0.9666666666666667, 1]
+let km = learn.KMeans({n_clusters: 3, random_state: 0}).fit(iris.data)
+print(np.bincount(km.labels_), np.round(km.inertia_, 4))             // [61, 50, 39] 78.8557
+```
+
+`learn` is scikit-learn's core on top of `array`: the same models, with the same names, methods, options and fitted attributes, taking and giving Arrays (nested lists of Numbers work too). Every number the example prints is the one sklearn prints for the same program (the forest's trees are its own, though its score is the same here).
+
+- A model is made with its options in an object, sklearn's keyword arguments: `Ridge({alpha: 0.5})`, `KMeans({n_clusters: 3, random_state: 0})`; the one sklearn takes first may come bare: `Ridge(0.5)`, `KMeans(3)`, `PCA(2)`. An option it doesn't have, or a value it can't take, is an error that says which: *Ridge(): there is no option "alfa" (it has alpha, fit_intercept)*. `m.get_params()` gives them as an object and `m.set_params({...})` changes them; a model prints as sklearn's do, with the options given: `Ridge(alpha=0.5)`.
+- `m.fit(X, y)` (`fit(X)` for what learns without labels) returns the model, so `m.fit(X, y).predict(X)` works. Then, as each model has them: `predict`, `predict_proba`, `predict_log_proba`, `decision_function`, `score` (accuracy for classifiers, R² for regressors, minus the inertia for KMeans), `transform`, `fit_transform`, `inverse_transform`, `fit_predict`. What fit found is a property: `coef_`, `intercept_`, `classes_`, `n_iter_`, `feature_importances_`, `cluster_centers_`, `labels_`, `inertia_`, `components_`, `explained_variance_ratio_`, `mean_`, `scale_`, `n_features_in_`... Using a model before `fit` is an error (*predict(): this Ridge is not fitted yet: call fit() first*), as is X with other features than fit had.
+- Labels can be any Numbers: `classes_` are y's distinct values, sorted, and predictions come in y's dtype. `LabelEncoder` turns text labels (or any) into 0, 1, 2...
+- Linear models: `LinearRegression`, `Ridge`, `Lasso`, `ElasticNet` (coordinate descent, stopping on the duality gap as sklearn does), each with one target or several (y with a column per target); `LogisticRegression` (L2, binary or multinomial, L-BFGS: `C`, `max_iter`, `tol`, `fit_intercept`) and `LinearSVC` (the squared hinge, one class against the rest).
+- Neighbors: `KNeighborsClassifier` and `KNeighborsRegressor` (`n_neighbors`, `weights: "uniform"` or `"distance"`, `p: 1` or `2`), and `m.kneighbors(X, k?)`: `[distances, indexes]`. Up to 15 features they search a k-d tree; past that, a matrix product finds candidates and exact distances rank them. Equally near samples come in the order of the training data.
+- Trees: `DecisionTreeClassifier` (`criterion: "gini"`, `"entropy"` or `"log_loss"`) and `DecisionTreeRegressor` (`"squared_error"`, `"friedman_mse"`), with `max_depth`, `min_samples_split`, `min_samples_leaf`, `max_features`, `random_state`; `get_depth()`, `get_n_leaves()`, `apply(X)` and `tree_` (sklearn's arrays: `feature`, `threshold`, `children_left`, `value`...). `RandomForestClassifier` and `RandomForestRegressor` add `n_estimators` and `bootstrap`, and build their trees on all the cores.
+- And `GaussianNB` (`var_smoothing`), `KMeans` (k-means++ or `init: "random"`, `n_init`, `max_iter`, `tol`), `DBSCAN` (`eps`, `min_samples`), `PCA` (`n_components` a count or a share of the variance, `whiten`); `StandardScaler`, `MinMaxScaler` (`feature_range: [0, 1]`, `clip`), `OneHotEncoder` (`handle_unknown`, `drop`; its output is dense), `PolynomialFeatures` (`degree`, `interaction_only`, `include_bias`).
+- Choosing models: `train_test_split(X, y..., {test_size, train_size, shuffle, random_state, stratify})` gives `[X_train, X_test, y_train, y_test...]` (lists stay lists); `KFold` and `StratifiedKFold` (`n_splits`, `shuffle`, `random_state`) have `split(X, y?)`, a list of `[train, test]` index Arrays; `cross_val_score(model, X, y, {cv, scoring})` fits a copy of the model on each fold (`cv` a count, stratified for classifiers as sklearn's is, or a KFold), scoring with `score()`, a metric's name (`"accuracy"`, `"f1_macro"`, `"neg_mean_squared_error"`...) or `fn(model, X, y)`. An object of your own class with `fit` and `score` works too; as an instance can't change itself when a plugin calls it, its `fit` returns the fitted model.
+- Metrics: `accuracy_score`, `balanced_accuracy_score`, `precision_score`, `recall_score`, `f1_score`, `fbeta_score` (`{average: "binary" | "micro" | "macro" | "weighted" | "none", pos_label, labels, zero_division}`), `confusion_matrix`, `classification_report` (sklearn's table, as text), `log_loss`, `roc_auc_score` (two classes, or one against the rest), `mean_squared_error`, `root_mean_squared_error`, `mean_absolute_error`, `r2_score`, `explained_variance_score`, `silhouette_score`, `adjusted_rand_score`.
+- Data: `load_iris({return_X_y})` (`{data, target, feature_names, target_names}`), `make_blobs`, `make_classification`, `make_regression`, `make_moons`, each `[X, y]`.
+- Random numbers: each call that draws has a generator of its own, numpy's (array's kind). `random_state` seeds it, and gives the numbers `RandomState(random_state)` gives: the splits of `train_test_split`, `KFold` and `StratifiedKFold`, the data of `make_blobs`, `make_regression` and `make_moons`, and KMeans's starts are sklearn's. Without `random_state`, it is seeded from array's generator, so `np.seed(n)` makes a run repeat. Isolates fitting at once don't disturb each other.
+- Speed, against scikit-learn 1.9 on an M5, with the same data: a random forest of 100 trees on 10,000 x 20 3 times as fast as sklearn's on all cores (18 times its default, one core), a decision tree 4 times, KMeans on 100,000 points 2.6 times, k nearest neighbors 2 times (50 features) to 5 times (4 features), multinomial logistic regression 1.7 times, binary the same, linear regression 10 times. Big products use the system's BLAS through array's `matmul`, and loops run on array's threads in fixed blocks, so results don't depend on how many there are.
+- What differs from sklearn: when two splits of a tree (or two neighbors) are exactly as good, the first feature (or sample) wins, where sklearn draws at random, so a tree on data with such ties can differ; forests and the made-up `make_classification` draw their own numbers; LogisticRegression and LinearSVC reach sklearn's optimum to about `tol` (scale X for a fast, exact fit); `n_init` is `"auto"` as sklearn's is (one k-means++ start, ten random ones). Left out: sparse matrices, sample weights, `GridSearchCV`, `SGDClassifier`, `SVC` with kernels, gradient boosting, and the models beyond those above.
+
+### Language models: `llm`
+
+```lube
+import llm
+let m = llm.load("stories15M-q8_0.gguf")   // or llm.Model(path)
+print(m.architecture, m.layers, m.vocab_size, m.context_length, m.quantization)   // llama 6 32000 128 Q8_0
+print(m.generate("Once upon a time", {max_tokens: 24, temperature: 0}))
+                                        // , there was a little girl named Lily. She loved to play outside in the sunshine. One day,
+let ids = m.tokenize("Hello world")     // [1, 15043, 3186]: <s>, ▁Hello, ▁world
+let logits = m.forward(ids)             // a float32 Array, one number for each token of the vocabulary
+print(m.detokenize([logits.argmax()]))  // !
+
+m.generate("The little dog", {temperature: 0.8, seed: 42, stop: ".", on_token: fn(piece) => write(piece)})
+                                        //  was curious and loved to explore
+let q = llm.load("qwen2.5-0.5b-instruct-q4_k_m.gguf")
+print(q.generate("<|im_start|>user\nName three colors of the rainbow.<|im_end|>\n<|im_start|>assistant\n", {temperature: 0}))
+                                        // The three colors of the rainbow are:
+                                        //
+                                        // 1. Red
+                                        // 2. Orange
+                                        // 3. Yellow
+```
+
+`llm` runs language models on the CPU, as llama.cpp does (and Hugging Face's transformers, for running a model): the GGUF files llama.cpp reads, which is what most downloads of open models are (`*.Q4_K_M.gguf`, `*-q8_0.gguf`...). It runs the llama family: Llama 1, 2 and 3, Mistral, TinyLlama, SmolLM, Qwen 2 and 3, Phi-3 and Gemma. The file is mapped into memory, its weights stay as they are (F32, F16, BF16, Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q4_K, Q5_K or Q6_K), and the products run on array's threads.
+
+- `load(path, options?)` gives a `Model`. The options: `threads` (0, the default: array's, so `array.threads(n)` sets it; or that many), `context` (how many tokens the model can hold at once: the model's own context length unless asked; the memory for them is taken as they come) and `mmap` (true: the file is mapped into memory, not read; false reads it, once).
+- `m.generate(prompt, options?)` gives the text the model writes after the prompt: a str (with the model's BOS token, and special tokens in it, such as `<|im_start|>`, read as those tokens) or a List of token ids. It stops at the end of the text (the model's EOS, or a token such as `<|im_end|>` or `<|eot_id|>`), after `max_tokens` (256), when the context is full, or before a `stop` string (a str or a List of them). Then `temperature` (0.8; 0 takes the likeliest token every time), `top_k` (40; 0 for all), `top_p` (0.95) and `repeat_penalty` (1, none; 1.1 makes the last 64 tokens less likely), applied in that order, as transformers does. The draw is from array's generator: `seed` sets it first, and without it `array.seed(n)` makes a run repeat. `on_token` is a function given each piece of text as it comes (whole characters: a piece is never half of one), and false from it stops.
+- A model keeps what it has read (the attention's cache). `m.forward(tokens)` reads tokens after those, and gives the logits for the token after the last; `m.tokens` lists what the cache holds, and `m.reset()` empties it. `generate` starts from its prompt alone, but what the cache holds of the prompt already is not read again, so a chat that grows turn by turn only reads what is new.
+- `m.tokenize(text, {bos, eos, special})` gives token ids: with the model's BOS (and EOS) as the model has them, unless asked; `special: true` reads special tokens' text in it as those tokens. `m.detokenize(tokens, {special})` gives the text back (`special: true` shows tokens such as `</s>`). The tokenizer is the model's own, from the file: SentencePiece's (llama, mistral, phi3, gemma) or GPT-2's byte-level BPE with the model's rules for splitting text (llama 3, qwen2, smollm), and gives the token ids llama.cpp gives.
+- What the file says of the model: `m.architecture`, `m.name`, `m.vocab_size`, `m.context_length` (what it was trained with), `m.context` (what it holds), `m.layers`, `m.embedding_length`, `m.heads`, `m.kv_heads`, `m.feed_forward_length`, `m.parameters`, `m.size` (the weights' bytes), `m.quantization` (`"Q4_K_M"`...), `m.bos` and `m.eos` (-1 if it has none), and `m.metadata`, all of it as an object. `m.tensors` lists the weights (`{name, type, shape}`) and `m.tensor(name)` gives one as a float32 Array.
+- The products give the same numbers on every system, to the last bit: they multiply integers (the weights' and the vector's, quantized to 8 bits as llama.cpp does) and add up floats in a fixed order, in their NEON (ARM), SSE2 (x86-64) and plain C versions alike, so only the system's `exp`, `sin` and `cos` can make a last bit differ. Any number of threads gives the same logits, and so does a prompt read at once or a token at a time.
+- An error says what is wrong with a file: *load(): 'model.gguf' has tensor 'blk.0.attn_q.weight' of type IQ2_XS, which llm cannot use*, *load(): 'old.gguf' is a GGUF file of version 1 (this reads versions 2 and 3)*.
+- Speed, against llama-cpp-python 0.3 (llama.cpp's C++ underneath) on an M5, with the same files: TinyLlama 1.1B Q4_K_M generates 85 tokens a second to its 111 and reads a prompt at 307 to its 491; Qwen2.5 0.5B Q4_K_M generates 109 to its 163; stories15M about 2,000 to 3,100. A model in numpy (its weights in float32, products by Accelerate) generates 15 tokens a second with TinyLlama, and 700 with stories15M.
+- Left out: GPUs, the architectures beyond those above (Gemma 2 and 3, Phi-2, mixtures of experts such as Mixtral), the formats Q2_K, Q3_K and the IQ ones, Hugging Face's own checkpoints (safetensors: convert them with llama.cpp's `convert_hf_to_gguf.py`), chat templates (write the prompt as the model expects it), and YaRN's long contexts.
+
 ### Writing a plugin
 
 A plugin is a shared library with one entry point. It includes `lube_plugin.h` (in Lube's `src/`), which is all it needs: everything goes through the API table that Lube passes it, so it links against no part of Lube.
@@ -872,7 +1102,9 @@ print(maths.twice(21))   // 42
 - A function gets its arguments borrowed and returns a new value, or `lube->error(vm, ...)` to raise an error. The API reads values (`kind`, `number`, `str`, `bytes`, `list_get`, `object_get`...) and makes them (`new_str`, `new_bytes`, `new_list`, `new_object`...).
 - `lube->type(plugin, "Counter", size, release, describe)` declares a type whose objects carry `size` bytes of the plugin's own data: `release` lets go of what that data holds when the last owner lets go, and `describe` says how it prints. `lube->method(...)` adds its methods and `lube->constructor(...)` makes `Counter(...)` work.
 - The entry point runs once per process; its functions can run in any isolate, so shared state goes under a lock (`lube->lock_new()`). `LUBE_PLUGIN_API` is the version of the API the plugin was made for: a newer Lube loads it, and an older one says it needs a newer Lube.
-- `src/lube_plugin.h` describes every function, and Lube's own plugins (`src/plugins/fs.c`, `net.c`, `audio.c` and `gfx.c`) are complete examples.
+- Version 2 of the API added what Arrays and Tensors needed. `lube->op(type, "+", fn)` gives a type an operator: `+ - * / % ** @`, the comparisons, `"neg"`, `"[]"` and `"[]="` (indexing, with several indexes as several arguments), `"len"` (and with `"[]"`, `for x in t`), `"copy"` (which makes `x[i] = v` copy a shared object first, as lists do), and `+= -= *= /= %=` in place when nothing else holds the object. `lube->property(type, "shape", fn)` makes `x.shape` work, `lube->constant(plugin, "pi", 3.14...)` gives the package a Number, and `lube->range(v, ...)` reads a range. `lube->call(vm, f, argc, argv)` and `lube->call_method(vm, obj, "forward", ...)` call back into Lube (`lube->failed(r)` says whether that raised an error), and `lube->object_keys(vm, obj)` lists an object's keys.
+- One plugin can use another's: `lube->provide(plugin, &table)` gives other plugins a table of the plugin's own, and `lube->require(plugin, "array")` loads that plugin and returns its table (`src/plugins/array.h` is array's: `nn` makes and reads Arrays through it). A program built with `lube --build` takes along the plugins its plugins require.
+- `src/lube_plugin.h` describes every function, and Lube's own plugins (`src/plugins/fs.c`, `net.c`, `audio.c`, `gfx.c` and the rest) are complete examples; `tests/plugins/vec.c` uses every part of version 2.
 
 ### Errors
 
@@ -1040,7 +1272,7 @@ Without the debugger, an uncaught error prints a traceback with the file and lin
 
 ## Standard library
 
-All of these are globals, and all of them can be called in method style; the rows for `fs`, `net` and `audio` are those plugins' names, after their import (see Plugins). The methods of `Bytes` and of the plugins' types, such as `b.pack(...)` and `f.read()`, are methods only.
+All of these are globals, and all of them can be called in method style; the rows for plugins (`fs`, `net`, `audio`, `math`...) are those plugins' names, after their import (see Plugins). The methods of `Bytes` and of the plugins' types, such as `b.pack(...)` and `f.read()`, are methods only.
 
 | area | functions |
 |---|---|
@@ -1057,6 +1289,15 @@ All of these are globals, and all of them can be called in method style; the row
 | reflection | `class_of`, `parent_of`, `fields`, `methods`, `signature(f)` / `signature(class, method)`, `get_field`, `set_field(&x, name, value)`, `call_method(x, name, ...)`, `has_method`, `classes()`, `find_class(name)`, `globals()` (see Reflection) |
 | concurrency | `spawn(f, args...)`, `iso.join()`, `channel(n?)`, `send`, `receive`, `try_receive(ch, default)`, `take(ch, n)`, `close`, `cores()`, `parallel_map(xs, f)` (see Concurrency) |
 | bytes | `Bytes(x?)`, `len`, `push(&b, ...)`, `+`, `in`; methods `b.pack(format, n, at?)`, `b.unpack(format, at?)`, `b.decode()`, `b.hex()`, `b.slice(from, to?)` (see Bytes and time) |
+| money | `m(amount?, currency?)` / `Money(...)`, `currency(code?)`, `add_currency(code, symbol, decimals)`; methods `x.split(n)`, `x.allocate(ratios)`, `x.to(currency, rate)`, `x.round(decimals?)`, `x.format(options?)`; `x.amount`, `x.units`, `x.currency`, `x.symbol`, `x.decimals` (see Money) |
+| `math` (plugin) | `sqrt`, `cbrt`, `exp`, `exp2`, `expm1`, `log(x, base?)`, `log2`, `log10`, `log1p`, `pow`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh`, `degrees`, `radians`, `hypot(...)`, `dist(p, q)`, `floor`, `ceil`, `trunc`, `modf`, `frexp`, `ldexp`, `fmod`, `remainder`, `copysign`, `fabs`, `fma`, `fmax`, `fmin`, `nextafter(x, y, options?)`, `ulp`, `isfinite`, `isinf`, `isnan`, `isnormal`, `issubnormal`, `signbit`, `isclose(a, b, options?)`, `fsum(xs)`, `prod(xs, options?)`, `sumprod(xs, ys)`, `factorial`, `comb`, `perm(n, k?)`, `gcd(...)`, `lcm(...)`, `isqrt`, `gamma`, `lgamma`, `erf`, `erfc`; `pi`, `e`, `tau`, `inf`, `nan` (see Maths) |
+| `cmath` (plugin) | `Complex(re, im?)`, `Complex(text)`, `sqrt`, `exp`, `log(z, base?)`, `log10`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh`, `phase`, `polar`, `rect(r, phi)`, `abs`, `isfinite`, `isinf`, `isnan`, `isclose(a, b, options?)`, `infj()`, `nanj()`; `pi`, `e`, `tau`, `inf`, `nan`; `z.real`, `z.imag`, `z.conjugate()`, and `+ - * / **`, `==`, `!=`, `-z` (see Maths) |
+| `random` (plugin) | `seed(a?, version?)`, `random()`, `uniform(a, b)`, `triangular(low?, high?, mode?)`, `randint(a, b)`, `randrange(start, stop?, step?)`, `getrandbits(k)`, `randbytes(n)`, `choice(xs)`, `choices(xs, weights?, {weights, cum_weights, k})`, `sample(xs, k, {counts})`, `shuffle(xs)` (a new list), `gauss`, `normalvariate`, `lognormvariate`, `expovariate`, `vonmisesvariate`, `gammavariate`, `betavariate`, `paretovariate`, `weibullvariate`, `binomialvariate`, `getstate()`, `setstate(s)`, `Random(seed?)` and `SystemRandom()` (with all of these as methods); `BPF`, `RECIP_BPF`, `LOG4`, `NV_MAGICCONST`, `SG_MAGICCONST`, `TWOPI` (see Statistics and random numbers) |
+| `statistics` (plugin) | `mean`, `fmean(data, weights?)`, `geometric_mean`, `harmonic_mean(data, weights?)`, `median`, `median_low`, `median_high`, `median_grouped(data, interval?)`, `mode`, `multimode`, `quantiles(data, {n, method})`, `variance(data, xbar?)`, `pvariance(data, mu?)`, `stdev(data, xbar?)`, `pstdev(data, mu?)`, `covariance(x, y)`, `correlation(x, y, {method})`, `linear_regression(x, y, {proportional})` (`{slope, intercept}`), `kde(data, h, kernel?)`, `kde_random(data, h, kernel?, {seed})`, `NormalDist(mu?, sigma?)`, `from_samples(data)`; methods `d.pdf(x)`, `d.cdf(x)`, `d.inv_cdf(p)`, `d.overlap(e)`, `d.quantiles(n?)`, `d.samples(n, {seed})`, `d.zscore(x)`, `k.pdf(x)`, `k.cdf(x)`, `r.sample()`, `r.samples(n)` (see Statistics and random numbers) |
+| `array` (plugin) | `array`, `zeros`, `ones`, `full`, `arange`, `linspace`, `eye`, `concatenate`, `stack`...; elementwise `sqrt`, `exp`, `log`, `sin`...; `sum`, `mean`, `std`, `min`, `max`, `argmax`, `median`...; `sort`, `argsort`, `unique`, `where`; `matmul`, `solve`, `inv`, `det`, `svd`, `qr`, `eigh`, `lstsq`, `norm`...; `seed`, `rand`, `randn`, `randint`, `normal`, `choice`, `permutation`; `save`, `load`, `loadtxt`, `savetxt`, `load_safetensors`, `save_safetensors`; `blas`, `use_blas`, `threads`; `a.shape`, `a.dtype`, `a.T`, `a.reshape(...)`, `a.astype(t)`, `a[i, j]`, `a @ b` (see Arrays) |
+| `nn` (plugin) | `tensor`, `zeros`, `ones`, `rand`, `randn`, `manual_seed`, `no_grad(f)`; `relu`, `gelu`, `softmax`, `cross_entropy`, `mse_loss`, `conv2d`, `layer_norm`, `embedding`...; `Linear`, `Conv2d`, `Embedding`, `LayerNorm`, `Dropout`, `ReLU`..., `Sequential`; `SGD`, `Adam`, `AdamW`; `save`, `load`; `t.backward()`, `t.grad`, `t.item()`, `m.forward(x)`, `m.parameters()`, `opt.step()` (see Neural networks) |
+| `learn` (plugin) | models `LinearRegression`, `Ridge`, `Lasso`, `ElasticNet`, `LogisticRegression`, `LinearSVC`, `KNeighborsClassifier`, `KNeighborsRegressor`, `DecisionTreeClassifier`, `DecisionTreeRegressor`, `RandomForestClassifier`, `RandomForestRegressor`, `GaussianNB`, `KMeans`, `DBSCAN`, `PCA`, `StandardScaler`, `MinMaxScaler`, `LabelEncoder`, `OneHotEncoder`, `PolynomialFeatures` (options as an object); methods `m.fit(X, y?)`, `m.predict(X)`, `m.predict_proba(X)`, `m.score(X, y)`, `m.transform(X)`, `m.fit_transform(X)`, `m.inverse_transform(X)`, `m.get_params()`, `m.set_params(opts)`; `train_test_split`, `KFold`, `StratifiedKFold`, `cross_val_score`; `accuracy_score`, `precision_score`, `recall_score`, `f1_score`, `confusion_matrix`, `classification_report`, `mean_squared_error`, `r2_score`, `log_loss`, `roc_auc_score`...; `load_iris`, `make_blobs`, `make_classification`, `make_regression`, `make_moons` (see Machine learning) |
+| `llm` (plugin) | `load(path, options?)` or `Model(path, options?)`; methods `m.generate(prompt, options?)`, `m.forward(tokens)`, `m.tokenize(text, options?)`, `m.detokenize(tokens, options?)`, `m.reset()`, `m.tensor(name)`; properties `m.architecture`, `m.name`, `m.vocab_size`, `m.context_length`, `m.context`, `m.layers`, `m.embedding_length`, `m.heads`, `m.kv_heads`, `m.feed_forward_length`, `m.parameters`, `m.size`, `m.quantization`, `m.bos`, `m.eos`, `m.tokens`, `m.metadata`, `m.tensors` (see Language models) |
 | `audio` (plugin) | `Sound(path or bytes)`, `Sound(samples, rate?, channels?)`, `stop_all()`, `set_volume(x)`, `device()`; methods `s.play(volume?, pan?)`, `s.loop(volume?, pan?)`, `s.duration()`, `s.rate()`, `s.channels()`, `s.samples()`, `s.to_wav()`; `v.stop()`, `v.is_playing()`, `v.set_volume(x)`, `v.set_pan(x)`, `v.set_speed(x)` (see Sound) |
 | `net` (plugin) | `tcp_listen(port, host?)`, `tcp_connect(host, port, seconds?)`, `udp_open(port?, host?)`, `poll(sockets, seconds?)`; methods `s.accept(seconds?)`, `s.receive(seconds?)`, `s.send(data)`, `s.packets(seconds?)`, `s.send_to(host, port, data)`, `s.is_open()`, `s.port()`, `s.peer()`, `s.close()` (see Sockets) |
 | `fs` (plugin) | `open(path, mode?)`; methods `f.read(n?)`, `f.read_line()`, `f.write(x)`, `f.seek(pos, from?)`, `f.tell()`, `f.size()`, `f.eof()`, `f.flush()`, `f.close()`; `read_bytes`, `write_bytes`, `exists`, `is_dir`, `list_dir`, `make_dir`, `remove_file`, `rename_file`, `file_size` |

@@ -195,3 +195,18 @@ gm %= 2.5
 var words = ["a"]
 words[0] += "!"
 print(counter, mods(), gm, words)
+
+// x[i, j] and open ranges: for plugins' types (an Array's a[.., 1]); a list, text or object takes one index
+print([2.., 5], [0..])
+try { print([1, 2][0, 1]) } catch e { print(e) }
+try { print("ab"[0, 0]) } catch e { print(e) }
+try { print({a: 1}[.., 2]) } catch e { print(e) }
+var two = [[1, 2], [3, 4]]
+try { two[0, 1] = 5 } catch e { print(e) }
+try { two[0][0, 1] = 5 } catch e { print(e) }
+try { print(two[1..]) } catch e { print(e) }
+
+// a keyword right after '.' is a name, and can end the line (numpy's var, an object's in)
+let kw = {in: 5, var: 6}
+let after_dot = kw.in
+print(after_dot, kw.var)

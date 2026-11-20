@@ -416,7 +416,7 @@ stack overflow: too much recursion
 lube: out of memory
 [exit 70]
 --- small: only the parts of Lube it uses, built
-small: 10 of N built-ins, 7 of 13 fns and classes
+small: 11 of N built-ins, 7 of 13 fns and classes
 built TMP/small_app: 3 files, N bytes
 over 100
 rex says woof, not ... CAT SAYS ... true true
@@ -1139,8 +1139,59 @@ error: hello() takes 1 argument but got 0
 error: a Counter cannot be sent to another isolate: only data can (numbers, text, bytes, lists, maps, instances and channels)
 error: '_private' is private to package greet
 [exit 0]
+--- plugin: operators, properties and Numbers of its own; one that uses another
+lube: plugin 'vec': Vec has no operator '<=>' to give
+Vec(5, 7, 9) Vec(-3, -3, -3) Vec(4, 10, 18) Vec(4, 2.5, 2) Vec(0, 1, 0) Vec(1, 4, 9) Vec(2, 4, 8) Vec(9, 8, 7) Vec(2, 4, 6) Vec(-1, -2, -3)
+32 true true false false Vec(1, 1, 1) Vec(1, 1, 1) Vec(0, 0, 0) Vec(1, 1, 1)
+false true true true
+3 1 3 Vec(1, 3) Vec(2, 3) Vec(1, 2) Vec(1, 2, 3) Vec(1, 2) 1 1.618 8
+15 ["0:1", "1:2", "2:3"] [true, true, false, false]
+Vec(10, 7, 7) Vec(1, 2, 3)
+Vec(15, 7, 14)
+Vec(16, 8, 15) Vec(15, 7, 14)
+Vec(2, 3)
+Vec(1, 10) 1
+[Vec(3, 2)]
+printed
+[42, false] false 5
+t
+error: a Number cannot be called
+error: a Point cannot be called
+error: inside
+error: a Point has no method 'nope'
+error: a Number has no method 'x'
+error: ask() wants a method's name
+error: a condition needs a Bool, and '<' gave a Vec (use all() or any())
+a Bool: fine
+error: a Vec works with a Vec of its size, or a Number
+error: @ needs two Vecs
+error: unsupported operand types for '@': Number and Number
+error: Vec index out of range
+error: Vec index out of range
+error: Vec range out of range
+error: a Vec holds Numbers
+error: Vec index out of range
+error: a Vec holds Numbers
+error: cannot change a part of an element of a Vec: change the element itself (x[i, j] = v)
+error: no such thing
+error: a Vec has no field 'nope'
+error: a Vec works with a Vec of its size, or a Number
+error: len of an Odd gave a str, not a whole Number
+error: len of an Odd gave a str, not a whole Number
+error: an Odd has no items
+error: an Odd cannot change
+error: an Odd cannot be copied
+error: an Odd has no items
+error: cannot negate an Odd
+error: unsupported operand types for '+': Odd and Number
+error: an Odd has no field 'x'
+error: cannot loop over a Counter (expected a List, Range, str, Object, Channel or Bytes)
+error: cannot change an element of a Counter
+error: cannot index into a Counter
+error: cannot index into a Counter
+[exit 0]
 --- plugin: made for a later Lube
-lube: plugin 'old' needs a newer Lube (it was made for plugin API 2; this Lube has 1)
+lube: plugin 'old' needs a newer Lube (it was made for plugin API 3; this Lube has 2)
 <eval>:1: error: cannot load plugin old (see above)
     1 | import old
 [exit 65]
@@ -1177,6 +1228,14 @@ hello, installed
 built TMP/built/app: 1 file, N bytes
   and its plugin greet: plugins/greet.LIB, next to it
 hello, built Counter(1)
+[exit 0]
+--- plugin: built with a program, with the plugin it uses
+lube: plugin 'vec': Vec has no operator '<=>' to give
+built TMP/built/app2: 1 file, N bytes
+  and its plugin vec: plugins/vec.LIB, next to it
+  and its plugin greet: plugins/greet.LIB, next to it
+lube: plugin 'vec': Vec has no operator '<=>' to give
+Vec(2, 3) [true, true, false, false]
 [exit 0]
 --- plugin: --small (Lube's inside it, others next to it)
 small: 2 of N built-ins, 0 of 0 fns and classes

@@ -110,6 +110,9 @@ static int add_package(Interp *I, Files *fs, const char *pkg, const char *import
             if (!strcmp(fs->plugins[i], pkg)) return 0;
         fs->plugins = xrealloc(fs->plugins, sizeof(char *) * (size_t)(fs->nplugins + 1));
         fs->plugins[fs->nplugins++] = xstrndup(pkg, strlen(pkg));
+        int nreq;  /* and the plugins it uses (nn uses array) */
+        char **req = lube_plugin_requires(I, name, &nreq);
+        for (int i = 0; i < nreq; i++) add_package(I, fs, req[i], importer);
         return 0;
     }
     int n, status = 0;

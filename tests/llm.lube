@@ -1,0 +1,406 @@
+// Language models (the plugin llm): GGUF files, the tokenizers, the forward pass, generating text, and what
+// goes wrong. The tiny models in tests/models/ have random weights (made by tests/models/make_models.py, which
+// also prints what its numpy reference gives for them: checked here); others are made here, by gguf() below.
+import llm
+import array as np
+import fs.*
+
+fn tries(f) { try { print(f()) } catch e { print("error:", e) } }
+fn close(a, b, tol = 0.002) => abs(a - b) <= tol
+make_dir("build/llm")
+
+// ---------- GGUF files, made here ----------
+// kvs: [key, type, value] (types: 0 u8, 1 i8, 2 u16, 3 i16, 4 u32, 5 i32, 6 f32, 7 bool, 8 str, 9 array of
+// [element type, items], 10 u64, 11 i64, 12 f64); tensors: [name, ggml type, dims (row length first), Bytes]
+let FMT = ["u8", "i8", "u16", "i16", "u32", "i32", "f32", "u8", "", "", "u64", "i64", "f64"]
+fn gstr(&b, s) {
+  b.pack("u64", len(s))
+  push(&b, s)
+}
+fn gval(&b, t, v) {
+  if t == 8 { gstr(&b, v) }
+  else if t == 9 {
+    b.pack("u32", v[0])
+    b.pack("u64", len(v[1]))
+    for x in v[1] { gval(&b, v[0], x) }
+  }
+  else if t == 7 {
+    if v { b.pack("u8", 1) } else { b.pack("u8", 0) }
+  }
+  else { b.pack(FMT[t], v) }
+}
+fn gguf(kvs, tensors, version = 3, align = 32) {
+  var b = Bytes("GGUF")
+  b.pack("u32", version)
+  b.pack("u64", len(tensors))
+  b.pack("u64", len(kvs))
+  for kv in kvs {
+    gstr(&b, kv[0])
+    b.pack("u32", kv[1])
+    gval(&b, kv[1], kv[2])
+  }
+  var offset = 0
+  for t in tensors {
+    gstr(&b, t[0])
+    b.pack("u32", len(t[2]))
+    for d in t[2] { b.pack("u64", d) }
+    b.pack("u32", t[1])
+    b.pack("u64", offset)
+    offset += len(t[3]) + (align - len(t[3]) % align) % align
+  }
+  while len(b) % align != 0 { push(&b, 0) }
+  for t in tensors {
+    push(&b, t[3])
+    while len(b) % align != 0 { push(&b, 0) }
+  }
+  return b
+}
+fn f32s(xs) => np.array(xs, "float32").to_bytes()
+fn zeros(n) => Bytes(4 * n)
+fn ones(n) => f32s(np.ones(n))
+
+// A model of the llama family, F32, that maps each token to the next by a table (its layers are all zeros,
+// so the logits are output . embedding: one-hot embeddings, and the output's row j is the embedding of the
+// token before j). vocab: [text, type]; next[i]: the token after i. Options: extra (metadata to add), drop (a
+// tensor to leave out), change (tensors to replace: [name, type, dims, Bytes]), add (tensors to add), arch,
+// align (the file's alignment), version (GGUF's: 3).
+fn chain_model(vocab, next, o = {}) {
+  let V = len(vocab)
+  let E = 32
+  let arch = get(o, "arch", "llama")
+  var emb = np.zeros(V, E)
+  var out = np.zeros(V, E)
+  for i in 0..V {
+    emb[i, i] = 1
+    if next[i] >= 0 { out[next[i], i] = 4 }
+  }
+  var kvs = [["general.architecture", 8, arch], ["general.name", 8, "chain"],
+             ["{arch}.context_length", 4, 16], ["{arch}.embedding_length", 4, E], ["{arch}.block_count", 4, 1],
+             ["{arch}.feed_forward_length", 4, 40], ["{arch}.attention.head_count", 4, 2],
+             ["{arch}.attention.layer_norm_rms_epsilon", 6, 0.00001], ["tokenizer.ggml.model", 8, get(o, "tokenizer", "llama")],
+             ["tokenizer.ggml.merges", 9, [8, []]], ["tokenizer.ggml.tokens", 9, [8, map(vocab, fn(v) => v[0])]],
+             ["tokenizer.ggml.token_type", 9, [5, map(vocab, fn(v) => v[1])]],
+             ["tokenizer.ggml.bos_token_id", 4, 1], ["tokenizer.ggml.eos_token_id", 4, 2]] + get(o, "extra", [])
+  var ts = [["token_embd.weight", 0, [E, V], emb.astype("float32").to_bytes()],
+            ["output.weight", 0, [E, V], out.astype("float32").to_bytes()], ["output_norm.weight", 0, [E], ones(E)]]
+  for name in ["attn_norm", "ffn_norm"] { ts.push(["blk.0.{name}.weight", 0, [E], ones(E)]) }
+  for m in [["attn_q", E, E], ["attn_k", E, E], ["attn_v", E, E], ["attn_output", E, E], ["ffn_gate", E, 40],
+            ["ffn_up", E, 40], ["ffn_down", 40, E]] {
+    ts.push(["blk.0.{m[0]}.weight", 0, [m[1], m[2]], zeros(m[1] * m[2])])
+  }
+  ts = ts.filter(fn(t) => t[0] != get(o, "drop", "")) + get(o, "add", [])
+  for c in get(o, "change", []) {
+    for i, t in ts { if t[0] == c[0] { ts[i] = c } }
+  }
+  return gguf(kvs, ts, get(o, "version", 3), get(o, "align", 32))
+}
+
+// its vocabulary: 1 <s> -> ▁a -> <0xC3> -> <0xA9> -> b -> </s>; c <-> d go round
+let CV = [["<unk>", 2], ["<s>", 3], ["</s>", 3], ["<0xC3>", 6], ["<0xA9>", 6], ["▁a", 1], ["b", 1], ["c", 1],
+          ["d", 9], ["<|end|>", 3]]
+let CN = [0, 5, 0, 4, 6, 3, 2, 8, 7, 0]
+write_bytes("build/llm/chain.gguf", chain_model(CV, CN))
+
+// ---------- loading, and what a model says of itself ----------
+let c = llm.load("build/llm/chain.gguf")
+print(c, type(c), c is llm.Model, c.architecture, c.name, c.vocab_size, c.context_length, c.context, c.layers)
+print(c.embedding_length, c.heads, c.kv_heads, c.feed_forward_length, c.parameters, c.size, c.quantization, c.bos, c.eos, c.tokens)
+print(len(c.tensors), c.tensors[0], c.tensors[3])
+print(c.tensor("output_norm.weight").shape, c.tensor("token_embd.weight")[5, 0..8], c.tensor("output.weight")[3, 5])
+write_bytes("build/llm/chain2.gguf", chain_model(CV, CN, {version: 2}))
+print(llm.load("build/llm/chain2.gguf").generate([1], {temperature: 0}))
+let c2 = llm.Model("build/llm/chain.gguf", {threads: 1, context: 8, mmap: false})
+print(c2.context, c2.metadata["general.architecture"], len(keys(c2.metadata)), c2.metadata["tokenizer.ggml.tokens"][5])
+
+// ---------- SentencePiece: ▁ for spaces, byte tokens, special tokens ----------
+for text in ["a b", "é", "a</s>b", "", "d<0xC3>"] { print(repr(text), c.tokenize(text), c.tokenize(text, {special: true, bos: false, eos: true})) }
+print(c.detokenize([5, 3, 4, 6]), repr(c.detokenize([1, 5, 2, 0, 9])), c.detokenize([1, 5, 2, 0, 9], {special: true}), c.detokenize(5), repr(c.detokenize([])))
+print(c.detokenize(c.tokenize("aéb")) == " aéb".slice(1), c.tokenize("<s>d", {special: true}))
+
+// ---------- forward: logits after the tokens before (the cache) ----------
+let lg = c.forward([1])
+print(lg.shape, lg.dtype, lg.argmax(), round(lg[5], 3), c.tokens, c.forward(5).argmax(), c.forward([3, 4]).argmax(), c.tokens)
+c.reset()
+print(c.tokens, c.forward([7, 8, 7]).argmax())
+
+// ---------- generate ----------
+var pieces = []
+c.reset()
+print(repr(c.generate([1], {temperature: 0, on_token: fn(p) { pieces.push(p) }})), pieces, c.tokens)
+for stop in ["éb", ["x", "b"], "a", "aé", "zz"] {
+  pieces = []
+  print(repr(c.generate([1], {temperature: 0, stop: stop, on_token: fn(p) { pieces.push(p) }})), pieces)
+}
+pieces = []
+print(repr(c.generate([1], {temperature: 0, on_token: fn(p) { pieces.push(p); return false }})), pieces)
+print(c.generate([7], {temperature: 0, max_tokens: 5}), c.generate([7], {temperature: 0, max_tokens: 30}), len(c.tokens))
+print(repr(c.generate([7], {max_tokens: 0})), c.generate([7], {temperature: 0, max_tokens: 4, repeat_penalty: 1.5}))
+print(c.generate("c", {temperature: 0, max_tokens: 3}), c.tokens, c.generate("c", {temperature: 0, max_tokens: 3}), c.tokens)
+for opts in [{temperature: 30, seed: 7, max_tokens: 8}, {temperature: 30, seed: 7, max_tokens: 8, top_k: 0},
+             {temperature: 30, seed: 7, max_tokens: 8, top_k: 2, top_p: 0.5}, {temperature: 30, seed: 7, max_tokens: 8, top_p: 0}] {
+  let first = c.generate([7], opts)
+  print(c.tokens, c.generate([7], opts) == first)  // (the tokens: text from random ones may be part of a character)
+}
+np.seed(3)
+let s1 = c.generate([7], {temperature: 30, max_tokens: 8})
+np.seed(3)
+print(s1 == c.generate([7], {temperature: 30, max_tokens: 8}))
+tries(fn() => c.generate([1], {on_token: fn(p) { c.reset() }}))
+tries(fn() => c.generate([1], {on_token: fn(p) { c.forward([1]) }}))
+tries(fn() => c.generate([1], {on_token: fn(p) { c.generate([1]) }}))
+tries(fn() => c.generate([1], {on_token: fn(p) => 1 / 0}))
+tries(fn() => c.generate([1], {on_token: 5}))
+print(c.generate([1], {temperature: 0, on_token: fn(p) => c.tokenize(p)}), c.tokens)
+
+// ---------- the tiny models: logits and greedy tokens as the numpy reference has them ----------
+// made by tests/models/make_models.py: [file, prompt, top 5 tokens, their logits, 8 greedy tokens]
+let REF = [
+  ["llama-mixed.gguf", [1, 30, 36, 38, 40], [10, 44, 49, 46, 3], [5.7463, 4.4889, 4.2917, 3.4809, 3.4151], [10, 32, 44, 46, 14, 14, 27, 10]],
+  ["qwen2-bpe.gguf", [60, 41, 50, 42], [60, 32, 43, 26, 4], [4.6202, 3.8953, 3.689, 2.9952, 2.8676], [60, 60, 60, 60, 60, 60, 60, 60]],
+  ["phi3-fused.gguf", [1, 33, 37], [15, 38, 49, 20, 35], [4.665, 4.0432, 3.4175, 2.5996, 2.5675], [15, 41, 35, 42, 0, 52, 26, 31]],
+  ["kquants.gguf", [60, 41, 50, 42, 45], [40, 12, 58, 27, 9], [4.6675, 4.3127, 3.0164, 2.5912, 1.9602], [40, 40, 40, 40, 40, 40, 40, 40]],
+  ["gemma.gguf", [1, 30, 36], [36, 14, 48, 54, 24], [9.1093, 5.306, 3.3704, 3.0019, 2.8863], [36, 36, 36, 36, 36, 36, 36, 36]],
+  ["qwen3.gguf", [41, 50], [53, 13, 18, 21, 5], [4.4116, 3.3904, 3.227, 2.7085, 2.4801], [53, 52, 52, 52, 52, 52, 52, 52]],
+  ["mistral-gpt2.gguf", [41, 50, 42], [33, 42, 31, 62, 51], [6.0074, 4.5707, 4.0681, 3.7618, 3.7183], [33, 33, 33, 62, 62, 62, 62, 62]],
+]
+var models = {}
+for r in REF {
+  let m = llm.load("tests/models/{r[0]}")
+  models[r[0]] = m
+  print(m, m.name, m.quantization, m.embedding_length, m.heads, m.kv_heads, m.feed_forward_length, m.parameters, m.size, m.bos, m.eos)
+  let lg = m.forward(r[1])
+  let top = (-lg).argsort()[0..5].to_list()
+  var greedy = []
+  var cur = lg
+  for i in 0..8 {
+    greedy.push(cur.argmax())
+    cur = m.forward([greedy[-1]])
+  }
+  m.reset()
+  var one = lg
+  for t in r[1] { one = m.forward([t]) }
+  m.generate(r[1], {temperature: 0, max_tokens: 8})
+  // (generate stops at a token that ends the text: </s> or <|end|>, <|endoftext|> or <|im_end|>)
+  var until_end = []
+  for t in r[4].slice(0, 7) {
+    if [2, 7, 60, 62].contains(t) and (t < 56) == (m.vocab_size == 56) { break }
+    until_end.push(t)
+  }
+  print("  top 5", top == r[2], all(zip(top.map(fn(i) => lg[i]), r[3]), fn(p) => close(p[0], p[1])), " greedy", greedy == r[4],
+        m.tokens.slice(len(r[1])) == until_end, len(until_end), " one at a time", np.array_equal(one, lg))
+}
+
+// each format's numbers, as the reference reads them
+let mixed = models["llama-mixed.gguf"]
+for t in [["blk.0.attn_q.weight", [0.017294, 0.195398, 0.051649, 0.085075]], ["blk.0.attn_k.weight", [0.140259, -0.006889, 0.191895, -0.092896]],
+          ["blk.0.attn_v.weight", [0.037598, -0.253906, -0.022095, 0.277344]], ["blk.0.attn_output.weight", [-0.100952, -0.151428, 0.050476, 0.201904]],
+          ["blk.0.ffn_gate.weight", [-0.283203, -0.144043, -0.097656, -0.144043]], ["blk.0.ffn_up.weight", [-0.212158, -0.02652, -0.159119, 0.0]],
+          ["blk.0.ffn_down.weight", [0.24437, -0.050339, -0.132202, -0.033966]], ["blk.1.attn_q.weight", [-0.128462, 0.079264, 0.019133, -0.073797]]] {
+  let w = mixed.tensor(t[0])
+  print(t[0], w.shape, all(zip(w[0, 0..4].to_list(), t[1]), fn(p) => close(p[0], p[1], 0.000001)))
+}
+for t in [["blk.0.attn_q.weight", [-0.000626, -0.030968, -0.076481, -0.023382]], ["blk.0.attn_k.weight", [0.096341, 0.028902, -0.048171, 0.086707]],
+          ["blk.0.attn_v.weight", [0.005657, -0.098354, 0.124527, 0.109668]]] {
+  let w = models["kquants.gguf"].tensor(t[0])
+  print(t[0], w.shape, all(zip(w[0, 0..4].to_list(), t[1]), fn(p) => close(p[0], p[1], 0.000001)))
+}
+print(mixed.tensors.map(fn(t) => t.type).filter(fn(t) => t != "F32"), models["kquants.gguf"].tensors.map(fn(t) => t.type).filter(fn(t) => t != "F32"))
+
+// 40 tokens: two batches of the forward pass, and one at a time, the same
+let long = [1] + range(10, 49).map(fn(i) => i % 56)
+mixed.reset()
+let all_at_once = mixed.forward(long)
+mixed.reset()
+var step = all_at_once
+for t in long { step = mixed.forward([t]) }
+print(np.array_equal(step, all_at_once), len(mixed.tokens), mixed.context)
+
+// ---------- GPT-2's byte-level BPE: words by each model's rules (qwen2, llama 3, smollm, gpt2) ----------
+let texts = ["the cat sat on the mat", "it's IT'S 12345 hello!!", " cats", "a  b\n\n c  ", "café x?", "<|im_start|>hi<|im_end|><tool>",
+             "  \n", "hello.\r\n\r\nhi", "'", "1 2, 3", "a\u{a0}b\u{3000}c", Bytes([0xC3, 0x41, 0x62]).decode(), "<tool>" * 20]
+for f in ["qwen2-bpe.gguf", "kquants.gguf", "qwen3.gguf", "mistral-gpt2.gguf"] {
+  let m = models[f]
+  print(f, m.metadata["tokenizer.ggml.pre"])
+  for i, text in texts {
+    let t = m.tokenize(text)
+    var shown = repr(text)
+    if i == 11 { shown = "(not UTF-8)" }
+    print("  ", shown, t, m.tokenize(text, {special: true}), repr(m.detokenize(t)), repr(m.detokenize(m.tokenize(text, {special: true}), {special: true})))
+  }
+}
+
+// ---------- SentencePiece's, with <unk> for bytes it has no token for ----------
+for text in ["the cat sat on the mat", "a dog was happy\nin", "é€", "<|user|>hi</s>", "  happy  ", "hap"] {
+  let t = mixed.tokenize(text)
+  print(repr(text), t, mixed.tokenize(text, {special: true}), repr(mixed.detokenize(t)), repr(mixed.detokenize(t, {special: true})))
+}
+// (phi3's special tokens take the white space after them, but <s>'s: as Hugging Face's tokenizer has it)
+let phi = models["phi3-fused.gguf"]
+print(phi.tokenize("<|end|>\n hi<s> a<|user|>\t", {special: true}), mixed.tokenize("<|end|>\n hi<s> a<|user|>\t", {special: true}))
+
+// ---------- what goes wrong: arguments and options ----------
+tries(fn() => llm.load(5))
+tries(fn() => llm.load("build/llm/chain.gguf", 5))
+tries(fn() => llm.load("build/llm/chain.gguf", {thread: 2}))
+tries(fn() => llm.load("build/llm/chain.gguf", {threads: -1}))
+tries(fn() => llm.load("build/llm/chain.gguf", {threads: 1.5}))
+tries(fn() => llm.load("build/llm/chain.gguf", {context: "big"}))
+tries(fn() => llm.load("build/llm/chain.gguf", {mmap: 1}))
+tries(fn() => llm.load("build/llm/no-such.gguf"))
+tries(fn() => c.tokenize(5))
+tries(fn() => c.tokenize("a", {bos: 1}))
+tries(fn() => c.tokenize("a", {eos: 1}))
+tries(fn() => c.tokenize("a", {special: 1}))
+tries(fn() => c.tokenize("a", {bose: true}))
+tries(fn() => c.detokenize("a"))
+tries(fn() => c.detokenize([1, 10]))
+tries(fn() => c.detokenize([1, -1]))
+tries(fn() => c.detokenize([0.5]))
+tries(fn() => c.detokenize(["a"]))
+tries(fn() => c.detokenize([1], {special: "yes"}))
+tries(fn() => c.detokenize([1], {specials: true}))
+tries(fn() => c.forward([]))
+tries(fn() => c.forward([99]))
+tries(fn() => c.forward("a"))
+c.reset()
+tries(fn() => c.forward(range(0, 17).map(fn(i) => i % 10)))
+tries(fn() => c.tensor(5))
+tries(fn() => c.tensor("no.such"))
+tries(fn() => c.generate(5))
+tries(fn() => c.generate([]))
+tries(fn() => c.generate(range(0, 17).map(fn(i) => i % 10)))
+tries(fn() => c.generate([1], 5))
+tries(fn() => c.generate([1], {max_token: 5}))
+tries(fn() => c.generate([1], {max_tokens: -1}))
+tries(fn() => c.generate([1], {temperature: -1}))
+tries(fn() => c.generate([1], {top_k: 1.5}))
+tries(fn() => c.generate([1], {top_p: 2}))
+tries(fn() => c.generate([1], {repeat_penalty: 0}))
+tries(fn() => c.generate([1], {seed: -1}))
+tries(fn() => c.generate([1], {stop: 5}))
+tries(fn() => c.generate([1], {stop: [""]}))
+tries(fn() => c.generate([1], {stop: ["a", 5]}))
+tries(fn() => c.generate([300]))
+tries(fn() => models["qwen2-bpe.gguf"].generate(""))
+
+// ---------- what goes wrong: files ----------
+fn bad(name, bytes) {
+  write_bytes("build/llm/{name}.gguf", bytes)
+  tries(fn() => llm.load("build/llm/{name}.gguf"))
+}
+let chain = read_bytes("build/llm/chain.gguf")
+bad("text", Bytes("this is not a GGUF file, just some text"))
+bad("empty", Bytes())
+bad("v1", gguf([], [], 1))
+bad("cut", chain.slice(0, 100))
+bad("cut2", chain.slice(0, len(chain) - 64))
+var raw = Bytes("GGUF")
+raw.pack("u32", 3)
+raw.pack("u64", 0)
+raw.pack("u64", 1)
+gstr(&raw, "odd")
+raw.pack("u32", 99)
+raw.pack("u64", 0)
+bad("kvtype", raw)
+raw = Bytes("GGUF")
+raw.pack("u32", 3)
+raw.pack("u64", 1000000000000)
+raw.pack("u64", 0)
+raw.pack("u64", 0)
+bad("count", raw)
+raw = Bytes("GGUF")
+raw.pack("u32", 3)
+raw.pack("u64", 0)
+raw.pack("u64", 1)
+raw.pack("u64", 1000)
+bad("keylen", raw + Bytes(24))
+bad("arrtype", gguf([["x", 9, [99, []]]], []))
+raw = gguf([["x", 9, [4, [1]]]], [])
+raw.pack("u64", 1000000000000, 4 + 4 + 8 + 8 + 8 + 1 + 4 + 4)
+bad("arrlen", raw)
+bad("deep", gguf([["x", 9, [9, [[9, [[9, [[9, [[4, [1]]]]]]]]]]]], []))
+bad("ttype", gguf([], [["t", 4, [32], Bytes(32)]]))
+bad("dims", gguf([], [["t", 0, [1, 1, 1, 1, 1], Bytes(4)]]))
+bad("dim0", gguf([], [["t", 0, [0], Bytes(4)]]))
+bad("blocks", gguf([], [["t", 2, [33], Bytes(18)]]))
+bad("outside", gguf([], [["t", 0, [64], Bytes(4)]]))
+bad("align", gguf([["general.alignment", 4, 3]], []))
+bad("align2", gguf([["general.alignment", 8, "x"]], []))
+bad("noarch", gguf([["general.name", 8, "x"]], []))
+bad("arch", chain_model(CV, CN, {arch: "gpt2"}))
+let T = [["tokenizer.ggml.model", 8, "llama"], ["tokenizer.ggml.tokens", 9, [8, ["a", "b"]]]]
+bad("notok", gguf([["general.architecture", 8, "llama"]], []))
+bad("bert", gguf([["general.architecture", 8, "llama"], ["tokenizer.ggml.model", 8, "bert"]], []))
+bad("notokens", gguf([["general.architecture", 8, "llama"], ["tokenizer.ggml.model", 8, "llama"]], []))
+bad("nomerges", gguf([["general.architecture", 8, "llama"], ["tokenizer.ggml.model", 8, "gpt2"], T[1]], []))
+bad("noembd", gguf([["general.architecture", 8, "llama"]] + T, []))
+fn with_kv(key, t, v) => chain_model(CV, CN, {extra: [[key, t, v]]})
+bad("headlist", with_kv("llama.attention.head_count_kv", 9, [4, [2]]))
+bad("headtext", with_kv("llama.attention.head_count_kv", 8, "two"))
+bad("vlen", with_kv("llama.attention.value_length", 4, 8))
+bad("kvheads", with_kv("llama.attention.head_count_kv", 4, 3))
+bad("hd", with_kv("llama.attention.key_length", 4, 15))
+bad("ropedim", with_kv("llama.rope.dimension_count", 4, 64))
+bad("ff0", gguf([["general.architecture", 8, "llama"], ["llama.embedding_length", 4, 32], ["llama.block_count", 4, 1],
+                 ["llama.feed_forward_length", 4, 0]] + T, []))
+bad("rope", chain_model(CV, CN, {extra: [["llama.rope.scaling.type", 8, "linear"], ["llama.rope.scaling.factor", 6, 0]]}))
+bad("noout", chain_model(CV, CN, {drop: "output_norm.weight"}))
+bad("shape", chain_model(CV, CN, {change: [["blk.0.attn_q.weight", 0, [32, 16], zeros(512)]]}))
+bad("type", chain_model(CV, CN, {change: [["blk.0.attn_q.weight", 20, [32, 32], Bytes(32 * 18)]]}))
+bad("vshape", chain_model(CV, CN, {change: [["blk.0.attn_norm.weight", 0, [16], zeros(16)]]}))
+bad("vtype", chain_model(CV, CN, {change: [["blk.0.attn_norm.weight", 20, [32], Bytes(18)]]}))
+bad("oshape", chain_model(CV, CN, {change: [["output.weight", 0, [32, 9], zeros(9 * 32)]]}))
+bad("gshape", chain_model(CV, CN, {change: [["blk.0.ffn_gate.weight", 0, [32, 16], zeros(512)]]}))
+bad("noup", chain_model(CV, CN, {drop: "blk.0.ffn_up.weight"}))
+bad("noo", chain_model(CV, CN, {drop: "blk.0.attn_output.weight"}))
+bad("freqs", chain_model(CV, CN, {add: [["rope_freqs.weight", 0, [9], ones(9)]]}))
+bad("qkv", chain_model(CV, CN, {add: [["blk.0.attn_qkv.weight", 0, [32, 10], zeros(320)]]}))
+bad("unaligned", chain_model(CV, CN, {extra: [["general.alignment", 4, 1], ["pad", 8, "x"]], align: 1}))
+
+// ---------- metadata of every type; the embeddings as the output; a tensor llm cannot read ----------
+let every = [["u8", 0, 200], ["i8", 1, -100], ["u16", 2, 60000], ["i16", 3, -30000], ["u32", 4, 4000000000], ["i32", 5, -2000000000],
+             ["f32", 6, 0.5], ["bool", 7, true], ["str", 8, "text"], ["arr", 9, [9, [[4, [1, 2]], [8, ["x"]]]]], ["u64", 10, 1099511627776],
+             ["i64", 11, -1099511627776], ["f64", 12, 0.25], ["llama.rope.scaling.type", 8, "yarn"], ["general.file_type", 4, 99]]
+write_bytes("build/llm/every.gguf", chain_model(CV, CN, {extra: every, drop: "output.weight", add: [["extra.weight", 20, [32], Bytes(18)]]}))
+let e = llm.load("build/llm/every.gguf", {mmap: false})
+var md = e.metadata
+print(md.u8, md.i8, md.u16, md.i16, md.u32, md.i32, md.f32, md.bool, md.str, md.arr, md.u64, md.i64, md.f64, e.quantization)
+print(e.forward([5]).argmax(), e.tensors[-1])
+tries(fn() => e.tensor("extra.weight"))
+write_bytes("build/llm/bpe.gguf", chain_model([["\u{20ac}!", 1], ["<s>", 3], ["</s>", 3], ["a", 1]], [0, 3, 0, 0], {tokenizer: "gpt2"}))
+let bp = llm.load("build/llm/bpe.gguf")
+print(bp.detokenize([0, 3]), bp.tokenize("a!a"), bp.generate("a", {temperature: 0, max_tokens: 2}))
+
+// ---------- a bigger model (of zeros): its products and attention shared among threads ----------
+let BV = 16384
+let BE = 256
+var btoks = ["</s>", "<s>"]
+for i in 2..BV { btoks.push("t{i}") }
+fn q4z(rows, cols) => Bytes(rows * cols / 32 * 18)
+var bts = [["token_embd.weight", 2, [BE, BV], q4z(BV, BE)], ["output_norm.weight", 0, [BE], ones(BE)],
+           ["blk.0.attn_norm.weight", 0, [BE], ones(BE)], ["blk.0.ffn_norm.weight", 0, [BE], ones(BE)]]
+for m in [["attn_q", BE, BE], ["attn_k", BE, BE], ["attn_v", BE, BE], ["attn_output", BE, BE], ["ffn_gate", BE, 32],
+          ["ffn_up", BE, 32], ["ffn_down", 32, BE]] {
+  bts.push(["blk.0.{m[0]}.weight", 2, [m[1], m[2]], q4z(m[1], m[2])])
+}
+write_bytes("build/llm/big.gguf", gguf([["general.architecture", 8, "llama"], ["llama.context_length", 4, 256],
+  ["llama.embedding_length", 4, BE], ["llama.block_count", 4, 1], ["llama.feed_forward_length", 4, 32],
+  ["llama.attention.head_count", 4, 8], ["tokenizer.ggml.model", 8, "llama"], ["tokenizer.ggml.tokens", 9, [8, btoks]],
+  ["tokenizer.ggml.bos_token_id", 4, 1], ["tokenizer.ggml.eos_token_id", 4, 0]], bts))
+for th in [0, 1, 3] {
+  let big = llm.load("build/llm/big.gguf", {threads: th})
+  var last = big.forward([1])
+  for i in 0..4 { last = big.forward(range(0, 32).map(fn(i) => i + 2)) }
+  print(big, th, len(big.tokens), last.shape, last.max(), last.min(), repr(big.generate([1], {temperature: 0})),
+        len(big.generate([1], {temperature: 2, top_k: 0, max_tokens: 3, seed: 1})) > 0)
+}
+
+// ---------- a model in another isolate ----------
+fn story(path, n) {
+  let m = llm.load(path)
+  return m.generate([1, 30, 36], {temperature: 0, max_tokens: n})
+}
+print(spawn(story, "tests/models/llama-mixed.gguf", 6).join() == story("tests/models/llama-mixed.gguf", 6))
+
+for f in list_dir("build/llm") { remove_file("build/llm/{f}") }
+remove_file("build/llm")

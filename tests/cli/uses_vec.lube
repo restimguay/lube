@@ -1,0 +1,3 @@
+// A program with a plugin that uses another (vec uses greet): both are copied next to it
+import vec
+print(vec.Vec(1, 2) + 1, vec.required())

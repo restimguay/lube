@@ -302,11 +302,12 @@ esac
 PCC=${CC:-cc}
 command -v "$PCC" >/dev/null 2>&1 || PCC=gcc
 mkdir -p "$TMP/plugins" "$TMP/inst/bin" "$TMP/inst/lib/lube/plugins" "$TMP/built" "$TMP/small"
-for p in greet old broken; do "$PCC" -std=c99 $PFLAGS -o "$TMP/plugins/$p$PEXT" "tests/plugins/$p.c"; done
+for p in greet old broken vec; do "$PCC" -std=c99 $PFLAGS -o "$TMP/plugins/$p$PEXT" "tests/plugins/$p.c"; done
 "$PCC" -std=c99 $PFLAGS -o "$TMP/plugins/noinit$PEXT" tests/plugins/other.c
 printf 'not a library' >"$TMP/plugins/junk$PEXT"
 cp "$ABS" "$TMP/inst/bin/" && cp "$TMP/plugins/greet$PEXT" "$TMP/inst/lib/lube/plugins/"
 run "plugin: one of one's own" env LUBE_PLUGINS="$TMP/plugins" "$LUBE" tests/cli/plugins.lube
+run "plugin: operators, properties and Numbers of its own; one that uses another" env LUBE_PLUGINS="$TMP/plugins" "$LUBE" tests/cli/plugin_ops.lube
 run "plugin: made for a later Lube" env LUBE_PLUGINS="$TMP/plugins" "$LUBE" -e 'import old'
 run "plugin: one that cannot start" env LUBE_PLUGINS="$TMP/plugins" "$LUBE" -e 'import broken'
 run "plugin: a library that is not one" env LUBE_PLUGINS="$TMP/plugins" "$LUBE" -e 'import noinit'
@@ -320,6 +321,7 @@ run "plugin: in ../lib/lube/plugins from lube" env -u LUBE_PLUGINS "$TMP/inst/bi
 print(greet.hello("installed"))'
 run "plugin: its names are known before it runs" env LUBE_PLUGINS="$TMP/plugins" "$LUBE" -e 'import greet.nope'
 run "plugin: built with a program (copied next to it)" sh -c 'LUBE_PLUGINS="$1" "$2" --build tests/cli/uses_greet.lube -o "$3/app" && cd / && env -u LUBE_PLUGINS "$3/app"' sh "$TMP/plugins" "$ABS" "$TMP/built"
+run "plugin: built with a program, with the plugin it uses" sh -c 'LUBE_PLUGINS="$1" "$2" --build tests/cli/uses_vec.lube -o "$3/app2" && cd / && env -u LUBE_PLUGINS "$3/app2"' sh "$TMP/plugins" "$ABS" "$TMP/built"
 run "plugin: --small (Lube's inside it, others next to it)" sh -c 'LUBE_SRC="$4" LUBE_PLUGINS="$1" "$2" --build --small tests/cli/uses_plugins.lube -o "$3/app" && cd / && env -u LUBE_PLUGINS "$3/app"' sh "$TMP/plugins" "$ABS" "$TMP/small" "$SRC"
 
 # ---- embedding: Lube inside a C program and a C++ one (tests/embed/), built from Lube's sources ----

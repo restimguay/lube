@@ -95,7 +95,7 @@ typedef struct Channel {
     int refs;                   /* wrappers (in any isolate) and messages holding it */
 } Channel;
 
-enum { M_NUM, M_TRUE, M_FALSE, M_INT, M_STR, M_STROBJ, M_LIST, M_MAP, M_INSTANCE, M_RANGE, M_CHANNEL, M_BYTES };
+enum { M_NUM, M_TRUE, M_FALSE, M_INT, M_STR, M_STROBJ, M_LIST, M_MAP, M_INSTANCE, M_RANGE, M_CHANNEL, M_BYTES, M_MONEY };
 
 static void put_u32(StrBuf *sb, size_t n) {
     uint32_t v = (uint32_t)n;
@@ -171,6 +171,10 @@ static int encode(Interp *I, Message *m, Value v, int depth) {
         sb_putc(sb, M_BYTES);
         put_u32(sb, AS_BYTES(v)->len);
         if (AS_BYTES(v)->len) sb_putn(sb, (const char *)AS_BYTES(v)->data, AS_BYTES(v)->len);
+    } else if (IS_MONEY(v)) {  /* (its currency's place in the table, which every isolate shares) */
+        sb_putc(sb, M_MONEY);
+        sb_putn(sb, (const char *)&AS_MONEY(v)->units, 8);
+        put_u32(sb, (size_t)AS_MONEY(v)->cur);
     } else if (IS_CHANNEL(v)) {  /* a channel goes along as itself */
         Channel *ch = AS_CHANNEL(v)->ch;
         lock_acquire(world);
@@ -253,6 +257,12 @@ static Value decode(Reader *r) {
         b->len = n;
         r->pos += n;
         return OBJ_VAL(b);
+    }
+    case M_MONEY: {
+        int64_t units;
+        memcpy(&units, r->m->data.data + r->pos, 8);
+        r->pos += 8;
+        return lube_money_new(units, (int)get_u32(r));
     }
     case M_STROBJ:
         return OBJ_VAL(new_strobj(get_text(r)));
@@ -520,6 +530,7 @@ typedef struct {                /* what a new isolate loads: shared by the isola
     char **args;
     int nargs;
     char *root;                 /* the program's folder (packages are found from it) */
+    int currency;               /* m()'s default currency, as the spawner had it */
 } Program;
 
 typedef struct Isolate {
@@ -593,6 +604,7 @@ static Program *snapshot(Interp *I) {
     }
     Value args;
     p->root = I->root ? copy_text(I->root, strlen(I->root)) : NULL;
+    p->currency = I->currency;
     p->nargs = 0;
     p->args = NULL;
     if (map_get(I->globals, OBJ_VAL(lube_intern(I, "args", 4)), &args) && IS_LIST(args)) {
@@ -687,6 +699,7 @@ static void isolate_main(void *arg) {
     Interp *I = lube_new(&marker);
     I->isolate = iso;
     if (p->root) I->root = copy_text(p->root, strlen(p->root));
+    I->currency = p->currency;
     ObjList *args = new_list();
     for (int i = 0; i < p->nargs; i++) list_push(args, OBJ_VAL(new_string(p->args[i], strlen(p->args[i]))));
     lube_define(I, "args", OBJ_VAL(args));

@@ -46,7 +46,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define LUBE_PLUGIN_API 1  /* this header's version; later ones only add to LubeAPI */
+#define LUBE_PLUGIN_API 2  /* this header's version; later ones only add to LubeAPI (2: operators, ranges,
+                              plugins that use each other) */
 
 #ifdef _WIN32
 #define LUBE_PLUGIN_EXPORT __declspec(dllexport)
@@ -154,6 +155,41 @@ typedef struct LubeAPI {
 
     /* --- the function being called --- */
     void *(*function_data)(LubeVM *vm);  /* the data a host program gave it (lube_embed.h), or NULL */
+
+    /* --- version 2 (check api->version >= 2 before using these) --- */
+    /* An operator of a type, in lube_plugin_init. Each is a LubeFn, and returns a new value or an error:
+     *   "+" "-" "*" "/" "%" "**"  a + b...: argv is (a, b), and either may be the object (2 * x and x * 2)
+     *   "==" "!=" "<" "<=" ">" ">="  likewise; they may return any value, not only a Bool
+     *   "neg"   -x: argv is (x)
+     *   "[]"    x[i] and x[i, j]: argv is (x, i) or (x, i, j); an index may be a range, and in brackets
+     *           `..` alone is 0..inf, `2..` is 2..inf and `..3` is 0..3 (see range())
+     *   "[]="   x[i] = v, x[i, j] = v: argv is (x, i..., v); it changes x and returns nothing
+     *   "len"   len(x), and `for item in x`, which then takes x[0], x[1]... through "[]"
+     *   "copy"  a copy that changes apart from x: x[i] = v copies first when x is shared (as a list
+     *           would), so another variable holding x keeps what it had; without it, both see the change
+     *   "+=" "-=" "*=" "/=" "%="  x += b, changing x in place when nothing else holds it; argv is (x, b),
+     *           and it returns x (retained) or something new. Without them, x += b is x = x + b. */
+    void (*op)(LubeType *type, const char *op, LubeFn fn);
+    /* A range's numbers (1), or 0 if v is not a range: 0..5 is start 0, end 5, step 1, inclusive 0. */
+    int (*range)(LubeValue v, double *start, double *end, double *step, int *inclusive);
+    /* What this plugin gives other plugins (a table of its own functions, say), in lube_plugin_init. */
+    void (*provide)(LubePlugin *plugin, const void *exports);
+    /* Plugin `name`, loaded now if it is not yet: what it provided, or NULL if there is no such plugin or
+     * it gave nothing. Only in lube_plugin_init (a program built with lube --build gets it too). */
+    const void *(*require)(LubePlugin *plugin, const char *name);
+    /* A Number of the package, as math.pi (in lube_plugin_init). */
+    void (*constant)(LubePlugin *plugin, const char *name, double value);
+    /* A property of a type: x.name calls fn with argv (x) and gives what it returns. It is read-only. */
+    void (*property)(LubeType *type, const char *name, LubeFn fn);
+    /* Calls a Lube function (or anything callable) with argv (borrowed): what it returns, or its error, which
+     * the plugin returns as it is (failed() tells). */
+    LubeValue (*call)(LubeVM *vm, LubeValue fn, int argc, const LubeValue *argv);
+    /* Calls obj.name(argv...): a method of a class's instance, or of a plugin's object; likewise. */
+    LubeValue (*call_method)(LubeVM *vm, LubeValue obj, const char *name, int argc, const LubeValue *argv);
+    /* Whether v is an error (from call, call_method or error) rather than a value. */
+    int (*failed)(LubeValue v);
+    /* An object's (or Map's) keys, in order, as a new List; NULL's List (empty) for anything else. */
+    LubeValue (*object_keys)(LubeVM *vm, LubeValue object);
 } LubeAPI;
 
 #ifdef __cplusplus

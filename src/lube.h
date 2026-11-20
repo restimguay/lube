@@ -141,6 +141,8 @@ typedef struct {
 #define IS_RANGE(v)    (IS_OBJ(v) && OBJ_TYPE(v) == OBJ_RANGE)
 #define IS_CHANNEL(v)  (IS_OBJ(v) && OBJ_TYPE(v) == OBJ_CHANNEL)
 #define IS_BYTES(v)    (IS_OBJ(v) && OBJ_TYPE(v) == OBJ_BYTES)
+#define IS_MONEY(v)    (IS_OBJ(v) && OBJ_TYPE(v) == OBJ_MONEY)
+#define AS_MONEY(v)    ((ObjMoney *)(v).as.obj)
 #define IS_FOREIGN(v)  (IS_OBJ(v) && OBJ_TYPE(v) == OBJ_FOREIGN)
 #define AS_FOREIGN(v)  ((ObjForeign *)(void *)(v).as.obj)
 #define AS_BYTES(v)    ((ObjBytes *)(void *)(v).as.obj)
@@ -150,6 +152,7 @@ typedef struct {
 #define IS_CLASS(v)    (IS_OBJ(v) && OBJ_TYPE(v) == OBJ_CLASS)
 #define IS_INSTANCE(v) (IS_MAP(v) && AS_MAP(v)->klass != NULL)
 #define IS_TEXT(v)     (IS_STRING(v) || IS_STROBJ(v))  /* a str or a String */
+#define IS_TUPLE(v)    (IS_LIST(v) && AS_LIST(v)->elem == TT_TUPLE)  /* x[i, j]'s indexes */
 #define IS_CALLABLE(v) (IS_FUNCTION(v) || IS_NATIVE(v))
 
 #define AS_STRING(v)   ((ObjString *)(v).as.obj)
@@ -174,6 +177,7 @@ typedef enum {
     OBJ_STRING, OBJ_LIST, OBJ_MAP, OBJ_FUNCTION, OBJ_NATIVE, OBJ_RANGE, OBJ_STROBJ, OBJ_CLASS,
     OBJ_CHANNEL, OBJ_ISOLATE, OBJ_PACKAGE,
     OBJ_BYTES,            /* io.c */
+    OBJ_MONEY,            /* money.c: an amount of a currency */
     OBJ_FOREIGN           /* plugin.c: a plugin's own kind of object (a Socket, a Sound) */
 } ObjType;
 
@@ -197,9 +201,10 @@ typedef enum {
     TT_ANY, TT_STRING, TT_STROBJ, TT_NUMBER, TT_BOOL, TT_OBJECT, TT_MAP, TT_LIST, TT_FUNCTION, TT_RANGE,
     TT_CHANNEL, TT_ISOLATE,
     TT_INT8, TT_INT16, TT_INT32, TT_INT64, TT_UINT8, TT_UINT16, TT_UINT32, TT_UINT64,
-    TT_BYTES
+    TT_BYTES, TT_MONEY
 } TypeTag;
-#define TT_COUNT (TT_BYTES + 1)
+#define TT_COUNT (TT_MONEY + 1)
+#define TT_TUPLE 0x7f  /* the indexes of x[i, j], as a list's tag (never a value's type: only plugins' types take them) */
 #define TT_IS_INT(t) ((t) >= TT_INT8 && (t) <= TT_UINT64)
 
 struct ObjList {
@@ -237,7 +242,7 @@ struct ObjMap {             /* insertion-ordered hash map */
  * object for Object) are accepted too. */
 enum {
     TD_NUM, TD_BOOL, TD_INT, TD_STR, TD_STROBJ, TD_LIST, TD_MAP, TD_OBJECT, TD_FUNCTION, TD_RANGE,
-    TD_CHANNEL, TD_ISOLATE, TD_BYTES,
+    TD_CHANNEL, TD_ISOLATE, TD_BYTES, TD_MONEY,
     TD_CLASSVAL,  /* a class itself (from class_of or find_class) */
     TD_CLASS      /* an instance of a class or its subclasses */
 };
@@ -275,6 +280,13 @@ typedef struct ObjBytes {
     size_t len, cap;
     unsigned char *data;
 } ObjBytes;
+
+/* money.c: an amount of a currency, in its smallest unit (cents...): never changed once made. */
+typedef struct {
+    Obj obj;
+    int64_t units;
+    int cur;                 /* which currency (money.c's table) */
+} ObjMoney;
 
 /* A plugin's object: its type's class (in this interpreter), then the
  * plugin's own data, freed by the plugin when the last owner lets go. */
@@ -376,7 +388,7 @@ typedef enum {
     T_IDENT, T_NUMBER, T_STRING,
     T_LPAREN, T_RPAREN, T_LBRACKET, T_RBRACKET, T_LBRACE, T_RBRACE,
     T_COMMA, T_DOT, T_DOTDOT, T_DOTDOTEQ, T_COLON, T_SEMI, T_AMP,
-    T_PLUS, T_MINUS, T_STAR, T_SLASH, T_PERCENT, T_POW,
+    T_PLUS, T_MINUS, T_STAR, T_SLASH, T_PERCENT, T_POW, T_AT,
     T_PLUS_EQ, T_MINUS_EQ, T_STAR_EQ, T_SLASH_EQ, T_PERCENT_EQ,
     T_ASSIGN, T_EQ, T_BANG, T_NEQ, T_LT, T_LE, T_GT, T_GE,
     T_PIPE, T_ARROW,
@@ -465,7 +477,7 @@ typedef struct LubeNative {
 #define LUBE_BUILTIN(name, ...) {#name, __VA_ARGS__},
 #define LUBE_METHOD(name, ...) {#name, __VA_ARGS__},  /* a method of a type (Bytes, File): kept by its name */
 #endif
-#define LUBE_TM_TYPES 1  /* the built-in types with methods of their own: OBJ_BYTES */
+#define LUBE_TM_TYPES 2  /* the built-in types with methods of their own: OBJ_BYTES, OBJ_MONEY */
 #define LUBE_TM(t) ((t) >= OBJ_BYTES && (t) < OBJ_BYTES + LUBE_TM_TYPES)
 #define LUBE_OWN_METHODS(t) (LUBE_TM(t) || (t) == OBJ_FOREIGN)  /* (plugins' objects: their class's) */
 
@@ -501,6 +513,12 @@ Value lube_bytes_push(Interp *I, int argc, Value *argv);  /* push(&bytes, ...) *
 Value lube_bytes_concat(Value a, Value b);  /* bytes + bytes */
 Value lube_bytes_assign(Interp *I, Value *slot, size_t k, TokenType op, Value rhs);  /* b[k] = v (takes rhs) */
 void register_io(Interp *I);
+void register_money(Interp *I);
+Value lube_money_new(int64_t units, int cur);
+int lube_money_op(Interp *I, int op, Value a, Value b, Value *out);  /* a op b, one of them Money: 0 if not money's */
+Value lube_money_negate(Interp *I, Value v);
+int lube_money_compare(Interp *I, Value a, Value b, const char *fn, int *failed);
+Value lube_money_field(Interp *I, Value v, ObjString *name);  /* m.amount... */
 double lube_now(void);                       /* a steady clock, in seconds */
 
 /* plugin.c */
@@ -538,6 +556,17 @@ void lube_plugins_start(void);               /* (the first lube_new, before any 
 const char *lube_plugin_file(Interp *I, ObjString *name);  /* the file it was loaded from (NULL: compiled in) */
 Value lube_foreign_construct(Interp *I, ObjClass *c, int argc, Value *argv);  /* Sound(...) */
 void lube_foreign_free(ObjForeign *f);
+char **lube_plugin_requires(Interp *I, ObjString *name, int *n);  /* the plugins it uses */
+/* A plugin type's operators (lube->op): each returns 0 when the type has none of that kind. */
+int lube_foreign_binary(Interp *I, int op, Value a, Value b, Value *out);
+int lube_foreign_neg(Interp *I, Value x, Value *out);
+int lube_foreign_index(Interp *I, Value x, Value idx, Value *out);
+int lube_foreign_set(Interp *I, Value x, Value idx, Value v);
+int lube_foreign_unshare(Interp *I, Value *slot);
+int lube_foreign_len(Interp *I, Value x, double *n);
+int lube_foreign_iterable(Value x);
+int lube_foreign_property(Interp *I, Value x, ObjString *name, Value *out);
+int lube_foreign_inplace(Interp *I, int op, Value x, Value b, Value *out);
 Value lube_nv_list(int n, const Value *items);
 double lube_round(double x);
 double lube_m_sin(double x);
@@ -945,7 +974,8 @@ struct Interp {
     Source *error_src;
     StrBuf trace;                   /* traceback collected while unwinding */
     StrBuf interp;                  /* OP_INTERP's text, kept between uses */
-    ObjMap *tmethods[LUBE_TM_TYPES];   /* methods of Bytes: name -> native (io.c) */
+    ObjMap *tmethods[LUBE_TM_TYPES];   /* methods of Bytes and Money: name -> native (io.c, money.c) */
+    int currency;                      /* m()'s currency when none is given (money.c's table: 0 is USD) */
     ObjNative *calling;                /* the native being called (plugin.c's finds the plugin's function there) */
     void *hosted;                      /* inside a host program: its side (embed.c), or NULL */
     int exiting, exit_code;            /* hosted: exit() was called (an error no catch stops) */
@@ -986,7 +1016,8 @@ void sb_putc(StrBuf *sb, char c);
 void sb_puts(StrBuf *sb, const char *s);
 void sb_putn(StrBuf *sb, const char *s, size_t n);
 void sb_printf(StrBuf *sb, const char *fmt, ...);
-void lube_foreign_describe(StrBuf *sb, Value v);  /* (plugin.c) how a plugin's object prints */
+void lube_foreign_describe(StrBuf *sb, Value v);
+void lube_money_describe(StrBuf *sb, Value v);  /* (money.c) "$1,234.50" */  /* (plugin.c) how a plugin's object prints */
 int lube_plugin_copy(Interp *I, ObjString *name, const char *exe, StrBuf *copied);  /* (plugin.c) next to a built program */
 void sb_free(StrBuf *sb);
 void lube_out_of_memory(void);

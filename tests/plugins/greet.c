@@ -199,5 +199,6 @@ LUBE_PLUGIN(greet) {
     api->constructor(Long, long_new, 1, -1);
     Pair = api->type(plugin, "Pair", 0, NULL, NULL);
     api->constructor(Pair, pair_new, 1, 2);
+    if (api->version >= 2) api->provide(plugin, "greet's table");  /* (for tests/plugins/vec.c) */
     return LUBE_PLUGIN_API;
 }
