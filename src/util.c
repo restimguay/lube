@@ -13,7 +13,11 @@
 
 /* Running out of memory stops the program cleanly instead of continuing
  * with a failed allocation. */
+int lube_hosted;
+void (*lube_fatal_hook)(const char *message);
+
 void lube_out_of_memory(void) {
+    if (lube_fatal_hook) lube_fatal_hook("out of memory");  /* (a host program's last word) */
     fflush(stdout);
     fputs("lube: out of memory\n", stderr);
     exit(70);

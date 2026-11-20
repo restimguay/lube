@@ -214,7 +214,7 @@ true true true true 1 0
 63 [[[], []], [[], []]] 6.5 6 2 4
 [[1], "x", [[1]], 1, true] [7] text true 42 [9]
 't' is a Number, so it cannot hold a str: a var keeps the type it starts with
-len() expects a str, List, Object or Range as argument 1, got Number
+len() expects a str, List, Object, Range or Bytes as argument 1, got Number
 division by zero
 nothing_back() does not return a value, so there is nothing to use here
 2.70000000003e+16 2.7000000000003e+19 0 true 1 30000
@@ -239,7 +239,7 @@ division by zero
 list index 0 is out of range (length 0)
 the object has no field 'v' (check with has() first, or use get(object, key, default))
 unsupported operand types for '>': str and Number
-cannot loop over a Number (expected a List, Range, str, Object or Channel)
+cannot loop over a Number (expected a List, Range, str, Object, Channel or Bytes)
 9 9 Ball {x: 4.5, v: 2, name: "ball"}
 list index must be a whole number, got 0.5
 list index must be a Number, not a Bool
@@ -248,7 +248,7 @@ field 'x' of Ball is a Number, so it cannot hold a Bool
 7 7 2 6 1 4 4 2 5
 cannot negate a Bool
 3
-cannot look inside a Number (expected a List, str, Object or Range)
+cannot look inside a Number (expected a List, str, Object, Range or Bytes)
 division by zero
 modulo by zero
 no_return() must return a Number, but it ended without returning a value
@@ -269,7 +269,7 @@ true true true true 1 0
 63 [[[], []], [[], []]] 6.5 6 2 4
 [[1], "x", [[1]], 1, true] [7] text true 42 [9]
 't' is a Number, so it cannot hold a str: a var keeps the type it starts with
-len() expects a str, List, Object or Range as argument 1, got Number
+len() expects a str, List, Object, Range or Bytes as argument 1, got Number
 division by zero
 nothing_back() does not return a value, so there is nothing to use here
 2.70000000003e+16 2.7000000000003e+19 0 true 1 30000
@@ -294,7 +294,7 @@ division by zero
 list index 0 is out of range (length 0)
 the object has no field 'v' (check with has() first, or use get(object, key, default))
 unsupported operand types for '>': str and Number
-cannot loop over a Number (expected a List, Range, str, Object or Channel)
+cannot loop over a Number (expected a List, Range, str, Object, Channel or Bytes)
 9 9 Ball {x: 4.5, v: 2, name: "ball"}
 list index must be a whole number, got 0.5
 list index must be a Number, not a Bool
@@ -303,7 +303,7 @@ field 'x' of Ball is a Number, so it cannot hold a Bool
 7 7 2 6 1 4 4 2 5
 cannot negate a Bool
 3
-cannot look inside a Number (expected a List, str, Object or Range)
+cannot look inside a Number (expected a List, str, Object, Range or Bytes)
 division by zero
 modulo by zero
 no_return() must return a Number, but it ended without returning a value
@@ -321,7 +321,7 @@ true true true true 1 0
 63 [[[], []], [[], []]] 6.5 6 2 4
 [[1], "x", [[1]], 1, true] [7] text true 42 [9]
 't' is a Number, so it cannot hold a str: a var keeps the type it starts with
-len() expects a str, List, Object or Range as argument 1, got Number
+len() expects a str, List, Object, Range or Bytes as argument 1, got Number
 division by zero
 nothing_back() does not return a value, so there is nothing to use here
 2.70000000003e+16 2.7000000000003e+19 0 true 1 30000
@@ -346,7 +346,7 @@ division by zero
 list index 0 is out of range (length 0)
 the object has no field 'v' (check with has() first, or use get(object, key, default))
 unsupported operand types for '>': str and Number
-cannot loop over a Number (expected a List, Range, str, Object or Channel)
+cannot loop over a Number (expected a List, Range, str, Object, Channel or Bytes)
 9 9 Ball {x: 4.5, v: 2, name: "ball"}
 list index must be a whole number, got 0.5
 list index must be a Number, not a Bool
@@ -355,7 +355,7 @@ field 'x' of Ball is a Number, so it cannot hold a Bool
 7 7 2 6 1 4 4 2 5
 cannot negate a Bool
 3
-cannot look inside a Number (expected a List, str, Object or Range)
+cannot look inside a Number (expected a List, str, Object, Range or Bytes)
 division by zero
 modulo by zero
 no_return() must return a Number, but it ended without returning a value
@@ -373,7 +373,7 @@ true true true true 1 0
 63 [[[], []], [[], []]] 6.5 6 2 4
 [[1], "x", [[1]], 1, true] [7] text true 42 [9]
 't' is a Number, so it cannot hold a str: a var keeps the type it starts with
-len() expects a str, List, Object or Range as argument 1, got Number
+len() expects a str, List, Object, Range or Bytes as argument 1, got Number
 division by zero
 nothing_back() does not return a value, so there is nothing to use here
 2.70000000003e+16 2.7000000000003e+19 0 true 1 30000
@@ -398,7 +398,7 @@ division by zero
 list index 0 is out of range (length 0)
 the object has no field 'v' (check with has() first, or use get(object, key, default))
 unsupported operand types for '>': str and Number
-cannot loop over a Number (expected a List, Range, str, Object or Channel)
+cannot loop over a Number (expected a List, Range, str, Object, Channel or Bytes)
 9 9 Ball {x: 4.5, v: 2, name: "ball"}
 list index must be a whole number, got 0.5
 list index must be a Number, not a Bool
@@ -407,7 +407,7 @@ field 'x' of Ball is a Number, so it cannot hold a Bool
 7 7 2 6 1 4 4 2 5
 cannot negate a Bool
 3
-cannot look inside a Number (expected a List, str, Object or Range)
+cannot look inside a Number (expected a List, str, Object, Range or Bytes)
 division by zero
 modulo by zero
 no_return() must return a Number, but it ended without returning a value
@@ -416,7 +416,7 @@ stack overflow: too much recursion
 lube: out of memory
 [exit 70]
 --- small: only the parts of Lube it uses, built
-small: 10 of 117 built-ins, 7 of 13 fns and classes
+small: 10 of N built-ins, 7 of 13 fns and classes
 built TMP/small_app: 3 files, N bytes
 over 100
 rex says woof, not ... CAT SAYS ... true true
@@ -429,7 +429,7 @@ n: 1 -> 3 by 2
 [exit 0]
 --- small: natives too, built
 native: cube, total, spin, mods, half, bad
-small: 1 of 117 built-ins, 6 of 6 fns and classes
+small: 1 of N built-ins, 6 of 6 fns and classes
 built TMP/small_native: 1 file, N bytes
 1000000000 295 -1 -2 3.5
 2.7e+19 6.725369627399922e+29
@@ -568,15 +568,15 @@ Lube 0.1.0  (type exit() or press Ctrl-D to quit)
     1 | import shapes._secret
 [exit 65]
 --- import a missing package
-<eval>:1: error: cannot find package nowhere (in the program's folder or LUBE_PATH)
+<eval>:1: error: cannot find package nowhere (in the program's folder or LUBE_PATH, or as a plugin)
     1 | import nowhere.Thing
 [exit 65]
 --- import * from a missing package
-<eval>:1: error: cannot find package nowhere (in the program's folder or LUBE_PATH)
+<eval>:1: error: cannot find package nowhere (in the program's folder or LUBE_PATH, or as a plugin)
     1 | import nowhere.*
 [exit 65]
 --- import a package with no dots
-<eval>:1: error: cannot find package nowhere (in the program's folder or LUBE_PATH)
+<eval>:1: error: cannot find package nowhere (in the program's folder or LUBE_PATH, or as a plugin)
     1 | import nowhere
 [exit 65]
 --- a package import inside a function
@@ -1112,6 +1112,197 @@ ok
 lube: ignoring LUBE_MAX_ITEMS=999999999999 (expected a whole number below 268435456)
 ok
 [exit 0]
+--- plugin: one of one's own
+hello, you 1.5 1e+21
+number number str str bool bytes
+list object object foreign other other
+nothing
+[0, true, "List", -1, 2, 7] [0, true, "Bytes", 3, 0, nothing] [0, true, "str", -1, 0, nothing] [0, false, "Bool", -1, 0, nothing]
+5 none none
+{name: "greet!", sizes: Bytes(61 62 00), when: true} Bytes(61 62 00) Object
+1
+Counter(15) [1, 2] Counter true true true false
+Counter(16) true ["add", "tag"] true false
+[1, 2] {name: "Counter", params: [], returns: "any", builtin: true} true
+Counter(116) true false
+<Plain> Long(xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx) <Pair>
+5
+error: hello() wants a str, not a Number
+error: greet failed: 42
+error: Counter() takes 2 arguments but got 0
+error: Long() takes at least 1 argument but got 0
+error: Pair() takes 1 to 2 arguments but got 3
+error: Plain cannot be made by calling it (its package makes them)
+error: Counter has no method 'nope'
+error: parameter 'x' of bump() is a Counter, so it cannot take a Number
+error: hello() takes 1 argument but got 0
+error: a Counter cannot be sent to another isolate: only data can (numbers, text, bytes, lists, maps, instances and channels)
+error: '_private' is private to package greet
+[exit 0]
+--- plugin: made for a later Lube
+lube: plugin 'old' needs a newer Lube (it was made for plugin API 2; this Lube has 1)
+<eval>:1: error: cannot load plugin old (see above)
+    1 | import old
+[exit 65]
+--- plugin: one that cannot start
+lube: plugin 'broken' could not start
+<eval>:1: error: cannot load plugin broken (see above)
+    1 | import broken
+[exit 65]
+--- plugin: a library that is not one
+lube: 'TMP/plugins/noinit.LIB' is not a Lube plugin (it has no lube_plugin_init_noinit)
+<eval>:1: error: cannot load plugin noinit (see above)
+    1 | import noinit
+[exit 65]
+--- plugin: a file that is not a library
+lube: cannot load plugin 'junk' from 'TMP/plugins/junk.LIB': (the system's reason)
+<eval>:1: error: cannot load plugin junk (see above)
+    1 | import junk
+[exit 65]
+--- plugin: none of that name
+<eval>:1: error: cannot find package nothing.of.the (in the program's folder or LUBE_PATH, or as a plugin)
+    1 | import nothing.of.the.kind
+[exit 65]
+--- plugin: empty folders in LUBE_PLUGINS
+hello, found
+[exit 0]
+--- plugin: in ../lib/lube/plugins from lube
+hello, installed
+[exit 0]
+--- plugin: its names are known before it runs
+<eval>:1: error: package greet has no 'nope'
+    1 | import greet.nope
+[exit 65]
+--- plugin: built with a program (copied next to it)
+built TMP/built/app: 1 file, N bytes
+  and its plugin greet: plugins/greet.LIB, next to it
+hello, built Counter(1)
+[exit 0]
+--- plugin: --small (Lube's inside it, others next to it)
+small: 2 of N built-ins, 0 of 0 fns and classes
+built TMP/small/app: 1 file, N bytes
+  and its plugin greet: plugins/greet.LIB, next to it
+Socket hello, built
+[exit 0]
+--- embed: in a C program
+-- running code
+hello from Lube 3
+status 0
+score is 15 30 []
+status 0
+-- globals
+score = 15 (Number)
+a global that is not there: 0
+Ada 5 str
+speed = 3.5
+-- calling Lube
+twice(21): status 0, 42
+len("hello"): status 0, 5
+len(): status 1
+error: len() takes 1 argument but got 0
+twice(21), the result dropped: status 0
+status 1: error: lube_call: there is no global 'nothing_here'
+status 1: error: lube_call: a Number is not a function
+total(0, ..., 9): status 0, 45
+-- functions of the program's
+5 1 2 3
+101 5
+caught: add() wants Numbers, not a Number and a str
+true true
+calls counted in C: 5
+-- errors
+status 1
+bad_syntax:2:18: syntax error: expected an expression but found end of file
+    2 | let broken = (1 +
+      |                  ^
+status 1
+bad_run:1: error: unsupported operand types for '/': Number and List
+    1 | fn inner() { return 1 / [] }
+traceback (innermost call first):
+  at inner (bad_run:1)
+  at outer (bad_run:2)
+  at <script> (bad_run:3)
+fine again
+status 0, message ""
+status 1
+fails_inside:1: error: unsupported operand types for '/': Number and List
+    1 | print(call_back(fn(x) => x / [], 1))
+fails_inside:1: error: call_back: the call failed
+    1 | print(call_back(fn(x) => x / [], 1))
+-- exit
+status 2, code 3, message ""
+status 2, code 7
+status 2, code 8
+status 2, code 4
+still here
+status 0
+-- a plugin of the program's
+Point(1, 2) Point(4, 6) 4 Point true Point(0, 0)
+-- a script file
+from a script: 8 Ada
+status 0
+status 1: lube: cannot open file 'tests/embed/no_such.lube'
+-- output through the program
+through show
+[error] shown:2: error: division by zero
+[error]     2 | print(1 / 0)
+-- isolates
+[1, 4, 9] 81
+-- two interpreters
+99
+15
+-- a small stack
+on a 256 KB stack: status 1, deep:2: error: stack overflow: too much recursion
+-- closed
+[exit 0]
+--- embed: in a C++ program
+-- running code
+ready
+level 1, hello, C++
+-- functions in C++
+1 2 ["two", "words"]
+caught: must_be_positive: Number too small
+caught: a C++ exception
+3
+stats: hp 10, mp 4
+-- values
+List of 3: 1.5 -2 1 Bool
+3 1 1
+1 text 2 3
+-- errors
+lube::Error: broken:1: error: unsupported operand types for '/': Number and List
+    1 | let x = 1 / [1]
+lube::Error: error: greet() is missing argument 'who'
+-- exit
+ran to its end: 0, exit code 5
+call: 1, exit code 6
+script: from a script: hello, file 1
+1
+-- done
+[exit 0]
+--- audio: playing, in silence
+none
+Voice(playing) true
+Voice(ended) false
+Voice Sound
+true 0.1
+false
+true true
+false Voice(ended)
+true
+64 false true
+0
+[3, 3, 3]
+error: set_volume(): a volume is a Number from 0 (silent) to 1 (as recorded), or up to 16 (louder)
+error: set_pan(): pan is a Number from -1 (left) through 0 (both sides) to 1 (right)
+error: set_speed(): speed is a Number from 0 (held) through 1 (as recorded) to 16
+error: set_volume(): a volume is a Number from 0 (silent) to 1 (as recorded), or up to 16 (louder)
+error: parameter 'x' of quieter() is a Voice, so it cannot take a Sound
+error: parameter 's' of length() is a Sound, so it cannot take a Voice
+[exit 0]
+--- audio: the device, in silence
+none true
+[exit 0]
 --- hex literal without digits
 program:1:9: syntax error: hexadecimal literal needs digits after '0x'
     1 | let x = 0x
@@ -1264,7 +1455,7 @@ program:2:8: syntax error: the import path cannot use interpolation
       |        ^
 [exit 65]
 --- import without a string
-program:1: error: cannot find package x (in the program's folder or LUBE_PATH)
+program:1: error: cannot find package x (in the program's folder or LUBE_PATH, or as a plugin)
     1 | import x
 [exit 65]
 --- unary minus nested too deeply

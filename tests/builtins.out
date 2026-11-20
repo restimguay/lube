@@ -19,7 +19,7 @@ error: int() cannot convert an Object to a Number
 true [] {} 5
 error: Function() expects a Function as argument 1, got Number
 3 2 1 10
-error: len() expects a str, List, Object or Range as argument 1, got Number
+error: len() expects a str, List, Object, Range or Bytes as argument 1, got Number
 error: remove(): index 5 is out of range (length 3)
 error: remove(): index -9 is out of range (length 3)
 ["a", "b"] ["h", "é"] [0, 1, 2] 10 0

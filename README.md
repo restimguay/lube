@@ -20,15 +20,16 @@ The interpreter is written from scratch in C99. It uses only the C standard libr
 ## Build and run
 
 ```sh
-make            # builds ./lube (needs only a C compiler)
+make            # builds ./lube, and its plugins in ./plugins (needs only a C compiler)
+make lib        # builds liblube.a, for running Lube inside a C or C++ program (see Embedding)
 make test       # runs the test suite
 make check      # runs it again with memory sanitizers and a leak check
 make coverage   # measures test coverage (needs clang's llvm-cov); fails below 100%
 make tsan       # runs the suite with ThreadSanitizer (data races between isolates)
-make install    # copies lube to /usr/local/bin (PREFIX=... to change)
+make install    # copies lube to /usr/local/bin and its plugins to /usr/local/lib/lube (PREFIX=...)
 ```
 
-It builds and passes the tests on Linux (gcc or clang), macOS and Windows. On Windows, build in an [MSYS2](https://www.msys2.org) UCRT64 shell: `pacman -S make diffutils mingw-w64-ucrt-x86_64-gcc`, then `make`. GitHub Actions runs everything above on each pull request, and each release (a `v*` tag) comes with ready-built binaries: a static Linux x86-64 binary, a universal macOS binary (Apple silicon and Intel) and a Windows `lube.exe`. A binary downloaded with a browser on macOS isn't signed: clear the quarantine flag with `xattr -d com.apple.quarantine lube` before running it.
+It builds and passes the tests on Linux (gcc or clang), macOS and Windows. On Windows, build in an [MSYS2](https://www.msys2.org) UCRT64 shell: `pacman -S make diffutils mingw-w64-ucrt-x86_64-gcc`, then `make`. GitHub Actions runs everything above on each pull request, and each release (a `v*` tag) comes with ready-built binaries: a static Linux x86-64 binary (with its plugins inside: `make STATIC_PLUGINS=1`), and a universal macOS binary (Apple silicon and Intel) and a Windows `lube.exe`, each with its `plugins/` folder. A binary downloaded with a browser on macOS isn't signed: clear the quarantine flag with `xattr -d com.apple.quarantine lube` before running it.
 
 ```sh
 ./lube                       # interactive REPL
@@ -51,7 +52,7 @@ A Lube program can be run as a script, or built into a single executable that ru
 ./app one two                      # the same program; args is ["one", "two"]
 ```
 
-The executable is a copy of the interpreter with the program appended, so it starts as fast as a script and behaves the same. Building checks every file first, so a program with a syntax error, or an import that can't be found, doesn't build. Imports are packed with the paths the program uses, so the sources aren't needed afterwards. Files the program reads with `read_file` are still read from disk, relative to the current folder. Every command-line argument goes to the program: a built executable has no options of its own.
+The executable is a copy of the interpreter with the program appended, so it starts as fast as a script and behaves the same. Building checks every file first, so a program with a syntax error, or an import that can't be found, doesn't build. Imports are packed with the paths the program uses, so the sources aren't needed afterwards. Files the program reads with `read_file` are still read from disk, relative to the current folder. Every command-line argument goes to the program: a built executable has no options of its own. A program that imports plugins gets them in a `plugins/` folder next to it, to ship together; with `--small` or `--native`, Lube's own plugins go inside the executable instead.
 
 ### Native code: `lube --build --native`
 
@@ -196,6 +197,8 @@ Comments start with `#` or `//`. Statements end at the end of a line. Use `;` to
 | `Function` | `fn(x) => x * 2`                         |
 | classes    | `Dog("rex")`: see Classes below          |
 | `Channel`, `Isolate` | `channel()`, `spawn(f, x)`: see Concurrency below |
+| `Bytes`    | `Bytes("hi")`, `Bytes(16)`: see Bytes and time below |
+| plugins' types | `File`, `Socket`, `Sound`, `Voice`: see Plugins below |
 
 `Bool`, `Number`, `str` and the sized integers are *primitives*. Everything else is an object, so `x is Object` is true for a list, a map, a `String` or a class instance, and false for `5` or `"text"`.
 
@@ -633,13 +636,194 @@ print(spawn(add, 2, 3).join())                       // 5: join() gives the func
 
 - `spawn(f, args...)` starts the top-level function `f` (declared with `fn` at the top of a file) and returns an `Isolate`. `iso.join()` waits for it and gives a copy of its result; if `f` failed, `join()` raises its error. An error nobody joins is reported when the isolate ends.
 - `channel()` is a queue; `channel(n)` holds at most `n` values, so `send` waits while it is full. `ch.send(v)` copies `v` in; `ch.receive()` waits for a value; `ch.try_receive(default)` never waits; `ch.take(n)` gives `n` values as a list; `ch.close()` ends it, and `for v in ch` reads until then.
-- What can be sent: numbers, text, lists, maps and objects, class instances, ranges, and channels themselves (that is how isolates find each other). Functions can't, and sending deep values copies them.
+- What can be sent: numbers, text, bytes, lists, maps and objects, class instances, ranges, and channels themselves (that is how isolates find each other). Functions and open files can't, and sending deep values copies them.
 - A new isolate runs the program's declarations: its functions, classes, imports and `on` blocks. A global variable gets its value the first time code in the isolate uses it, so a global that starts isolates or reads a big file costs nothing in a worker that doesn't touch it.
 - **Deadlocks are errors, not hangs.** When an isolate would wait (on a channel, or a join) while every other isolate is already waiting, nothing could ever wake it, so it gets *deadlock: every isolate is waiting* instead. A forgotten `close()` shows up at once.
 - The program ends when the main program and every isolate it started have finished. An isolate still waiting then gets the deadlock error.
 - `cores()` tells how many cores the machine has. `Channel` and `Isolate` are types like any other (`fn worker(jobs: Channel)`), and `Channel` alone makes a new channel.
 
 On a 10-core machine, `parallel_map` over 40 heavy calls runs 4.8× faster than `map`.
+
+### Bytes and time
+
+`Bytes` holds raw bytes: a save file, an asset, a network packet. It is a value like a list: `b[i]` is a byte (a whole Number from 0 to 255), it changes in place, and a copy is a separate value (copied only when one of them changes).
+
+```lube
+var b = Bytes("hi")             // also Bytes(n) (n zeros), Bytes([1, 2, 3]), Bytes() or just Bytes
+b[0] = 72
+push(&b, 33, "!?")              // a byte, a str's bytes, or more Bytes
+print(b, len(b), b.decode(), b.hex())   // Bytes(48 69 21 21 3f) 5 Hi!!? 486921213f
+print(b + Bytes([0]), b.slice(1, 3), 33 in b, "!?" in b)
+for x in b { print(x) }
+```
+
+Binary formats use `pack` and `unpack`, with a format: `u8`, `i8`, `u16`, `i16`, `u32`, `i32`, `u64`, `i64`, `f32` or `f64`. They are little-endian, the order of every common CPU; add `be` for big-endian (`u32be`), the order of network protocols. `u64` and `i64` read as `uint64` and `int64`, so no bit is lost.
+
+```lube
+var packet = Bytes()
+packet.pack("u16be", 0)                // room for its length, filled in below
+packet.pack("u8", 7)                   // each one added at the end
+packet.pack("f32", player.x)
+packet.pack("u16be", len(packet), 0)   // written at a position, over what is there (past the end, it grows)
+let x = packet.unpack("f32", 3)        // the number at byte 3
+```
+
+For a game loop, `now()` is a steady clock in seconds (to the microsecond), and `sleep(seconds)` waits:
+
+```lube
+var last = now()
+while running {
+  let t = now()
+  update(t - last)
+  last = t
+  sleep(max(0, 1 / 60 - (now() - t)))
+}
+```
+
+### Plugins: files, sockets and sound
+
+Some of Lube comes as plugins: packages written in C, loaded when a program imports them, so a program that uses none of them doesn't load them. `make` builds the three that come with Lube into `plugins/` next to `lube`: `fs` for files and folders, `net` for sockets and `audio` for sound. They are imported as any package is:
+
+```lube
+import fs.*                // open, exists, list_dir...: their names, bare
+import net                 // net.tcp_listen(7777), net.Socket
+import audio as sfx        // sfx.Sound("jump.wav")
+```
+
+A plugin's types (`File`, `Socket`, `Sound`, `Voice`) work as classes do: `x is Socket`, `fn send_all(s: Socket)`, `class_of(x)`, `methods(x)`. Their objects are the plugin's: a copy shares the one file or socket, and they stay in the isolate that made them. Anyone can write a plugin: see Writing a plugin below.
+
+### Files and folders: `fs`
+
+```lube
+import fs.*                     // or import fs: fs.open(...), fs.File
+```
+
+`open(path, mode)` gives a `File`. The mode is `"r"` (read, the default), `"w"` (write, emptied first), `"a"` (add at the end) or `"r+"`, `"w+"`, `"a+"` (read and write). Files are always read and written as bytes, with no translation of line endings.
+
+```lube
+let f = open("level1.dat")
+let header = f.read(16)         // up to 16 bytes, as Bytes; f.read() reads the rest
+let name = f.read_line()        // a line as a str, without "\n" or "\r\n"; an error at the end
+f.seek(-4, "end")               // from "start" (the default), "current" or "end"; f.tell() says where
+print(f.size(), f.eof())
+f.close()                       // or let it go: a file closes when nothing holds it
+
+let log = open("log.txt", "a")
+log.write("started\n")          // a str or Bytes; returns how many bytes were written
+log.flush()
+```
+
+Copies of a `File` share one open file; `close()` closes it for all of them, and using it after that is an error. Whole files: `read_bytes(path)` and `write_bytes(path, bytes)`, or `read_file`, `write_file` and `append_file` for text.
+
+Folders: `exists(path)`, `is_dir(path)`, `list_dir(path)` (the names in it, sorted), `make_dir(path)` (with the folders above it, and nothing to do if it is there), `remove_file(path)` (a file or an empty folder), `rename_file(from, to)` (replacing `to`) and `file_size(path)`. An error says what went wrong: *cannot open 'save.bin': No such file or directory*.
+
+### Sockets: `net`
+
+
+TCP for connections and UDP for packets, made for game loops (`import net.*`, or `import net` for `net.tcp_listen(...)`). Nothing waits unless asked to: `accept()`, `receive()` and `packets()` give what has arrived, and an empty list or `Bytes` when nothing has. Each takes the seconds to wait for something first, and `poll(sockets, seconds)` waits until any of them has something to read, so a server sleeps between frames instead of spinning:
+
+```lube
+import net.*
+let server = tcp_listen(7777)            // every address of this machine; tcp_listen(7777, "127.0.0.1") for just this one
+var clients = []
+while true {
+  for c in server.accept() { push(&clients, c) }
+  for c in clients {
+    let msg = c.receive()                // Bytes: what has arrived, maybe part of a message, maybe nothing
+    if len(msg) > 0 { c.send(msg) }      // send takes Bytes or a str
+  }
+  clients = clients.filter(fn(c) => c.is_open())   // closed by the other side: is_open() is false
+  poll(clients + [server], 1 / 60)       // wait for the next message or the next frame
+}
+```
+
+```lube
+let c = tcp_connect("example.com", 80)   // waits up to 10 seconds; tcp_connect(host, port, seconds)
+c.send("GET / HTTP/1.0\r\nHost: example.com\r\n\r\n")
+var page = Bytes()
+while c.is_open() { page += c.receive(INF) }   // INF: wait as long as it takes
+print(page.decode())
+```
+
+- TCP is a stream: one `send` can arrive as several `receive`s, and several as one. Put the length first (`b.pack("u16be", len(msg))`) and collect `Bytes` until a whole message is there.
+- `c.send(data)` sends all of it and returns `true`, or `false` once the other side has closed the connection; then `c.receive()` is empty and `c.is_open()` is `false`. Connections send at once (no Nagle delay), as games want.
+- UDP: `udp_open(port?, host?)` (port 0, the default, lets the system choose), `u.send_to(host, port, data)`, and `u.packets(seconds?)`, every packet that has arrived as `{data, host, port}`: reply with `u.send_to(p.host, p.port, ...)`. `u.receive()` gives just the next packet's bytes. Packets can be lost or come out of order, and should stay under about 1200 bytes.
+- `s.port()` is the socket's own port (useful after port 0), `c.peer()` the other side of a connection (`"203.0.113.9:52431"`), `s.close()` closes it, and a socket also closes when nothing holds it.
+- An isolate can wait as long as it likes (`receive(INF)`, `accept(INF)`) without holding up the others. A socket stays in the isolate that made it: it cannot be sent.
+- `tcp_connect` tries a host's IPv4 addresses first, then IPv6; to listen on IPv6, give the host `"::"`. Errors say what happened: *tcp_connect(): cannot connect to 127.0.0.1 port 7777: Connection refused*.
+
+### Sound: `audio`
+
+
+A `Sound` holds samples: from a WAV file, or made by the program (`import audio.*`, or `import audio` for `audio.Sound(...)`). Playing one gives a `Voice`, and any number of voices (up to 64 at once) are mixed on a thread of their own, so the game loop never waits for sound.
+
+```lube
+import audio.*
+let jump = Sound("jump.wav")            // or Sound(bytes): a WAV file read some other way
+let music = Sound("theme.wav").loop(0.6)   // loops until stopped; 0.6 is its volume
+jump.play()                             // fire and forget: it plays on, held or not
+let engine = Sound("engine.wav").loop()
+engine.set_speed(1 + speed / 100)       // faster is higher, as on tape
+engine.set_pan(-0.5)                    // -1 left, 0 both sides, 1 right
+engine.set_volume(0.3)                  // changes take a few milliseconds: no clicks
+music.stop()                            // fades out at once
+```
+
+Sounds can be made from numbers, from -1 to 1, 44100 a second unless told otherwise:
+
+```lube
+var samples = Number[]
+for i in 0..4410 { push(&samples, sin(2 * PI * 880 * i / 44100) * (1 - i / 4410)) }  // a falling ping
+let ping = Sound(samples)               // Sound(samples, rate, 2) for stereo: left, right, left, ...
+ping.play(0.5, 1)                       // volume 0.5, on the right
+write_bytes("ping.wav", ping.to_wav())  // a 16-bit WAV file of it
+```
+
+- `Sound(...)` reads WAV files of 8, 16, 24 or 32-bit PCM or 32 or 64-bit floats, mono or stereo, at any rate (each voice is resampled as it plays). `s.duration()` (seconds), `s.rate()`, `s.channels()` and `s.samples()` describe it; `Sound()` is silence.
+- `s.play(volume?, pan?)` and `s.loop(volume?, pan?)` give a `Voice`: `v.stop()`, `v.is_playing()`, `v.set_volume(x)`, `v.set_pan(x)` and `v.set_speed(x)` (0 holds it where it is). A volume goes from 0 to 1 (as recorded), or up to 16 for louder. With 64 playing, a new voice takes the place of the oldest that would end on its own.
+- `stop_all()` stops them all, `set_volume(x)` sets the volume of everything, and `device()` says what sound comes out of.
+- Sound needs no library to build Lube: it uses what the system has, loaded when the first sound plays (so a program that plays none never touches it). That is Audio Queue on macOS, ALSA on Linux and the Raspberry Pi, and waveOut on Windows. Without one (a server, no sound card, or `LUBE_AUDIO=none`), sounds play in silence, taking their time and ending as they would. The static Linux binary from the releases is always silent (its plugins are inside it, and a static program cannot load ALSA): build Lube with `make` to have sound there.
+- When the program ends, its sounds stop: a script that only plays a sound should wait for it with `sleep(s.duration())`. Sounds and voices belong to the isolate that made them, but any isolate can play sounds.
+
+### Writing a plugin
+
+A plugin is a shared library with one entry point. It includes `lube_plugin.h` (in Lube's `src/`), which is all it needs: everything goes through the API table that Lube passes it, so it links against no part of Lube.
+
+```c
+// maths.c
+#include "lube_plugin.h"
+
+static const LubeAPI *lube;
+
+static LubeValue twice(LubeVM *vm, int argc, const LubeValue *argv) {
+    (void)argc;  /* (always 1: declared below) */
+    if (lube->kind(argv[0]) != LUBE_NUMBER)
+        return lube->error(vm, "twice() needs a Number, not %s", lube->a_type(argv[0]));
+    return lube->number_value(2 * lube->number(argv[0]));
+}
+
+LUBE_PLUGIN(maths) {                      // the plugin "maths": maths.so, .dylib or .dll
+    lube = api;
+    lube->function(plugin, "twice", twice, 1, 1);
+    return LUBE_PLUGIN_API;
+}
+```
+
+```sh
+cc -shared -fPIC -I lube/src -o plugins/maths.so maths.c   # Linux; macOS: -dynamiclib -o plugins/maths.dylib;
+                                                            # Windows: -shared -o plugins/maths.dll
+```
+
+```lube
+import maths
+print(maths.twice(21))   // 42
+```
+
+- Lube looks for `maths.so` (`.dylib`, `.dll`) in the folders of `LUBE_PLUGINS`, then in `plugins/` next to `lube` (or next to a built program), then in `../lib/lube/plugins/` from `lube` (where `make install` puts Lube's own). A package folder of the same name comes first.
+- A function gets its arguments borrowed and returns a new value, or `lube->error(vm, ...)` to raise an error. The API reads values (`kind`, `number`, `str`, `bytes`, `list_get`, `object_get`...) and makes them (`new_str`, `new_bytes`, `new_list`, `new_object`...).
+- `lube->type(plugin, "Counter", size, release, describe)` declares a type whose objects carry `size` bytes of the plugin's own data: `release` lets go of what that data holds when the last owner lets go, and `describe` says how it prints. `lube->method(...)` adds its methods and `lube->constructor(...)` makes `Counter(...)` work.
+- The entry point runs once per process; its functions can run in any isolate, so shared state goes under a lock (`lube->lock_new()`). `LUBE_PLUGIN_API` is the version of the API the plugin was made for: a newer Lube loads it, and an older one says it needs a newer Lube.
+- `src/lube_plugin.h` describes every function, and Lube's own plugins (`src/plugins/fs.c`, `net.c` and `audio.c`) are complete examples.
 
 ### Errors
 
@@ -807,7 +991,7 @@ Without the debugger, an uncaught error prints a traceback with the file and lin
 
 ## Standard library
 
-All of these are globals, and all of them can be called in method style.
+All of these are globals, and all of them can be called in method style; the rows for `fs`, `net` and `audio` are those plugins' names, after their import (see Plugins). The methods of `Bytes` and of the plugins' types, such as `b.pack(...)` and `f.read()`, are methods only.
 
 | area | functions |
 |---|---|
@@ -823,11 +1007,80 @@ All of these are globals, and all of them can be called in method style.
 | random | `random()`, `random_int(lo, hi)`, `choice(xs)`, `shuffle(xs)`, `seed(n)` |
 | reflection | `class_of`, `parent_of`, `fields`, `methods`, `signature(f)` / `signature(class, method)`, `get_field`, `set_field(&x, name, value)`, `call_method(x, name, ...)`, `has_method`, `classes()`, `find_class(name)`, `globals()` (see Reflection) |
 | concurrency | `spawn(f, args...)`, `iso.join()`, `channel(n?)`, `send`, `receive`, `try_receive(ch, default)`, `take(ch, n)`, `close`, `cores()`, `parallel_map(xs, f)` (see Concurrency) |
-| misc | `assert(cond, message?)`, `clock()` (CPU seconds), `time()` (Unix time), `hot_reload()` (see Hot reload), `args` |
+| bytes | `Bytes(x?)`, `len`, `push(&b, ...)`, `+`, `in`; methods `b.pack(format, n, at?)`, `b.unpack(format, at?)`, `b.decode()`, `b.hex()`, `b.slice(from, to?)` (see Bytes and time) |
+| `audio` (plugin) | `Sound(path or bytes)`, `Sound(samples, rate?, channels?)`, `stop_all()`, `set_volume(x)`, `device()`; methods `s.play(volume?, pan?)`, `s.loop(volume?, pan?)`, `s.duration()`, `s.rate()`, `s.channels()`, `s.samples()`, `s.to_wav()`; `v.stop()`, `v.is_playing()`, `v.set_volume(x)`, `v.set_pan(x)`, `v.set_speed(x)` (see Sound) |
+| `net` (plugin) | `tcp_listen(port, host?)`, `tcp_connect(host, port, seconds?)`, `udp_open(port?, host?)`, `poll(sockets, seconds?)`; methods `s.accept(seconds?)`, `s.receive(seconds?)`, `s.send(data)`, `s.packets(seconds?)`, `s.send_to(host, port, data)`, `s.is_open()`, `s.port()`, `s.peer()`, `s.close()` (see Sockets) |
+| `fs` (plugin) | `open(path, mode?)`; methods `f.read(n?)`, `f.read_line()`, `f.write(x)`, `f.seek(pos, from?)`, `f.tell()`, `f.size()`, `f.eof()`, `f.flush()`, `f.close()`; `read_bytes`, `write_bytes`, `exists`, `is_dir`, `list_dir`, `make_dir`, `remove_file`, `rename_file`, `file_size` |
+| misc | `assert(cond, message?)`, `clock()` (CPU seconds), `time()` (Unix time), `now()` (a steady clock, for timing), `sleep(seconds)`, `hot_reload()` (see Hot reload), `args` |
 
 Everything outside the first row returns a new value and leaves its arguments alone; `sort` and `reverse` return new lists. `map`, `filter` and `each` also pass the index when the function takes two parameters: `xs.map(fn(x, i) => ...)`. A `sort` comparator can return a number (negative means `a` goes first) or a bool (`true` means `a` goes first).
 
 Lengths and indexes count bytes. Iterating text, `chars()`, `ord()`, `chr()` and a `String`'s `length` understand UTF-8.
+
+## Embedding: Lube inside C and C++
+
+A C or C++ program can run Lube: a game's scripts, a tool's configuration, a program's own plugins. `make lib` builds `liblube.a` (all of Lube but its command line), and `src/lube_embed.h` is the API:
+
+```c
+// game.c
+#include "lube_embed.h"
+#include <stdio.h>
+
+static LubeValue add(LubeVM *vm, int argc, const LubeValue *argv) {  // a function of the program's, for Lube
+    const LubeAPI *lube = lube_api();
+    (void)vm;
+    (void)argc;
+    return lube->number_value(lube->number(argv[0]) + lube->number(argv[1]));
+}
+
+int main(void) {
+    const LubeAPI *lube = lube_api();
+    LubeVM *vm = lube_open();
+    lube_function(vm, "add", add, 2, 2, NULL);
+    if (lube_run(vm, "fn update(dt) => add(dt, 1)\nprint(\"loaded\")", "game.lube") != LUBE_OK)
+        fprintf(stderr, "%s", lube_error_message(vm));
+    LubeValue dt = lube->number_value(0.5), result;
+    if (lube_call_global(vm, "update", 1, &dt, &result) == LUBE_OK) {
+        printf("%g\n", lube->number(result));  // 1.5
+        lube->release(result);                  // what a call gives you is yours
+    }
+    lube_close(vm);
+    return 0;
+}
+```
+
+```sh
+cc game.c -I lube/src lube/liblube.a -lm -lpthread   # Linux: add -ldl. Windows: -lm (and -lws2_32 with net inside)
+```
+
+- Code runs as files do, one after another in the same interpreter, so what one run defines the next can use. `lube_run(vm, code, name)` runs text and `lube_run_script(vm, path)` a file. Both return `LUBE_OK`, `LUBE_ERROR` or `LUBE_EXIT`.
+- An error never ends the program. `lube_error_message(vm)` gives the message as Lube prints it, with the line and traceback. A script's `exit(n)` ends the script, not the program: no `catch` stops it, the call returns `LUBE_EXIT`, and `lube_exit_code(vm)` gives `n`. Only running out of memory ends the process, after calling the function given to `lube_on_fatal`.
+- `lube_get` and `lube_set` read and set globals. `lube_call_global` and `lube_call_value` call Lube's functions (built-ins too). Values are `LubeValue`, read and made with `lube_api()`, the same functions plugins use (see Writing a plugin).
+- `lube_function(vm, name, fn, min, max, data)` gives Lube a function of the program's, and `lube_api()->function_data(vm)` gives `data` back inside it. For types with methods (a game's entities), write a plugin in the program itself and add it with `lube_plugin_add("game", lube_plugin_init_game)`: scripts then `import game`.
+- `lube_set_output` sends what Lube prints to the program. Without it, what scripts print goes to stdout, and errors only to `lube_error_message`.
+- Each call into Lube measures the stack the calling thread has left, so a script that recurses too deeply gets an error, even on a thread with a small stack. One thread uses an interpreter at a time; several interpreters can run side by side, and a script's isolates run on threads of their own.
+- Plugins come along as for `lube`: as files (`plugins/` next to the program, or `LUBE_PLUGINS`), or inside the library with `make clean lib STATIC_PLUGINS=1`.
+
+From C++, `lube_embed.h` works as it is, since it is `extern "C"`. `src/lube_embed.hpp` adds classes over it: `lube::VM` closes itself, `lube::Value` lets go of its value, functions can be lambdas, and errors are exceptions:
+
+```cpp
+#include "lube_embed.hpp"
+
+int score = 0;
+lube::VM vm;  // (before the values: they go first)
+vm.def("add_score", [&score](lube::VM &, const std::vector<lube::Value> &args) {
+    score += static_cast<int>(args[0].number());
+    return lube::Value(score);
+}, 1, 1);
+try {
+    vm.run_script("level1.lube");
+    vm.call("on_hit", {vm.str("goblin"), lube::Value(3)});
+} catch (const lube::Error &e) {
+    std::cerr << e.what();  // as Lube says it: the line and the traceback
+}
+```
+
+A C++ exception thrown in a function given with `def` becomes a Lube error, which the script can catch. `tests/embed/host.c` and `host.cpp` use every part of the API.
 
 ## How the interpreter works
 

@@ -30,9 +30,12 @@
 #ifndef LUBE_H
 #define LUBE_H
 
+#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <limits.h>
+#include <string.h>
+
+#include "lube_plugin.h"  /* LubeValue, LubeFn: what plugins and host programs see of a value */
 
 #define LUBE_VERSION "0.1.0"
 
@@ -137,6 +140,10 @@ typedef struct {
 #define IS_NATIVE(v)   (IS_OBJ(v) && OBJ_TYPE(v) == OBJ_NATIVE)
 #define IS_RANGE(v)    (IS_OBJ(v) && OBJ_TYPE(v) == OBJ_RANGE)
 #define IS_CHANNEL(v)  (IS_OBJ(v) && OBJ_TYPE(v) == OBJ_CHANNEL)
+#define IS_BYTES(v)    (IS_OBJ(v) && OBJ_TYPE(v) == OBJ_BYTES)
+#define IS_FOREIGN(v)  (IS_OBJ(v) && OBJ_TYPE(v) == OBJ_FOREIGN)
+#define AS_FOREIGN(v)  ((ObjForeign *)(void *)(v).as.obj)
+#define AS_BYTES(v)    ((ObjBytes *)(void *)(v).as.obj)
 #define IS_ISOLATE(v)  (IS_OBJ(v) && OBJ_TYPE(v) == OBJ_ISOLATE)
 #define IS_PACKAGE(v)  (IS_OBJ(v) && OBJ_TYPE(v) == OBJ_PACKAGE)
 #define IS_STROBJ(v)   (IS_OBJ(v) && OBJ_TYPE(v) == OBJ_STROBJ)
@@ -165,7 +172,9 @@ typedef struct {
 
 typedef enum {
     OBJ_STRING, OBJ_LIST, OBJ_MAP, OBJ_FUNCTION, OBJ_NATIVE, OBJ_RANGE, OBJ_STROBJ, OBJ_CLASS,
-    OBJ_CHANNEL, OBJ_ISOLATE, OBJ_PACKAGE
+    OBJ_CHANNEL, OBJ_ISOLATE, OBJ_PACKAGE,
+    OBJ_BYTES,            /* io.c */
+    OBJ_FOREIGN           /* plugin.c: a plugin's own kind of object (a Socket, a Sound) */
 } ObjType;
 
 struct Obj {
@@ -187,9 +196,11 @@ struct ObjString {          /* a str: byte string, NUL terminated */
 typedef enum {
     TT_ANY, TT_STRING, TT_STROBJ, TT_NUMBER, TT_BOOL, TT_OBJECT, TT_MAP, TT_LIST, TT_FUNCTION, TT_RANGE,
     TT_CHANNEL, TT_ISOLATE,
-    TT_INT8, TT_INT16, TT_INT32, TT_INT64, TT_UINT8, TT_UINT16, TT_UINT32, TT_UINT64
+    TT_INT8, TT_INT16, TT_INT32, TT_INT64, TT_UINT8, TT_UINT16, TT_UINT32, TT_UINT64,
+    TT_BYTES
 } TypeTag;
-#define TT_COUNT (TT_UINT64 + 1)
+#define TT_COUNT (TT_BYTES + 1)
+#define TT_IS_INT(t) ((t) >= TT_INT8 && (t) <= TT_UINT64)
 
 struct ObjList {
     Obj obj;
@@ -217,6 +228,7 @@ struct ObjMap {             /* insertion-ordered hash map */
      * any type, compared by contents; Map[K, V] also checks both types. */
     unsigned char dict;     /* 1 for a Map */
     unsigned char ktype, vtype;  /* TypeTags for Map[K, V]; TT_ANY otherwise */
+    unsigned char internal; /* the interpreter's own (names, globals): LUBE_MAX_ITEMS is for the program's */
     ObjClass *klass;        /* for an instance of a class: its class (fields are the entries) */
 };
 
@@ -225,7 +237,7 @@ struct ObjMap {             /* insertion-ordered hash map */
  * object for Object) are accepted too. */
 enum {
     TD_NUM, TD_BOOL, TD_INT, TD_STR, TD_STROBJ, TD_LIST, TD_MAP, TD_OBJECT, TD_FUNCTION, TD_RANGE,
-    TD_CHANNEL, TD_ISOLATE,
+    TD_CHANNEL, TD_ISOLATE, TD_BYTES,
     TD_CLASSVAL,  /* a class itself (from class_of or find_class) */
     TD_CLASS      /* an instance of a class or its subclasses */
 };
@@ -244,6 +256,7 @@ struct ObjNative {
     NativeFn fn;
     int min_args, max_args; /* max_args < 0 means "any number" */
     int changes_first;      /* takes its first argument with & (push, pop, ...) */
+    const void *plugin_fn;  /* a plugin's function (fn is plugin.c's, which calls it), or NULL */
 };
 
 struct ObjFunction {
@@ -255,6 +268,22 @@ struct ObjFunction {
 
 /* A channel or an isolate lives outside any one isolate's heap (isolate.c);
  * each isolate that holds one has its own wrapper object. */
+/* io.c: bytes (changeable in place, copied when shared, as lists are) and
+ * open files (a handle: copies share it; it closes with its last owner). */
+typedef struct ObjBytes {
+    Obj obj;
+    size_t len, cap;
+    unsigned char *data;
+} ObjBytes;
+
+/* A plugin's object: its type's class (in this interpreter), then the
+ * plugin's own data, freed by the plugin when the last owner lets go. */
+typedef struct ObjForeign {
+    Obj obj;
+    ObjClass *klass;         /* klass->foreign: the plugin's type */
+    union { double d; void *p; long long l; } data[];  /* (aligned for anything) */
+} ObjForeign;
+
 typedef struct ObjChannel {
     Obj obj;
     struct Channel *ch;
@@ -290,7 +319,11 @@ struct ObjClass {
     TypeDesc *field_types;  /* fields keep the type they start with */
     ObjMap *methods;        /* this class's own methods: name -> function */
     Value constructor;      /* this class's constructor, or NIL_VAL */
+    struct LubeType *foreign;  /* a plugin's type (its objects are ObjForeign), or NULL */
 };
+
+/* The class of an instance or of a plugin's object, or NULL. */
+#define CLASS_OF(v) (IS_INSTANCE(v) ? AS_MAP(v)->klass : IS_FOREIGN(v) ? AS_FOREIGN(v)->klass : NULL)
 
 /* A String: an object wrapping a str, with read-only properties computed
  * from the text (length, value, upper, lower, chars, words). A plain str
@@ -427,9 +460,14 @@ typedef struct LubeNative {
  * its arguments (kept) or as nothing (left out, with all only it uses). */
 #ifdef LUBE_SHAKE
 #define LUBE_BUILTIN(name, ...) LUBE_KEEP_##name({#name, __VA_ARGS__},)
+#define LUBE_METHOD(name, ...) LUBE_KEEPM_##name({#name, __VA_ARGS__},)
 #else
 #define LUBE_BUILTIN(name, ...) {#name, __VA_ARGS__},
+#define LUBE_METHOD(name, ...) {#name, __VA_ARGS__},  /* a method of a type (Bytes, File): kept by its name */
 #endif
+#define LUBE_TM_TYPES 1  /* the built-in types with methods of their own: OBJ_BYTES */
+#define LUBE_TM(t) ((t) >= OBJ_BYTES && (t) < OBJ_BYTES + LUBE_TM_TYPES)
+#define LUBE_OWN_METHODS(t) (LUBE_TM(t) || (t) == OBJ_FOREIGN)  /* (plugins' objects: their class's) */
 
 /* Records (native.c): the Number fields of an object, copied to and from an array. */
 #define LUBE_REC_MAX 16
@@ -446,6 +484,60 @@ int lube_reclist_load(Interp *I, LubeRecCache *c, Value v, const char *const *fi
 void lube_rec_store(Interp *I, LubeRecCache *c, Value *slot, int nf, const double *vals, const double *orig);
 void lube_reclist_store(Interp *I, LubeRecCache *c, Value *list, int nf, const double *vals, const double *orig);
 Value *lube_native_global(Interp *I, const char *name, int written);
+
+/* io.c */
+typedef struct {  /* a table of natives (io.c, net.c), ending with a NULL name */
+    const char *name;
+    NativeFn fn;
+    int min, max;
+    int changes_first;
+} LubeNativeDef;
+void lube_define_natives(Interp *I, const LubeNativeDef *t);  /* as globals */
+ObjMap *lube_method_table(Interp *I, const LubeNativeDef *t);  /* as a type's methods (I->tmethods) */
+ObjBytes *new_bytes(size_t cap);             /* empty, with room for cap */
+void bytes_reserve(ObjBytes *b, size_t n);
+void bytes_add(ObjBytes *b, const void *p, size_t n);
+Value lube_bytes_push(Interp *I, int argc, Value *argv);  /* push(&bytes, ...) */
+Value lube_bytes_concat(Value a, Value b);  /* bytes + bytes */
+Value lube_bytes_assign(Interp *I, Value *slot, size_t k, TokenType op, Value rhs);  /* b[k] = v (takes rhs) */
+void register_io(Interp *I);
+double lube_now(void);                       /* a steady clock, in seconds */
+
+/* plugin.c */
+struct LubeType;
+struct LubePlugin;
+struct LubeAPI;
+typedef struct {  /* a plugin compiled into this lube: lube_static_plugins (nativetab.c, or a build's own) */
+    const char *name;
+    int (*init)(struct LubePlugin *plugin, const struct LubeAPI *api);
+} LubeStaticPlugin;
+extern const LubeStaticPlugin lube_static_plugins[];  /* ends with a NULL name */
+extern const char *lube_argv0;               /* (main's argv[0]: where lube is, when nothing better says) */
+ObjMap *lube_plugin_names(Interp *I, ObjString *name, int *bad);  /* a plugin's names, or NULL; *bad: it would not load */
+int lube_plugin_import(Interp *I, ObjString *name);  /* defines its names in I (-1 after an error) */
+int lube_define_global(Interp *I, ObjString *key, Value v);  /* (interp.c) a package's constant name: takes v */
+int lube_assign_global(Interp *I, ObjString *key, Value v);  /* (interp.c) a global var, made or replaced: takes v */
+void lube_report_uncaught(Interp *I);        /* (interp.c) the raised error, said through lube_output */
+Value lube_host_native(Interp *I, const char *name, LubeFn fn, int min, int max, void *data);  /* (embed.c's) */
+void lube_free_host_fn(const void *fn);
+const LubeAPI *lube_plugin_api(void);        /* (plugin.c) the table plugins and host programs use */
+void lube_plugin_add(const char *name, int (*init)(struct LubePlugin *plugin, const struct LubeAPI *api));
+extern int lube_hosted;                      /* inside a host program (lube_embed.h): exit() returns to it */
+extern void (*lube_fatal_hook)(const char *message);  /* called before running out of memory ends the process */
+static inline Value value_from_lube(LubeValue x) {
+    Value v;
+    memcpy(&v, &x, sizeof v);
+    return v;
+}
+static inline LubeValue value_to_lube(Value v) {
+    LubeValue x;
+    memcpy(&x, &v, sizeof x);
+    return x;
+}
+void lube_plugins_start(void);               /* (the first lube_new, before any isolate) */
+const char *lube_plugin_file(Interp *I, ObjString *name);  /* the file it was loaded from (NULL: compiled in) */
+Value lube_foreign_construct(Interp *I, ObjClass *c, int argc, Value *argv);  /* Sound(...) */
+void lube_foreign_free(ObjForeign *f);
 Value lube_nv_list(int n, const Value *items);
 double lube_round(double x);
 double lube_m_sin(double x);
@@ -853,6 +945,12 @@ struct Interp {
     Source *error_src;
     StrBuf trace;                   /* traceback collected while unwinding */
     StrBuf interp;                  /* OP_INTERP's text, kept between uses */
+    ObjMap *tmethods[LUBE_TM_TYPES];   /* methods of Bytes: name -> native (io.c) */
+    ObjNative *calling;                /* the native being called (plugin.c's finds the plugin's function there) */
+    void *hosted;                      /* inside a host program: its side (embed.c), or NULL */
+    int exiting, exit_code;            /* hosted: exit() was called (an error no catch stops) */
+    ObjClass **foreign_classes;        /* each plugin type's class here, by its number (plugin.c) */
+    int nforeign;
     int native_off;                 /* a native call at depth native_off - 1 gave up: what the VM runs for it
                                        (deeper) runs on the VM too (else recursion that never ends would retry
                                        machine code at every level); 0: none */
@@ -888,6 +986,8 @@ void sb_putc(StrBuf *sb, char c);
 void sb_puts(StrBuf *sb, const char *s);
 void sb_putn(StrBuf *sb, const char *s, size_t n);
 void sb_printf(StrBuf *sb, const char *fmt, ...);
+void lube_foreign_describe(StrBuf *sb, Value v);  /* (plugin.c) how a plugin's object prints */
+int lube_plugin_copy(Interp *I, ObjString *name, const char *exe, StrBuf *copied);  /* (plugin.c) next to a built program */
 void sb_free(StrBuf *sb);
 void lube_out_of_memory(void);
 void *xmalloc(size_t n);
@@ -1033,7 +1133,10 @@ int lube_stack_ok(Interp *I);
 void register_builtins(Interp *I);
 
 /* thread.c: the operating system's threads, for isolates */
+#ifndef LUBE_LOCK_TYPEDEF
+#define LUBE_LOCK_TYPEDEF
 typedef struct LubeLock LubeLock;   /* a mutex with a condition to wait on */
+#endif
 LubeLock *lock_new(void);         /* lives as long as the process */
 void lock_acquire(LubeLock *l);
 void lock_release(LubeLock *l);
@@ -1046,7 +1149,7 @@ char **os_files(const char *dir, const char *ext, int *n);  /* sorted; free each
 
 /* native.c */
 int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *lens, const char *argv0,
-                      const char *exe_out, int flags, StrBuf *image);
+                      const char *exe_out, int flags, StrBuf *image, char **plugins, int nplugins, int *inside);
 void lube_native_attach(Interp *I, FuncDecl *program, Source *src);
 int lube_native_loop(Source *src, int index);
 int lube_global_watched(Interp *I, ObjString *name);

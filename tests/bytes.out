@@ -1,0 +1,62 @@
+Bytes() Bytes(00 00 00) Bytes(68 69) Bytes(00 7f ff) Bytes(78)
+6 Bytes(c3 a9) Bytes true
+Bytes() 0 true
+104 121 hey 686579
+Bytes(48 66 59) HfY
+Bytes(48 66 59) Bytes(00 66 59 21 21 01 02)
+Bytes(61 62 63 64) Bytes(63 64 65 66) Bytes(62 63) Bytes(65 66)
+Bytes() Bytes() Bytes(61 62 63)
+true false true false true
+true false false true
+Bytes(78 79 7a)
+Bytes(01)
+1 true false
+9
+8
+0 9
+1 8
+Bytes(ff ff 01 02 02 01 fe ff ff ff ff ff ff ff)
+255 -1 255 513 513 258
+-2 4294967294 4294967295 -1
+Bytes(00 00 c0 3f cd cc cc 3d bf b9 99 99 99 99 99 9a) 1.5 0.10000000149011612 -0.1
+18446744073709551615 -9223372036854775808 -5 7 uint64
+Bytes(01 02 00 00 09)
+9 7 1.25 -3.5
+Frame {data: Bytes(01 09 03), seq: 0}
+[Bytes(61), Bytes(42 43)]
+{k: Bytes(05 06)}
+Bytes(00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 ... 70 bytes)
+Bytes(01 02) Bytes()
+4
+error: Bytes(n): n must be a whole Number, 0 or more
+error: Bytes(n): n must be a whole Number, 0 or more
+error: Bytes(list): item 1 is not a byte (a whole Number from 0 to 255)
+error: Bytes() expects a whole Number, a str, a List of bytes or Bytes, got Bool
+error: 256 is not a byte (a whole Number from 0 to 255)
+error: -1 is not a byte (a whole Number from 0 to 255)
+error: 1.5 is not a byte (a whole Number from 0 to 255)
+error: a byte is a whole Number from 0 to 255, not a str
+error: 0.25 is not a byte (a whole Number from 0 to 255)
+error: parameter 'b' of wants() is a Bytes, so it cannot take a Number
+error: bytes index 1 is out of range (length 1)
+error: bytes index must be a whole number, got 0.5
+error: bytes index 1 is out of range (length 1)
+error: bytes index must be a Number, not a str
+error: Bytes.pack() changes it, so call it on a variable (or a field or index of one)
+error: pack() expects a format such as "u8", "i16", "u32be", "f32" or "f64le", got "u12"
+error: pack() expects a format such as "u8", "i16", "u32be", "f32" or "f64le", got "q8"
+error: pack(): 256 does not fit in a u8
+error: pack(): 32768 does not fit in an i16
+error: pack(): 1.5 does not fit in a u8
+error: pack() expects a Number as argument 3, got str
+error: pack(): its position must be a whole Number, 0 or more
+error: unpack(): a u32 at 0 goes past the end (length 3)
+error: unpack(): a u8 at 3 goes past the end (length 3)
+error: unpack() expects a str as argument 2, got Number
+error: sleep() expects a Number as argument 1, got str
+error: push(): 300 is not a byte (a whole Number from 0 to 255)
+error: push(): a byte is a whole Number from 0 to 255, not a List
+error: unsupported operand types for '+': Bytes and List
+error: Bytes has no method 'nope'
+error: this Bytes[] can only hold Bytes values, not a Number
+error: slice(): positions are whole Numbers, not fractions

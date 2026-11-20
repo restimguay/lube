@@ -11,8 +11,8 @@ parallel_map() needs a List, not a Number
 true
 {pt: Point {x: 3, y: 0}, xs: [1, 2], s: String("hi"), r: 1..=3, m: {}, n: 7, flags: [true, false]} true true int32[] uint8
 ["original", "changed in the isolate"] ["original"]
-a Function cannot be sent to another isolate: only data can (numbers, text, lists, maps, instances and channels)
-gives_function() failed in its isolate: a Function cannot be sent to another isolate: only data can (numbers, text, lists, maps, instances and channels)
+a Function cannot be sent to another isolate: only data can (numbers, text, bytes, lists, maps, instances and channels)
+gives_function() failed in its isolate: a Function cannot be sent to another isolate: only data can (numbers, text, bytes, lists, maps, instances and channels)
 spawn() needs a function declared with fn at the top of a file (the new isolate finds it by name), not a nested function or lambda
 spawn() cannot run changes() in an isolate: it changes its argument 'x' with &
 spawn() needs a function declared with fn at the top of a file (the new isolate finds it by name), not a Number
@@ -21,8 +21,8 @@ square() takes 1 argument but got 2
 add() takes 1 to 2 arguments but got 3
 keeps() failed in its isolate: cannot receive a Cat here: this isolate has no class Cat
 keeps() failed in its isolate: cannot receive a Cat here: this isolate has no class Cat
-a Function cannot be sent to another isolate: only data can (numbers, text, lists, maps, instances and channels)
-a Function cannot be sent to another isolate: only data can (numbers, text, lists, maps, instances and channels)
+a Function cannot be sent to another isolate: only data can (numbers, text, bytes, lists, maps, instances and channels)
+a Function cannot be sent to another isolate: only data can (numbers, text, bytes, lists, maps, instances and channels)
 this value is nested too deeply to send to another isolate (at most 10000 levels)
 true 4
 'handle' is an Isolate, so it cannot hold a Number: a var keeps the type it starts with
@@ -44,7 +44,7 @@ take() needs a whole number of values to take, not a Number
 cannot receive: the channel is closed and empty
 join() takes just the isolate when waiting for one
 42
-a Function cannot be sent to another isolate: only data can (numbers, text, lists, maps, instances and channels)
+a Function cannot be sent to another isolate: only data can (numbers, text, bytes, lists, maps, instances and channels)
 through the relay
 deadlock: every isolate is waiting (for a channel that nothing will send to or close, or for a join)
 true

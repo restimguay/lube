@@ -383,6 +383,7 @@ static TypeAnn type_annotation(Parser *P) {
     case TT_RANGE: t.d.kind = TD_RANGE; break;
     case TT_CHANNEL: t.d.kind = TD_CHANNEL; break;
     case TT_ISOLATE: t.d.kind = TD_ISOLATE; break;
+    case TT_BYTES: t.d.kind = TD_BYTES; break;
     default: t.d.kind = TD_INT; t.d.a = (unsigned char)(tag - TT_INT8); break;
     }
     return t;
@@ -619,6 +620,8 @@ static Node *type_expression(Parser *P, Token *t, int tag) {
         return NULL;
     case TT_RANGE:  /* the empty range 0..0 */
         return empty_range(t->line);
+    case TT_BYTES:  /* Bytes: none yet, as Bytes() */
+        return call_of(P, t);
     default:  /* the sized integers: 0 */
         return literal(IK_SIGNED(tag - TT_INT8) ? SINT_VAL(tag - TT_INT8, 0) : UINT_VAL(tag - TT_INT8, 0), t->line);
     }

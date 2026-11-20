@@ -92,6 +92,8 @@ typedef struct {
     int count, cap;
     const char *dir; /* the program's folder, where relative names are read from */
     size_t dirlen;
+    char **plugins;  /* the plugins it imports */
+    int nplugins;
 } Files;
 
 static int add_file(Interp *I, Files *fs, const char *key, const char *real, const char *importer, const char *rel);
@@ -102,7 +104,14 @@ static int add_package(Interp *I, Files *fs, const char *pkg, const char *import
     StrBuf folder, key, real;
     sb_init(&folder);
     ObjString *name = lube_intern(I, pkg, strlen(pkg));
-    lube_find_package(I, name, &folder);  /* found when the import was checked */
+    if (!lube_find_package(I, name, &folder)) {  /* no folder: a plugin (found when the import was checked) */
+        sb_free(&folder);
+        for (int i = 0; i < fs->nplugins; i++)
+            if (!strcmp(fs->plugins[i], pkg)) return 0;
+        fs->plugins = xrealloc(fs->plugins, sizeof(char *) * (size_t)(fs->nplugins + 1));
+        fs->plugins[fs->nplugins++] = xstrndup(pkg, strlen(pkg));
+        return 0;
+    }
     int n, status = 0;
     char **files = lube_package_files(I, folder.data, &n);
     for (int i = 0; i < n; i++) {
@@ -194,9 +203,15 @@ int lube_build(Interp *I, const char *argv0, const char *main_path, const char *
 #endif
     StrBuf image;  /* --small: the files compiled */
     sb_init(&image);
+    int *inside = xmalloc(sizeof(int) * (size_t)(fs.nplugins + 1));  /* which plugins went inside it */
+    for (int i = 0; i < fs.nplugins; i++) inside[i] = 0;
     if (native && !status) {
-        status = lube_native_build(I, fs.count, fs.keys, fs.texts, fs.lens, argv0, compiled.data, flags, &image);
-        if (status < 0) native = status = 0;  /* nothing could be native: this lube as it is */
+        status = lube_native_build(I, fs.count, fs.keys, fs.texts, fs.lens, argv0, compiled.data, flags, &image,
+                                   fs.plugins, fs.nplugins, inside);
+        if (status < 0) {  /* nothing could be native: this lube as it is */
+            native = status = 0;
+            for (int i = 0; i < fs.nplugins; i++) inside[i] = 0;
+        }
     }
     char *self = status ? NULL : native ? xstrndup(compiled.data, compiled.len) : find_self(argv0);
     size_t exe_len = 0;
@@ -232,6 +247,14 @@ int lube_build(Interp *I, const char *argv0, const char *main_path, const char *
 #endif
             printf("built %s: %d file%s, %lu bytes\n", out_path, fs.count, fs.count == 1 ? "" : "s",
                    (unsigned long)(exe_len + payload.len));
+            StrBuf copied;  /* the plugins that stay files: next to it, where it finds them */
+            sb_init(&copied);
+            for (int i = 0; i < fs.nplugins && !status; i++) {
+                int r = inside[i] ? 1 : lube_plugin_copy(I, lube_intern(I, fs.plugins[i], strlen(fs.plugins[i])), out_path, &copied);
+                if (r == 0) printf("  and its plugin %s: %s, next to it\n", fs.plugins[i], copied.data);
+                if (r < 0) status = 73;  /* LCOV_EXCL_LINE: a full disk */
+            }
+            sb_free(&copied);
         } else {
             fprintf(stderr, "lube: cannot write '%s'\n", out_path);
             status = 73;
@@ -245,6 +268,9 @@ int lube_build(Interp *I, const char *argv0, const char *main_path, const char *
     free(fs.keys);
     free(fs.texts);
     free(fs.lens);
+    for (int i = 0; i < fs.nplugins; i++) free(fs.plugins[i]);
+    free(fs.plugins);
+    free(inside);
     if (native) remove(compiled.data);
     sb_free(&compiled);
     free(self);

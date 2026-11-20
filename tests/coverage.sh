@@ -31,11 +31,16 @@ FLAGS=""
 if [ "$(uname -s)" = Darwin ]; then FLAGS="-DLUBE_STACK_SIZE=0x3F00000 -Wl,-stack_size,0x3F00000"; fi
 # shellcheck disable=SC2086
 # atomic counters: isolates run on several threads at once
-${CC:-cc} -std=c99 -O0 -g -fprofile-instr-generate -fcoverage-mapping -fprofile-update=atomic $FLAGS -o "$OUT/lube" src/*.c -lm -lpthread
+# LUBE_SILENT: no sound device (the tests play sounds in silence, and make no sound). The plugins that come
+# with Lube are inside it (LUBE_STATIC_PLUGINS), so they are measured too; loading one from a file is
+# measured with the tests' own (tests/plugins/).
+${CC:-cc} -std=c99 -O0 -g -fprofile-instr-generate -fcoverage-mapping -fprofile-update=atomic -DLUBE_SILENT -DLUBE_STATIC_PLUGINS $FLAGS -o "$OUT/lube" src/*.c src/plugins/*.c -lm -lpthread
 
 # Programs built with lube --build --native are measured too: they run the
 # part of the interpreter that calls machine code.
-export LUBE_NATIVE_CFLAGS="-O0 -fprofile-instr-generate -fcoverage-mapping -fprofile-update=atomic"
+export LUBE_NATIVE_CFLAGS="-O0 -fprofile-instr-generate -fcoverage-mapping -fprofile-update=atomic -DLUBE_SILENT"
+# The embedding tests' host programs too: Lube compiled into them the same way (tests/cli.sh adds the -Ds).
+export LUBE_EMBED_CFLAGS="-O0 -fprofile-instr-generate -fcoverage-mapping -fprofile-update=atomic $FLAGS"
 
 # An absolute path (some tests run lube, and programs built with it, from
 # other folders), and a pool of files every run merges into under a lock (%8m):
@@ -47,8 +52,8 @@ fi
 echo "tests:      $(tail -1 "$OUT/tests.log")"
 
 "$PROFDATA" merge -sparse "$OUT"/run-*.profraw -o "$OUT/lube.profdata"
-"$COV" report "$OUT/lube" -instr-profile="$OUT/lube.profdata" src/*.c >"$OUT/report.txt"
-"$COV" show "$OUT/lube" -instr-profile="$OUT/lube.profdata" src/*.c >"$OUT/lines.txt"
+"$COV" report "$OUT/lube" -instr-profile="$OUT/lube.profdata" src/*.c src/plugins/*.c >"$OUT/report.txt"
+"$COV" show "$OUT/lube" -instr-profile="$OUT/lube.profdata" src/*.c src/plugins/*.c >"$OUT/lines.txt"
 
 # Totals from llvm-cov: regions, functions and branches.
 awk '/^TOTAL/ {

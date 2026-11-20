@@ -53,8 +53,10 @@ jobs:
         if: matrix.cc == 'gcc'
         run: |
           make clean
-          LDFLAGS="-static -s" make
+          # its plugins inside it (a static program cannot load libraries: no ALSA either, so no sound)
+          CFLAGS="-O2 -DLUBE_SILENT" LDFLAGS="-static -s" make STATIC_PLUGINS=1
           ./lube -e 'print("lube runs:", 1 + 2)'
+          ./lube -e 'import net; print("with its plugins:", net.udp_open())'
           tar czf lube-linux-x86_64.tar.gz lube README.md
       - uses: actions/upload-artifact@v4
         if: matrix.cc == 'gcc'
@@ -90,9 +92,11 @@ jobs:
           make clean
           CFLAGS="-O2 -arch arm64 -arch x86_64" LDFLAGS="-arch arm64 -arch x86_64" make
           strip lube
-          lipo -info lube
+          strip -x plugins/*.dylib
+          lipo -info lube plugins/*.dylib
           ./lube -e 'print("lube runs:", 1 + 2)'
-          tar czf lube-macos-universal.tar.gz lube README.md
+          ./lube -e 'import net; print("with its plugins:", net.udp_open())'
+          tar czf lube-macos-universal.tar.gz lube plugins README.md
       - uses: actions/upload-artifact@v4
         with:
           name: lube-macos-universal
@@ -129,8 +133,10 @@ jobs:
         run: |
           make clean
           LDFLAGS="-static -s" make
+          strip plugins/*.dll
           ./lube.exe -e 'print("lube runs:", 1 + 2)'
-          zip lube-windows-x86_64.zip lube.exe README.md
+          ./lube.exe -e 'import net; print("with its plugins:", net.udp_open())'
+          zip -r lube-windows-x86_64.zip lube.exe plugins README.md
       - uses: actions/upload-artifact@v4
         with:
           name: lube-windows-x86_64

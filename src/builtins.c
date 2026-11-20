@@ -206,8 +206,14 @@ NATIVE(n_append_file) { (void)argc; return write_out(I, argv, "append_file", "ab
 NATIVE(n_exit) {
     if (argc > 0) NEED(IS_WHOLE(argv[0]) && numeric_value(argv[0]) >= 0 && numeric_value(argv[0]) <= 255, 0,
                        "a whole number from 0 to 255");
+    int code = argc > 0 ? (int)numeric_value(argv[0]) : 0;
+    if (lube_hosted) {  /* inside a host program: back to it (lube_run gives LUBE_EXIT), not the end of it */
+        I->exiting = 1;
+        I->exit_code = code;
+        return lube_error(I, "exit(%d)", code);
+    }
     fflush(stdout);
-    exit(argc > 0 ? (int)numeric_value(argv[0]) : 0);
+    exit(code);
 }
 
 NATIVE(n_clock) { (void)I; (void)argc; (void)argv; return NUM_VAL((double)clock() / CLOCKS_PER_SEC); }
@@ -270,12 +276,14 @@ NATIVE(n_len) {
     if (IS_LIST(v)) return NUM_VAL((double)AS_LIST(v)->count);
     if (IS_MAP(v)) return NUM_VAL((double)AS_MAP(v)->count);
     if (IS_RANGE(v)) return NUM_VAL(range_length(AS_RANGE(v)));
-    return type_error(I, "len", 0, "a str, List, Object or Range", v);
+    if (IS_BYTES(v)) return NUM_VAL((double)AS_BYTES(v)->len);
+    return type_error(I, "len", 0, "a str, List, Object, Range or Bytes", v);
 }
 
 /* --- functions that change their first argument (taken with &) --- */
 
 NATIVE(n_push) {
+    if (IS_BYTES(argv[0])) return lube_bytes_push(I, argc, argv);
     NEED_LIST(0);
     int elem = AS_LIST(argv[0])->elem;
     for (int i = 1; i < argc && elem != TT_ANY; i++) {  /* check everything before changing anything */

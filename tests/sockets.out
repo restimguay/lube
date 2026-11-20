@@ -1,0 +1,48 @@
+true true Socket(tcp server 127.0.0.1:PORT) []
+1 List true true
+true true
+Bytes(68 65 6c 6c 6f 00 01) Bytes() []
+1 true back
+200000 true
+[] Bytes() []
+false Socket(tcp 127.0.0.1:PORT, closed)
+Bytes() false true
+true false
+false false
+true
+2 ["hi", "yo"] ok hi ok yo
+true true
+2 Bytes(70 69 6e 67) Bytes() 127.0.0.1 true
+pong Bytes() [] []
+3 1.5 -2
+true
+[] true []
+echo me
+7
+error: tcp_listen(): cannot listen on 127.0.0.1 port PORT: Address already in use
+error: tcp_connect(): cannot connect to 127.0.0.1 port PORT: Connection refused
+error: tcp_listen(): a port is a whole Number from 0 to 65535, not 70000
+error: tcp_listen(): a port is a whole Number from 0 to 65535, not 1.5
+error: tcp_listen(): a port is a whole Number from 0 to 65535, not a str
+error: tcp_connect() expects a str (a host) as argument 1, got Number
+error: tcp_connect(): the seconds to wait must be a Number, 0 or more (or INF: as long as it takes), not -1
+error: receive(): a server receives connections, with accept(); its connections receive data
+error: send(): a server sends nothing: its connections do
+error: packets(): only a UDP socket (from udp_open) gets packets; this is a server (from tcp_listen), which has accept()
+error: peer(): only a TCP connection has another side; this is a server (from tcp_listen)
+error: accept(): the seconds to wait must be a Number, 0 or more (or INF: as long as it takes), not a str
+error: send(): a UDP socket sends packets, with send_to(host, port, data)
+error: accept(): only a server (from tcp_listen) has connections to accept; this is a UDP socket
+error: packets(): only a UDP socket (from udp_open) gets packets; this is a TCP connection, which has receive()
+error: send_to(): only a UDP socket (from udp_open) sends packets; this is a TCP connection, which has send(data)
+error: send_to() sends Bytes or a str, not a List
+error: send_to(): cannot find the host '::1' (as an IPv4 address, for this socket)
+error: send_to(): 70000 bytes are too many for one packet
+error: poll(): item 1 is a Number, not a Socket
+error: poll() expects a List of Sockets as argument 1, got Socket
+error: poll(): no open socket to wait for, and no limit on the wait
+error: a Socket cannot be sent to another isolate: only data can (numbers, text, bytes, lists, maps, instances and channels)
+error: parameter 's' of port_of() is a Socket, so it cannot take a Number
+error: packets(): the socket is closed
+error: port(): the socket is closed
+false []

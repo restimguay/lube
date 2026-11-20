@@ -1,0 +1,2 @@
+// A script the host runs from its file
+print("from a script:", twice(4), name)

@@ -218,7 +218,7 @@ static ObjString *ref_key(Resolver *R, ObjString *name) {
 static ObjMap *package_names(Resolver *R, ObjString *pkg, int line) {
     int bad;
     ObjMap *names = lube_package_names(R->I, pkg, &bad);
-    if (bad) rerror(R, line, "package %s has errors (see above)", pkg->chars);
+    if (bad) rerror(R, line, bad == 2 ? "cannot load plugin %s (see above)" : "package %s has errors (see above)", pkg->chars);
     return names;
 }
 
@@ -227,7 +227,7 @@ static void resolve_import(Resolver *R, Node *n) {
     ObjString *dotted = n->as.import.dotted;
     ObjMap *names = package_names(R, dotted, n->line);
     if (n->as.import.star) {  /* every public name of the package */
-        if (!names) rerror(R, n->line, "cannot find package %s (in the program's folder or LUBE_PATH)", dotted->chars);
+        if (!names) rerror(R, n->line, "cannot find package %s (in the program's folder or LUBE_PATH, or as a plugin)", dotted->chars);
         for (size_t i = 0; i < names->used; i++) {
             ObjString *name = AS_STRING(names->entries[i].key);
             if (name->chars[0] != '_')
@@ -246,11 +246,11 @@ static void resolve_import(Resolver *R, Node *n) {
         return;
     }
     const char *dot = strrchr(dotted->chars, '.');  /* else: a name in a package */
-    if (!dot) rerror(R, n->line, "cannot find package %s (in the program's folder or LUBE_PATH)", dotted->chars);
+    if (!dot) rerror(R, n->line, "cannot find package %s (in the program's folder or LUBE_PATH, or as a plugin)", dotted->chars);
     ObjString *pkg = lube_intern(R->I, dotted->chars, (size_t)(dot - dotted->chars));
     ObjString *name = lube_intern(R->I, dot + 1, strlen(dot + 1));
     names = package_names(R, pkg, n->line);
-    if (!names) rerror(R, n->line, "cannot find package %s (in the program's folder or LUBE_PATH)", pkg->chars);
+    if (!names) rerror(R, n->line, "cannot find package %s (in the program's folder or LUBE_PATH, or as a plugin)", pkg->chars);
     if (name->chars[0] == '_') rerror(R, n->line, "'%s' is private to package %s", name->chars, pkg->chars);
     if (!map_get(names, OBJ_VAL(name), NULL)) rerror(R, n->line, "package %s has no '%s'", pkg->chars, name->chars);
     map_set(R->aliases, retain(OBJ_VAL(n->as.import.alias ? n->as.import.alias : name)),
