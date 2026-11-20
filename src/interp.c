@@ -1069,6 +1069,8 @@ static int listed(const OnList *l, const OnDesc *od) {
     return 0;
 }
 
+int lube_global_watched(Interp *I, ObjString *name);
+
 /* `name` when an `on` block watches the global var of that name; else NULL. */
 static ObjString *watched_name(Interp *I, ObjString *name) {
     for (int i = 0; i < I->nwatchers; i++)
@@ -1081,6 +1083,9 @@ static ObjString *watched_name(Interp *I, ObjString *name) {
                 return name;
     return NULL;
 }
+
+/* Is the global `name` watched by an `on` block? (native.c: a loop's machine code may not change it) */
+int lube_global_watched(Interp *I, ObjString *name) { return (I->nwatchers || I->nfwatch) && watched_name(I, name); }
 
 /* Runs the `on` blocks for `name` (except one already running: its own
  * changes do not run it again). Returns NIL_VAL, or an error a block raised. */
@@ -1745,7 +1750,8 @@ static Value new_instance(Interp *I, ObjClass *cls, int argc, ObjFunction **ctor
 static int start_call(Interp *I, int ci, int argc, Loan *loans, int nloans, int this_locked, Value *out) {
     Value callee = I->stack[ci], r;
     int base = ci + 1;
-    if (IS_FUNCTION(callee) && AS_FUNCTION(callee)->decl->native && call_native(I, AS_FUNCTION(callee)->decl, base, argc, &r)) {
+    if (IS_FUNCTION(callee) && AS_FUNCTION(callee)->decl->native && !this_locked &&
+        call_native(I, AS_FUNCTION(callee)->decl, base, argc, &r)) {
         /* its machine code did it (with what was lent: given back below) */
     } else if (IS_FUNCTION(callee)) {
         Frame *f = enter(I, AS_FUNCTION(callee), base, argc);
@@ -2560,6 +2566,21 @@ static Value execute(Interp *I) {
             Place place;
             Value obj;
             int have_place = md->recv_place >= 0;
+            if (have_place && code->places[md->recv_place].nkeys == 0) {
+                /* x.method(...), x a variable holding an instance of the class
+                 * last seen here: the method, lending x (as prep_method does) */
+                const VarRef *rv = &code->places[md->recv_place].var;
+                int failed = 0;
+                Value *root = rv->kind == VAR_LOCAL ? &SLOT(rv->index) : rv->kind == VAR_GLOBAL ? global_ref(I, rv, &failed) : NULL;
+                if (failed) goto error;
+                place.root = rv;
+                place.nkeys = 0;
+                if (root && IS_INSTANCE(*root) && AS_MAP(*root)->klass == md->cache_class && md->cache_epoch == I->epoch &&
+                    !IS_NIL(md->cache_method) && place_changeable(I, &place)) {
+                    push_call(I, retain(md->cache_method), SELF_LEND, NIL_VAL, &place);
+                    break;
+                }
+            }
             if (have_place) {
                 take_place(I, &code->places[md->recv_place], &place);
                 obj = place_get(I, &place);
@@ -2615,11 +2636,24 @@ static Value execute(Interp *I) {
                 int ci = pc->callee, base = ci + 1, argc = 1 + cd->nargs, failed = 0;
                 int ok = d->plain_method && argc == d->nparams && I->depth < LUBE_MAX_FRAMES &&
                          base + d->nslots + d->code.maxstack <= LUBE_STACK_MAX &&
-                         (rv->kind == VAR_LOCAL ? !(rv->watch && rv->watch->n) : !watched_name(I, rv->name));
+                         (rv->kind == VAR_LOCAL ? !(rv->watch && rv->watch->n)
+                                                : !(I->nwatchers || I->nfwatch) || !watched_name(I, rv->name));
                 for (int i = 1; ok && d->types && i < argc; i++) ok = !d->types[i].set || IS_NUM(I->stack[base + i]);
                 Value *root = !ok ? NULL : rv->kind == VAR_LOCAL ? &SLOT(rv->index) : global_ref(I, rv, &failed);
                 if (failed) goto error;
                 if (root && root->type != VAL_LENT) {
+                    if (d->native) {  /* its machine code, x lent to it (and given back changed, when it ran) */
+                        I->stack[base] = *root;
+                        int ran = call_native(I, d, base, argc, &r);
+                        *root = I->stack[base];
+                        I->stack[base] = NIL_VAL;
+                        if (ran) {
+                            I->npending--;
+                            pop_to(I, ci);
+                            PUSH(r);
+                            break;
+                        }
+                    }
                     Loan *L = new_loans(I, 1);
                     L->pos = 0;
                     move_place(&L->place, &pc->place);
@@ -2688,6 +2722,27 @@ static Value execute(Interp *I) {
                 PUSH(r);
                 break;
             }
+            if (f->nloans == 1 && !f->entry && !f->construct && !f->block && I->npending == f->pending && !I->dbg &&
+                !(I->nfwatch && I->fwatch[I->nfwatch - 1].depth >= I->depth) && f->loans->lent &&
+                f->loans->place.nkeys == 0 && IS_NIL(f->loans->before)) {
+                /* x.method(...) lent x, a variable, and nothing watches it: x gets it back (see leave) */
+                Loan *L = f->loans;
+                Value lent = I->stack[f->base + L->pos];
+                I->stack[f->base + L->pos] = NIL_VAL;
+                pop_to(I, f->call_base);
+                I->frame = f->prev;
+                I->depth--;
+                const VarRef *rv = L->place.root;
+                int failed;
+                Value *root = rv->kind == VAR_LOCAL ? &SLOT(rv->index) : global_ref(I, rv, &failed);
+                release(*root);
+                *root = lent;
+                free_loans(I, L, 1);
+                SWITCH_FRAME();
+                ip++;
+                PUSH(r);
+                break;
+            }
             {
                 int entry = f->entry;
                 r = leave(I, r);
@@ -2713,6 +2768,20 @@ static Value execute(Interp *I) {
             break;
         }
         case OP_FOR_NEXT: {
+            if (IS_RANGE(I->stack[I->sp - 3]) && (int)ip[1] < 0) {  /* for i in a..b: the common case */
+                double k = I->stack[I->sp - 1].as.number;
+                if (k >= I->stack[I->sp - 2].as.number) {  /* (its length, from OP_FOR_PREP) */
+                    ip = code->code + ARG_OF(in);
+                    break;
+                }
+                ObjRange *rg = AS_RANGE(I->stack[I->sp - 3]);
+                Value *slot = &I->stack[f->base + (int)ip[0]], old = *slot;
+                *slot = NUM_VAL(rg->start + k * rg->step);
+                release(old);
+                I->stack[I->sp - 1] = NUM_VAL(k + 1);
+                ip += 2;
+                break;
+            }
             int s1 = f->base + (int)ip[0], s2 = (int)ip[1];
             int two = s2 >= 0;
             if (two) s2 += f->base;
@@ -2777,8 +2846,8 @@ static Value execute(Interp *I) {
             ip += 2;
             break;
         }
-        case OP_WATCH_BEFORE:
-            PUSH(value_before(I, watched_name(I, AS_STRING(K(ARG_OF(in))))));
+        case OP_WATCH_BEFORE:  /* (nothing to compare with when no `on` block watches anything) */
+            PUSH(I->nwatchers || I->nfwatch ? value_before(I, watched_name(I, AS_STRING(K(ARG_OF(in))))) : NIL_VAL);
             break;
         case OP_WATCH_AFTER: {
             r = POP();
@@ -2823,10 +2892,11 @@ static Value execute(Interp *I) {
                 int failed;
                 Value *g = global_slot(I, code, ad->global, &failed);
                 if (failed) goto error;
-                if (!g || g->type == VAL_LENT || global_origin(I, pd->var.name, &origin) ||
+                if (!g || g->type == VAL_LENT || global_origin_ref(I, &pd->var, &origin) ||
                     (ad->op != T_ASSIGN && !IS_NUM(*g)))
                     goto assign_general;  /* errors and the rest: the general way */
-                if (ad->op == T_ASSIGN) r = keep_type(I, &pd->var, rhs);
+                if (ad->op == T_ASSIGN)  /* (a var holding a plain Number is a Number, or untyped) */
+                    r = IS_NUM(*g) && IS_NUM(rhs) ? rhs : keep_type(I, &pd->var, rhs);
                 else if (!IS_NUM(*g) || !num_op(compound_base(ad->op), g->as.number, rhs.as.number, &r))
                     r = binary_op(I, compound_base(ad->op), *g, rhs);
                 if (IS_ERR(r)) goto error;
@@ -2946,6 +3016,13 @@ static Value execute(Interp *I) {
         case OP_FAIL:
             lube_error(I, "%s", AS_STRING(K(ARG_OF(in)))->chars);
             goto error;
+        case OP_NATIVE_LOOP: {  /* its machine code ran the loop (else, when it gave up, the bytecode runs it) */
+            int skip = (int)*ip++;
+            double unused;
+            int left = LUBE_MAX_FRAMES - I->depth < NATIVE_DEPTH ? LUBE_MAX_FRAMES - I->depth : NATIVE_DEPTH;
+            if (!I->dbg && !lube_natives[ARG_OF(in)].fnv(I, NULL, &unused, left)) ip = code->code + skip;
+            break;
+        }
         default:  /* LCOV_EXCL_START: the compiler emits only the opcodes above */
             lube_error(I, "internal error: bad instruction");
             goto error;

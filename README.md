@@ -67,9 +67,12 @@ built app: 1 file, 339570 bytes
 - local `var`s and `let`s;
 - lists of Numbers or of Bools that the function makes itself (`[0] * n`, `Number[]`, `[a, b]`), and indexes, changes, pushes to and measures with `len`, but never passes on or returns;
 - records: an untyped parameter that the function uses as an object or class instance (`p.x`), or as a list of them (`bodies[i].vx`, `for b in bodies`, `len(bodies)`), reading and changing their Number fields (up to 16 of them). Copies (`let b = bodies[i]`) work too. As on the VM, changes reach the caller only through a `&` parameter;
-- calls to other such functions and to the math built-ins (`sqrt`, `abs`, `floor`, `pow`, `log`...).
+- calls to other such functions (passing records on, with `&` or without) and to the math built-ins (`sqrt`, `abs`, `floor`, `pow`, `log`...);
+- method calls on a record, when the method qualifies too and only one class has a method of that name.
 
-The build lists the functions it compiled, and for each typed function it didn't, the line where it stopped (`not native: names (line 12)`). Everything else runs on the VM as usual.
+Methods qualify the same way, `this` being a record. So do loops at the top level of a file (`for` or `while`): the globals they use (Numbers, Bools and records) are their parameters, taken in when the loop starts and written back when it ends.
+
+The build lists what it compiled, and for each typed function it didn't, the line where it stopped (`not native: names (line 12)`). Everything else runs on the VM as usual.
 
 ```lube
 fn fib(n: Number): Number {      // compiled
@@ -80,16 +83,21 @@ fn names(n: Number): str => "{n}"   // not compiled (text): runs on the VM
 ```
 
 ```lube
-fn advance(&bodies, dt: Number) {   // compiled: a list of records
-  for i in 0..len(bodies) {
-    bodies[i].x += dt * bodies[i].vx
-  }
+class Body {
+  var x = 0
+  var vx = 1
+  fn move(dt: Number) { this.x += this.vx * dt }   // compiled: a method
 }
+fn advance(&bodies, dt: Number) {   // compiled: a list of records
+  for i in 0..len(bodies) { bodies[i].move(dt) }
+}
+var bodies = [Body(), Body()]
+for step in 0..1000 { advance(&bodies, 0.01) }   // compiled: a top-level loop
 ```
 
-The machine code computes exactly what the VM would, down to the last bit of every Number. A function given only whole numbers runs on 64-bit integers wherever its numbers stay whole, and switches to doubles where they don't or past 2^53. The machine code never reports an error itself. When one would happen (division by zero, a function that ends without returning its value, recursion too deep, a record without the field used, or a field that isn't a Number), the VM runs that call again and reports it as usual, with the usual traceback. That's safe because these functions change nothing outside themselves: a function's changes to its `&` records reach the caller only when it finishes.
+The machine code computes exactly what the VM would, down to the last bit of every Number. A function given only whole numbers runs on 64-bit integers wherever its numbers stay whole, and switches to doubles where they don't or past 2^53. The machine code never reports an error itself. When one would happen (division by zero, a function that ends without returning its value, recursion too deep, a record without the field used, a field that isn't a Number, an object of another class than its methods'), the VM runs that call or loop again from the start and reports it as usual, with the usual traceback. That's safe because nothing outside changes until the machine code is done: a function's changes to its `&` records, and a loop's to its globals, are written back only when it finishes. A loop changing a global that an `on` block watches runs on the VM, so the block runs on each change.
 
-It needs a C compiler (`cc`, or `CC`; `gcc` on Windows) when building, not when running, and Lube's C sources: the `src` folder next to `lube`, or the folder `LUBE_SRC` names. On the benchmarks in `bench/vs_rust`, the native builds run `fib` 25 times faster than the VM, the arithmetic `loop` 11 times faster, the `sieve` (a list of Bools) 27 times faster in a twelfth of the memory, and `nbody` (a list of class instances) 16 times faster. That's 1.8, 2.3, 1.2 and 5.5 times the time of the same programs in Rust.
+It needs a C compiler (`cc`, or `CC`; `gcc` on Windows) when building, not when running, and Lube's C sources: the `src` folder next to `lube`, or the folder `LUBE_SRC` names. On the benchmarks in `bench/vs_rust`, the native builds run `fib` 25 times faster than the VM, the arithmetic `loop` 11 times faster, the `sieve` (a list of Bools) 27 times faster in a twelfth of the memory, `nbody` (a list of class instances, stepped by a top-level loop) 58 times faster, and `methods` (a method called five million times) 44 times faster. That's 1.7, 2.4, 1.2, 1.6 and 1.8 times the time of the same programs in Rust.
 
 ## Memory: no garbage collector, no drama
 

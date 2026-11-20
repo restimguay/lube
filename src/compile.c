@@ -932,8 +932,11 @@ FuncDecl *compile_program(Interp *I, Node *program, Source *src, Arena *arena, c
             C->line = s->line;
             emit(C, OP_PRINT_REPL, 0, 0);
             emit(C, OP_POP, 0, -1);
-        } else {
+        } else {  /* (a loop with machine code tries that first) */
+            int native = mode == RUN_FILE && (s->kind == N_FOR || s->kind == N_WHILE) ? lube_native_loop(src, i) : -1;
+            int skip = native >= 0 ? emit2(C, OP_NATIVE_LOOP, native, 0, 0) : -1;
             compile_stmt(C, s);
+            if (skip >= 0) patch_word(C, skip + 1, C->ncode);
         }
     }
     C->line = stmts->count ? stmts->items[stmts->count - 1]->line : 1;

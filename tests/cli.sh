@@ -119,6 +119,8 @@ run "native: the program as a script" "$LUBE" tests/cli/native.lube
 run "native: the program built" sh -c 'LUBE_SRC="$3" "$1" --build --native tests/cli/native.lube -o "$2/native_app" && "$2/native_app"' sh "$ABS" "$TMP" "$SRC"
 run "native: a limit on items, as a script" env LUBE_MAX_ITEMS=200 "$LUBE" tests/cli/native.lube
 run "native: a limit on items, built" env LUBE_MAX_ITEMS=200 "$TMP/native_app"
+run "native: top-level loops, as a script" "$LUBE" tests/cli/native_loops.lube
+run "native: top-level loops, built" sh -c 'LUBE_SRC="$3" "$1" --build --native tests/cli/native_loops.lube -o "$2/loops_app" && "$2/loops_app"' sh "$ABS" "$TMP" "$SRC"
 run "native: nothing can be" env LUBE_SRC="$SRC" "$LUBE" --build --native tests/cli/args.lube -o "$TMP/args_native"
 run "native: without Lube's sources" env LUBE_SRC=/no/such/dir "$LUBE" --build --native tests/cli/native.lube -o "$TMP/x"
 mkdir -p "$TMP/bin" && cp "$ABS" "$TMP/bin/lube"

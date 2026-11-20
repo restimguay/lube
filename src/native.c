@@ -15,6 +15,13 @@
  * VM runs the whole call again, which raises the error as usual. That is
  * safe because these functions change nothing outside themselves.
  *
+ * Records (objects whose Number fields a fn uses, and lists of them) go in
+ * as arrays of those fields, laid out alike in fns that pass them to each
+ * other (see Gen.shapes). Methods are such fns, `this` a record of exactly
+ * their class. A loop at the top level of a file is one too: the globals it
+ * uses are its parameters, which its wrapper takes in and writes back when
+ * it is done (OP_NATIVE_LOOP runs it, and its bytecode when it gives up).
+ *
  * Each such fn has two versions. The first works on doubles, as the VM
  * does. The second, used when every Number it is given is a whole number,
  * works on 64-bit integers wherever the numbers are whole: they are exact
@@ -59,12 +66,28 @@ typedef struct {
     int ok;             /* native: its double version compiles (a fixpoint: callees must be native too) */
     int ok_int;         /* ...and its whole-number version */
     int why;            /* not native: the line where translating it stopped */
+    int loop;           /* a top-level loop (key @N: the program's statement N): its parameters are the
+                           globals it uses (loaded and written back by its wrapper), Numbers by pointer */
+    int hint[NATIVE_MAX_PARAMS];     /* a loop's global: Bool or Number when used as a value */
+    int written[NATIVE_MAX_PARAMS];  /* ...that it may change */
+    int fixed[NATIVE_MAX_PARAMS];    /* ...declared with let */
+    int method;         /* a method (key Class.name): parameter 0 is `this`, a record of exactly that class */
+    int cls[NATIVE_MAX_PARAMS];      /* a record parameter's class + 1 (0: any), when methods are called on it
+                                        (a list's: its records'): its wrapper checks it */
 } Cand;
+
+typedef struct {
+    ObjString *key;     /* the global it is in */
+    Node *node;         /* N_CLASS */
+} ClassInfo;
 
 typedef struct {
     Cand *cands;
     int ncands;
     ObjMap *declared;   /* every global the program's files declare: key -> how many times */
+    ObjMap *vars;       /* the globals that are variables (let and var, not fns): key -> Bool or Number (+ 16: let) */
+    ClassInfo *classes; /* the program's classes */
+    int nclasses;
     Cand *cur;          /* the fn being translated */
     int mode;           /* 0: its double version; 1: its whole-number version */
     StrBuf *out;
@@ -75,9 +98,11 @@ typedef struct {
     int *dtypes, ndecls, capdecls;
     int *dshape;        /* a record declaration's shape */
     int *live;
-    /* shapes: the fields a record parameter's uses need, found as it is translated */
-    struct { ObjString *fields[LUBE_REC_MAX]; int n; } *shapes;
-    int nshapes;
+    /* shapes: the fields a record parameter's uses need, found as it is translated. A record
+     * passed to another fn is laid out as that fn's parameter is: their shapes join (parent:
+     * the shape it joined, or itself), and shape_changes counts what grew */
+    struct { ObjString *fields[LUBE_REC_MAX]; int n, parent; } *shapes;
+    int nshapes, shape_changes;
     int widened;        /* a slot's type changed in this pass: translate again */
     int failed;
     int line;           /* of the code being translated (failed: where it stopped) */
@@ -85,6 +110,8 @@ typedef struct {
 
 static int gen_expr(Gen *g, Node *n, char *res);
 static void gen_stmt(Gen *g, Node *n);
+static int writes_to(Node *n, int s);
+static int gen_invoke(Gen *g, Cand *c, const char *fn, Node **argv, int argc, int self, char *res, int need);
 
 uint64_t lube_hash_text(const char *text, size_t len) {
     uint64_t h = 1469598103934665603ull;  /* FNV-1a */
@@ -139,6 +166,41 @@ static void declare(Gen *g, void *key, int slot) {
 /* The type slot's variable holds (0: none yet). */
 static int type_of(Gen *g, int slot) { return g->live[slot] >= 0 ? g->dtypes[g->live[slot]] : 0; }
 
+/* In a loop: slot is a global whose kind is not known yet (UNTYPED), now
+ * used as a Number or Bool: it is one from here on. Returns its type, or 0
+ * when slot is not such a global. */
+static int loop_scalar(Gen *g, int slot, int t) {
+    if (!g->cur->loop || slot >= g->cur->d->nparams || type_of(g, slot) != UNTYPED) return 0;
+    t = t == NT_BOOL ? NT_BOOL : NT_NUM;
+    g->dtypes[g->live[slot]] = g->cur->params[slot] = t;
+    g->widened = 1;
+    return t;
+}
+
+/* The shape sh is now part of (the one whose fields every record of it has). */
+static int shape_root(Gen *g, int sh) {
+    while (g->shapes[sh].parent != sh) sh = g->shapes[sh].parent;
+    return sh;
+}
+#define SHAPE(g, sh) (&(g)->shapes[shape_root(g, sh)])
+
+/* Shapes a and b become one, with the fields of both (0 if too many). */
+static int shape_join(Gen *g, int a, int b) {
+    int ra = shape_root(g, a), rb = shape_root(g, b);
+    if (ra == rb) return 1;
+    for (int f = 0; f < g->shapes[rb].n; f++) {
+        int e = 0;
+        while (e < g->shapes[ra].n && g->shapes[ra].fields[e] != g->shapes[rb].fields[f]) e++;
+        if (e < g->shapes[ra].n) continue;
+        if (g->shapes[ra].n == LUBE_REC_MAX) return fail(g);
+        g->shapes[ra].fields[g->shapes[ra].n++] = g->shapes[rb].fields[f];
+    }
+    g->shapes[rb].parent = ra;
+    g->widened = 1;
+    g->shape_changes++;
+    return 1;
+}
+
 /* n is a record parameter, or a record taken out of one, of kind `want`
  * (NT_RLIST or NT_REC): its slot, + 1; else 0. An untyped parameter takes
  * the kind of its first use. */
@@ -155,12 +217,13 @@ static int record(Gen *g, Node *n, int want) {
 
 /* Where field `name` is in the record in slot s (added to its shape when new). */
 static int field_of(Gen *g, int s, ObjString *name) {
-    int sh = g->dshape[g->live[s]], f = 0;
+    int sh = shape_root(g, g->dshape[g->live[s]]), f = 0;
     while (f < g->shapes[sh].n && g->shapes[sh].fields[f] != name) f++;
     if (f == g->shapes[sh].n) {
         if (f == LUBE_REC_MAX) return fail(g) - 1;
         g->shapes[sh].fields[g->shapes[sh].n++] = name;
         g->widened = 1;  /* (the rows are wider: translate again) */
+        g->shape_changes++;
     }
     return f;
 }
@@ -177,7 +240,7 @@ static int row_place(Gen *g, Node *n, char *place) {
         sb_printf(g->out, "int64_t k%d;\nif (lube_nidx(Rn%d, %s, &k%d)) %s\n", k, s, i, k, bail(g));
     else
         return fail(g);
-    snprintf(place, 64, "R%d + k%d * %d", s, k, g->shapes[g->dshape[g->live[s]]].n);
+    snprintf(place, 64, "R%d + k%d * %d", s, k, SHAPE(g, g->dshape[g->live[s]])->n);
     return 1;
 }
 
@@ -188,7 +251,7 @@ static void record_copy(Gen *g, int s, int sh, const char *from) {
     int d = g->live[s];
     g->dtypes[d] = NT_REC;
     g->dshape[d] = sh;
-    sb_printf(g->out, "memcpy(Bs%d, %s, sizeof(double) * %d);\nBp%d = Bs%d;\n", s, from, g->shapes[sh].n, s, s);
+    sb_printf(g->out, "memcpy(Bs%d, %s, sizeof(double) * %d);\nBp%d = Bs%d;\n", s, from, SHAPE(g, sh)->n, s, s);
 }
 
 /* The C for a record's field (xs[i].f, r.f) read or written, in place; 0 if
@@ -407,12 +470,44 @@ static const char *builtin(ObjString *name, int nargs) {
     return NULL;
 }
 
+/* The root variable of a place (x of x, x[i], x.f, x[i].f), or NULL. */
+static Node *place_var(Node *x) {
+    while (x && (x->kind == N_INDEX || x->kind == N_FIELD)) x = x->kind == N_INDEX ? x->as.index.object : x->as.field.object;
+    return x && x->kind == N_VAR && x->as.var.kind == VAR_LOCAL ? x : NULL;
+}
+
+/* x, given for c's record parameter p: a record (or list of them) of this
+ * fn's, or a row of one (xs[i]), passed as it is: its C (a pointer, and a
+ * list's length) in res, laid out as p is (their shapes join). Sets *slot to
+ * the variable it is in. Returns its kind, or 0. */
+static int gen_record_arg(Gen *g, Node *x, Cand *c, int p, char *res, int *slot) {
+    Node *v = x->kind == N_INDEX ? x->as.index.object : x;
+    int s = v->kind == N_VAR && v->as.var.kind == VAR_LOCAL ? v->as.var.index : -1;
+    int st = s >= 0 ? type_of(g, s) : 0, want = c->params[p];
+    if (s < 0 || !(st == UNTYPED || RECORD(st))) return fail(g);
+    if (x->kind == N_INDEX) {  /* a row: a record */
+        if (want == UNTYPED) want = c->params[p] = NT_REC, g->shape_changes++;  /* (the callee learns its kind) */
+        if (want != NT_REC || !record(g, v, NT_RLIST) || !row_place(g, x, res)) return fail(g);
+    } else {
+        if (want == UNTYPED && st == UNTYPED) return fail(g);  /* (neither says which kind) */
+        if (want == UNTYPED) want = c->params[p] = st, g->shape_changes++;
+        if (!record(g, v, want)) return fail(g);
+        if (want == NT_REC) snprintf(res, 64, "Bp%d", s);
+        else snprintf(res, 64, "R%d, Rn%d", s, s);
+    }
+    *slot = s;
+    if (c->cls[p] && g->cur->cls[s] != c->cls[p]) {  /* the callee calls methods on it: so it is of that class */
+        if (s >= g->cur->d->nparams || g->cur->cls[s]) return fail(g);  /* (a copy's class is not known) */
+        g->cur->cls[s] = c->cls[p];  /* (its wrapper checks it) */
+        g->shape_changes++;
+    }
+    return shape_join(g, g->dshape[g->live[s]], c->shape[p]) ? want : 0;
+}
+
 /* A call; need: its value is used. */
 static int gen_call(Gen *g, Node *n, char *res, int need) {
     Node *callee = n->as.call.callee;
     NodeList *args = &n->as.call.args;
-    char a[NATIVE_MAX_PARAMS][64], x[2][64];
-    int ta[NATIVE_MAX_PARAMS];
     if (callee->kind != N_VAR || args->count > NATIVE_MAX_PARAMS) return fail(g);
     if (is_builtin(g, callee, "len") && args->count == 1 && list_slot(g, args->items[0])) {
         int lt = list_slot(g, args->items[0]);
@@ -433,14 +528,36 @@ static int gen_call(Gen *g, Node *n, char *res, int need) {
     const char *fn = !c && v->kind == VAR_GLOBAL && !map_get(g->declared, OBJ_VAL(v->name), NULL)
                          ? builtin(v->name, args->count) : NULL;
     if (!c && !fn) return fail(g);
+    return gen_invoke(g, c, fn, args->items, args->count, 0, res, need);
+}
+
+/* Is c's parameter p lent to it (&, or a method's `this`)? */
+static int lent_param(Cand *c, int p) { return c->d->modes[p] == PARAM_REF || (c->method && p == 0); }
+
+/* Calls candidate c (or the math built-in fn) with the argc arguments in
+ * argv; self: argv[0] is a method's receiver. need: its value is used. */
+static int gen_invoke(Gen *g, Cand *c, const char *fn, Node **argv, int argc, int self, char *res, int need) {
+    char a[NATIVE_MAX_PARAMS][64], x[2][64];
+    int ta[NATIVE_MAX_PARAMS];
     int whole = 1;  /* every Number argument is whole: the callee's whole-number version can take them */
-    for (int i = 0; i < args->count; i++) {
-        ta[i] = gen_expr(g, args->items[i], a[i]);
-        int want = !c ? NT_NUM : i < c->d->nparams ? c->params[i] : -1;  /* (records are not passed on: -1, 8, 9) */
-        if (want < 0 || RECORD(want)) return fail(g);
-        if (!ta[i] || (want == NT_NUM ? !NUMERIC(ta[i]) : ta[i] != want)) return fail(g);
+    int lent = 0, nrec = 0, rslots[NATIVE_MAX_PARAMS];
+    for (int i = 0; i < argc; i++) {
+        int want = !c ? NT_NUM : i < c->d->nparams ? c->params[i] : -1;
+        if (c && i < c->d->nparams && (want == UNTYPED || RECORD(want))) {  /* a record: passed as it is */
+            int ref = lent_param(c, i), recv = self && i == 0;
+            Node *x = !ref || recv ? argv[i] : argv[i]->kind == N_REF ? argv[i]->as.expr : NULL;
+            if (!x || (c->d->modes[i] == PARAM_VAR && !recv)) return fail(g);  /* (var: the callee's own copy, from the VM) */
+            if (!(ta[i] = gen_record_arg(g, x, c, i, a[i], &rslots[nrec++]))) return 0;
+            lent |= ref;
+            continue;
+        }
+        ta[i] = gen_expr(g, argv[i], a[i]);
+        if (want < 0 || !ta[i] || (want == NT_NUM ? !NUMERIC(ta[i]) : ta[i] != want)) return fail(g);
         whole &= ta[i] != NT_NUM;
     }
+    for (int i = 0; lent && i < nrec; i++)  /* (one changed through & is not also another argument) */
+        for (int j = i + 1; j < nrec; j++)
+            if (rslots[i] == rslots[j]) return fail(g);
     int t = new_tmp(g);
     if (fn) {  /* (a whole number's floor, ceil and round are itself, and its abs is whole) */
         if (ta[0] == NT_INT && (!strcmp(fn, "floor") || !strcmp(fn, "ceil") || !strcmp(fn, "lube_nround"))) {
@@ -453,28 +570,82 @@ static int gen_call(Gen *g, Node *n, char *res, int need) {
             return NT_INT;
         }
         as_double(ta[0], a[0], x[0]);
-        if (args->count > 1) as_double(ta[1], a[1], x[1]);
-        sb_printf(g->out, "double t%d = %s(%s%s%s);\n", t, fn, x[0], args->count > 1 ? ", " : "", args->count > 1 ? x[1] : "");
+        if (argc > 1) as_double(ta[1], a[1], x[1]);
+        sb_printf(g->out, "double t%d = %s(%s%s%s);\n", t, fn, x[0], argc > 1 ? ", " : "", argc > 1 ? x[1] : "");
         snprintf(res, 64, "t%d", t);
         return NT_NUM;
     }
-    if (args->count != c->d->nparams || (need && c->ret == NT_NONE)) return fail(g);
+    if (argc != c->d->nparams || (need && c->ret == NT_NONE)) return fail(g);
     int k = (int)(c - g->cands);
     if (whole && c->ok_int) {  /* its whole-number version */
         sb_printf(g->out, "int64_t t%d = ni_%d(", t, k);
-        for (int i = 0; i < args->count; i++) sb_printf(g->out, "%s, ", a[i]);
+        for (int i = 0; i < argc; i++) sb_printf(g->out, "%s, ", a[i]);
         sb_printf(g->out, "left - 1);\nif (t%d == LUBE_FAIL) %s\n", t, bail(g));
         snprintf(res, 64, c->ret == NT_BOOL ? "((int)t%d)" : "t%d", t);
         return c->ret == NT_BOOL ? NT_BOOL : NT_INT;
     }
     sb_printf(g->out, "double t%d;\nif (nf_%d(", t, k);
-    for (int i = 0; i < args->count; i++) {
+    for (int i = 0; i < argc; i++) {
+        if (RECORD(ta[i])) {
+            sb_printf(g->out, "%s, ", a[i]);
+            continue;
+        }
         as_double(ta[i], a[i], x[0]);
         sb_printf(g->out, "%s, ", x[0]);
     }
     sb_printf(g->out, "&t%d, left - 1)) %s\n", t, bail(g));
     snprintf(res, 64, c->ret == NT_BOOL ? "(t%d != 0)" : "t%d", t);
     return c->ret == NT_BOOL ? NT_BOOL : NT_NUM;
+}
+
+/* Is a method named `name` one of class k's own? */
+static FuncDecl *own_method(Gen *g, int k, ObjString *name) {
+    NodeList *ms = &g->classes[k].node->as.klass.methods;
+    for (int i = 0; i < ms->count; i++)
+        if (ms->items[i]->as.func->name == name) return ms->items[i]->as.func;
+    return NULL;
+}
+
+/* The method `name` of the records in slot s: those of a parameter (a list's: its records), of
+ * one class (the wrapper checks it): the class it already has, or the one class with such a
+ * method. Only the class's own methods (a parent's could call one the class overrides). */
+static Cand *receiver_method(Gen *g, int s, ObjString *name) {
+    Cand *c = g->cur;
+    if (s >= c->d->nparams) return NULL;  /* (a copy: its class is not known) */
+    int k = c->cls[s] - 1;
+    for (int i = 0; k < 0 && i < g->nclasses; i++)
+        if (own_method(g, i, name)) {
+            for (int j = i + 1; j < g->nclasses; j++)
+                if (own_method(g, j, name)) return NULL;  /* (two classes have one) */
+            k = i;
+            c->cls[s] = k + 1;
+            g->shape_changes++;  /* (its callers learn it too) */
+        }
+    FuncDecl *d = k >= 0 ? own_method(g, k, name) : NULL;
+    for (int i = 0; d && i < g->ncands; i++)
+        if (g->cands[i].d == d && g->cands[i].ok) return &g->cands[i];
+    return NULL;
+}
+
+/* May this fn change the record (or list) in slot s, as a method changing `this` would? */
+static int changeable(Gen *g, int s) {
+    Cand *c = g->cur;
+    if (s >= c->d->nparams) return 0;  /* (copies: let r = xs[i], a loop's) */
+    if (c->loop) return !c->fixed[s];
+    return (c->method && s == 0) || c->d->modes[s] != PARAM_LET;
+}
+
+/* x.name(args), x a record (or a row of a list of them) whose class has that method, native. */
+static int gen_method(Gen *g, Node *n, char *res, int need) {
+    Node *obj = n->as.method.object, *argv[NATIVE_MAX_PARAMS];
+    NodeList *args = &n->as.method.args;
+    Node *v = obj->kind == N_INDEX ? obj->as.index.object : obj;
+    if (args->count >= NATIVE_MAX_PARAMS || v->kind != N_VAR || v->as.var.kind != VAR_LOCAL) return fail(g);
+    Cand *m = receiver_method(g, v->as.var.index, n->as.method.name);
+    if (!m || (writes_to(m->d->body, 0) && !changeable(g, v->as.var.index))) return fail(g);  /* (the VM's error) */
+    argv[0] = obj;
+    for (int i = 0; i < args->count; i++) argv[i + 1] = args->items[i];
+    return gen_invoke(g, m, NULL, argv, args->count + 1, 1, res, need);
 }
 
 static int gen_expr(Gen *g, Node *n, char *res) {
@@ -496,6 +667,7 @@ static int gen_expr(Gen *g, Node *n, char *res) {
         return NT_BOOL;
     case N_VAR: {
         int t = n->as.var.kind == VAR_LOCAL ? type_of(g, n->as.var.index) : 0;
+        if (t == UNTYPED && g->cur->loop) t = loop_scalar(g, n->as.var.index, g->cur->hint[n->as.var.index]);
         if (t <= 0 || t >= NT_LNUM) return fail(g);  /* (a list or record is not a value here: it never leaves the fn) */
         snprintf(res, 64, "%c%d", letter(t), n->as.var.index);
         return t;
@@ -535,6 +707,8 @@ static int gen_expr(Gen *g, Node *n, char *res) {
     }
     case N_CALL:
         return gen_call(g, n, res, 1);
+    case N_METHOD:
+        return gen_method(g, n, res, 1);
     case N_FIELD: {  /* xs[i].x, r.x: a record's field */
         char p[64];
         if (!field_place(g, n, p)) return fail(g);
@@ -625,6 +799,7 @@ static void gen_assign(Gen *g, Node *n) {
     }
     int slot = target->as.var.index, st = type_of(g, slot);
     TokenType op = n->as.assign.op;
+    if (st == UNTYPED) st = loop_scalar(g, slot, op == T_ASSIGN ? t : NT_NUM);  /* (a loop's global) */
     if (op == T_ASSIGN) {
         store(g, slot, t, v);
         return;
@@ -636,28 +811,48 @@ static void gen_assign(Gen *g, Node *n) {
     if (rt) store(g, slot, rt, r);
 }
 
-/* Does code n (statements) change something in slot s (s = .., s.x = .., s[i].x = ..)? */
+static int writes_list(NodeList *l, int s);
+
+/* Might code n change something in slot s (s = .., s.x = .., s[i].x = ..,
+ * f(&s), f(&s[i]), s.method())? (Code that cannot be native says yes.) */
 static int writes_to(Node *n, int s) {
+    Node *v;
     if (!n) return 0;
     switch (n->kind) {
-    case N_BLOCK:
-        for (int i = 0; i < n->as.block.stmts.count; i++)
-            if (writes_to(n->as.block.stmts.items[i], s)) return 1;
+    case N_LITERAL: case N_VAR: case N_BREAK: case N_CONTINUE:
         return 0;
+    case N_ASSIGN:
+        v = place_var(n->as.assign.target);
+        return (v && v->as.var.index == s) || writes_to(n->as.assign.target, s) || writes_to(n->as.assign.value, s);
+    case N_REF:
+        v = place_var(n->as.expr);
+        return (v && v->as.var.index == s) || writes_to(n->as.expr, s);
+    case N_METHOD:  /* (a method may change its object) */
+        v = place_var(n->as.method.object);
+        return (v && v->as.var.index == s) || writes_to(n->as.method.object, s) || writes_list(&n->as.method.args, s);
+    case N_UNARY: return writes_to(n->as.unary.operand, s);
+    case N_BINARY: case N_AND: case N_OR: return writes_to(n->as.binary.left, s) || writes_to(n->as.binary.right, s);
+    case N_CALL: return writes_to(n->as.call.callee, s) || writes_list(&n->as.call.args, s);
+    case N_INDEX: return writes_to(n->as.index.object, s) || writes_to(n->as.index.index, s);
+    case N_FIELD: return writes_to(n->as.field.object, s);
+    case N_RANGE: return writes_to(n->as.range.start, s) || writes_to(n->as.range.end, s);
+    case N_LIST: return writes_list(&n->as.items, s);
+    case N_TYPED_LIST: return writes_list(&n->as.tlist.items, s);
+    case N_EXPR: case N_RETURN: return writes_to(n->as.expr, s);
+    case N_LET: return !n->as.let.is_fn && writes_to(n->as.let.value, s);
+    case N_BLOCK: return writes_list(&n->as.block.stmts, s);
     case N_IF:
-        return writes_to(n->as.if_s.then_branch, s) || writes_to(n->as.if_s.else_branch, s);
-    case N_WHILE:
-        return writes_to(n->as.while_s.body, s);
-    case N_FOR:
-        return writes_to(n->as.for_s.body, s);
-    case N_EXPR: {
-        Node *t = n->as.expr->kind == N_ASSIGN ? n->as.expr->as.assign.target : NULL;
-        while (t && (t->kind == N_INDEX || t->kind == N_FIELD)) t = t->kind == N_INDEX ? t->as.index.object : t->as.field.object;
-        return t && t->kind == N_VAR && t->as.var.kind == VAR_LOCAL && t->as.var.index == s;
+        return writes_to(n->as.if_s.cond, s) || writes_to(n->as.if_s.then_branch, s) || writes_to(n->as.if_s.else_branch, s);
+    case N_WHILE: return writes_to(n->as.while_s.cond, s) || writes_to(n->as.while_s.body, s);
+    case N_FOR: return writes_to(n->as.for_s.iter, s) || writes_to(n->as.for_s.body, s);
+    default: return 1;
     }
-    default:
-        return 0;
-    }
+}
+
+static int writes_list(NodeList *l, int s) {
+    for (int i = 0; i < l->count; i++)
+        if (writes_to(l->items[i], s)) return 1;
+    return 0;
 }
 
 static void gen_block(Gen *g, NodeList *stmts) {
@@ -675,6 +870,7 @@ static void gen_stmt(Gen *g, Node *n) {
         else if (x->kind == N_METHOD && !strcmp(x->as.method.name->chars, "push") && x->as.method.args.count == 1 &&
                  x->as.method.fallback.kind == VAR_GLOBAL && !map_get(g->declared, OBJ_VAL(x->as.method.fallback.name), NULL))
             gen_push(g, x->as.method.object, x->as.method.args.items[0]);  /* xs.push(v): the built-in push */
+        else if (x->kind == N_METHOD) gen_method(g, x, v, 0);
         else gen_expr(g, x, v);
     } break;
     case N_LET: {
@@ -742,7 +938,7 @@ static void gen_stmt(Gen *g, Node *n) {
                 first = n->as.for_s.second.index;
                 declare(g, &n->as.for_s.second, first);
             }
-            snprintf(x, sizeof x, "R%d + k%d * %d", s, k, g->shapes[sh].n);
+            snprintf(x, sizeof x, "R%d + k%d * %d", s, k, SHAPE(g, sh)->n);
             record_copy(g, first, sh, x);
             gen_block(g, &n->as.for_s.body->as.block.stmts);
             sb_puts(g->out, "}\n");
@@ -814,6 +1010,7 @@ static void gen_pass(Gen *g, Cand *c, StrBuf *out) {
         int t = c->params[i];
         if (t == NT_REC) sb_printf(out, "double *r%d, ", i);
         else if (t == UNTYPED || t == NT_RLIST) sb_printf(out, "double *r%d, int64_t rn%d, ", i, i);
+        else if (c->loop) sb_printf(out, "double *p%d, ", i);  /* (a global: given back at the end) */
         else sb_printf(out, "%s p%d, ", g->mode ? "int64_t" : "double", i);
     }
     /* one way out (done:), where the lists are let go; R: the result, or that it gave up */
@@ -837,7 +1034,8 @@ static void gen_pass(Gen *g, Cand *c, StrBuf *out) {
             else sb_printf(out, "R%d = r%d;\nRn%d = rn%d;\n", i, i, i, i);
             continue;
         }
-        snprintf(p, sizeof p, t == NT_BOOL ? "(p%d != 0)" : "p%d", i);
+        if (c->loop) snprintf(p, sizeof p, t == NT_BOOL ? "(*p%d != 0)" : "(*p%d)", i);
+        else snprintf(p, sizeof p, t == NT_BOOL ? "(p%d != 0)" : "p%d", i);
         store(g, i, t == NT_NUM && g->mode ? NT_INT : t, p);
     }
     if (d->is_arrow) {  /* fn f(x: Number): Number => x * x */
@@ -853,6 +1051,9 @@ static void gen_pass(Gen *g, Cand *c, StrBuf *out) {
     /* (fell off the end: nothing to return, or the VM's error that the value is missing) */
     if (c->ret == NT_NONE) sb_puts(out, "R = 0;\n");
     sb_puts(out, "done:\nfree(Lnt.a);\nfree(Lbt.a);\n");
+    for (int i = 0; c->loop && i < d->nparams; i++)  /* a loop's Numbers and Bools go back to its globals */
+        if (!RECORD(c->params[i]) && c->params[i] != UNTYPED && c->written[i])
+            sb_printf(out, "if (R == 0) *p%d = %c%d;\n", i, letter(type_of(g, i)), i);
     for (int i = 0; i < nslots; i++) sb_printf(out, "free(Ln%d.a);\nfree(Lb%d.a);\n", i, i);
     sb_puts(out, "return R;\n}\n\n");
 }
@@ -898,6 +1099,7 @@ static void consider(Gen *g, Node *s, uint64_t hash) {
         if (!typed) {
             g->shapes = xrealloc(g->shapes, sizeof(*g->shapes) * (size_t)(g->nshapes + 1));
             g->shapes[g->nshapes].n = 0;
+            g->shapes[g->nshapes].parent = g->nshapes;
             c.shape[i] = g->nshapes++;
             records = 1;
         }
@@ -913,6 +1115,41 @@ static void consider(Gen *g, Node *s, uint64_t hash) {
     g->cands[g->ncands++] = c;
 }
 
+/* A method of class k (an N_FUNC), Numbers, Bools and records in and out:
+ * a candidate, its `this` a record of exactly that class. */
+static void consider_method(Gen *g, Interp *I, int k, Node *f, uint64_t hash) {
+    FuncDecl *d = f->as.func;
+    if (!d->is_method || d->is_ctor || d->nparams > NATIVE_MAX_PARAMS) return;
+    Cand c;
+    memset(&c, 0, sizeof c);
+    for (int i = 0; i < d->nparams; i++) {
+        int typed = i > 0 && d->types && d->types[i].set;
+        c.params[i] = typed ? ann_type(&d->types[i]) : UNTYPED;
+        if (d->defaults[i] || (typed && (c.params[i] <= NT_NONE || d->modes[i] == PARAM_REF))) return;
+        if (!typed) {
+            g->shapes = xrealloc(g->shapes, sizeof(*g->shapes) * (size_t)(g->nshapes + 1));
+            g->shapes[g->nshapes].n = 0;
+            g->shapes[g->nshapes].parent = g->nshapes;
+            c.shape[i] = g->nshapes++;
+        }
+    }
+    c.params[0] = NT_REC;
+    c.cls[0] = k + 1;
+    c.ret = ann_type(&d->ret);
+    if (c.ret < 0) return;
+    StrBuf key;
+    sb_init(&key);
+    sb_printf(&key, "%s.%s", g->classes[k].key->chars, d->name->chars);
+    c.d = d;
+    c.key = lube_intern(I, key.data, key.len);
+    sb_free(&key);
+    c.hash = hash;
+    c.ok = 1;
+    c.method = 1;
+    g->cands = xrealloc(g->cands, sizeof(Cand) * (size_t)(g->ncands + 1));
+    g->cands[g->ncands++] = c;
+}
+
 static void note_declared(Gen *g, Node *s) {
     ObjString *key = s->kind == N_LET ? s->as.let.var.name : s->kind == N_CLASS ? s->as.klass.var.name
                    : s->kind == N_IMPORT ? s->as.import.bind : NULL;
@@ -920,6 +1157,181 @@ static void note_declared(Gen *g, Node *s) {
     Value v;
     double n = map_get(g->declared, OBJ_VAL(key), &v) ? v.as.number : 0;
     map_set(g->declared, retain(OBJ_VAL(key)), NUM_VAL(n + 1));
+    if (s->kind == N_LET && !s->as.let.is_fn) {  /* a variable: a Bool when it starts as one */
+        Node *x = s->as.let.value;
+        int b = x->kind == N_LITERAL ? IS_BOOL(x->as.literal)
+              : x->kind == N_AND || x->kind == N_OR || (x->kind == N_UNARY && x->as.unary.op == T_NOT)
+              || (x->kind == N_BINARY && (x->as.binary.op == T_LT || x->as.binary.op == T_LE || x->as.binary.op == T_GT
+                                          || x->as.binary.op == T_GE || x->as.binary.op == T_EQ || x->as.binary.op == T_NEQ));
+        map_set(g->vars, retain(OBJ_VAL(key)), NUM_VAL((b ? NT_BOOL : NT_NUM) + (s->as.let.is_var ? 0 : 16)));
+    }
+    if (s->kind == N_CLASS) {
+        g->classes = xrealloc(g->classes, sizeof(ClassInfo) * (size_t)(g->nclasses + 1));
+        g->classes[g->nclasses].key = key;
+        g->classes[g->nclasses++].node = s;
+    }
+}
+
+/* ---------- top-level loops ---------- */
+
+/* A top-level loop becomes a fn of the globals it uses: walked once to find
+ * them (shift < 0), then again to make them its first slots (its
+ * parameters) and move its own locals up past them. ok: only code that can
+ * be native is in it. */
+typedef struct {
+    Gen *g;
+    ObjString *names[NATIVE_MAX_PARAMS];
+    int hint[NATIVE_MAX_PARAMS];
+    int n, shift, ok;
+} LoopVars;
+
+static void loop_ref(LoopVars *lv, VarRef *v) {
+    Value hint;
+    if (v->kind == VAR_LOCAL) {
+        if (lv->shift >= 0) v->index += lv->shift;
+        return;
+    }
+    Value n;
+    if (v->kind != VAR_GLOBAL || !map_get(lv->g->vars, OBJ_VAL(v->name), &hint) ||
+        !map_get(lv->g->declared, OBJ_VAL(v->name), &n) || n.as.number > 1)
+        return;  /* a fn, a class, a built-in...: left as it is (translating it fails) */
+    int i = 0;
+    while (i < lv->n && lv->names[i] != v->name) i++;
+    if (lv->shift < 0) {
+        if (i < lv->n) return;
+        if (lv->n == NATIVE_MAX_PARAMS) {
+            lv->ok = 0;
+            return;
+        }
+        lv->hint[lv->n] = (int)hint.as.number;  /* (+ 16: let) */
+        lv->names[lv->n++] = v->name;
+        return;
+    }
+    v->kind = VAR_LOCAL;
+    v->index = i;
+}
+
+static void loop_walk(LoopVars *lv, Node *n);
+
+static void loop_walk_list(LoopVars *lv, NodeList *l) {
+    for (int i = 0; i < l->count; i++) loop_walk(lv, l->items[i]);
+}
+
+static void loop_walk(LoopVars *lv, Node *n) {
+    if (!n || !lv->ok) return;
+    switch (n->kind) {
+    case N_LITERAL: case N_BREAK: case N_CONTINUE: break;
+    case N_VAR: loop_ref(lv, &n->as.var); break;
+    case N_ASSIGN:
+        loop_walk(lv, n->as.assign.target);
+        loop_walk(lv, n->as.assign.value);
+        break;
+    case N_UNARY: loop_walk(lv, n->as.unary.operand); break;
+    case N_BINARY: case N_AND: case N_OR:
+        loop_walk(lv, n->as.binary.left);
+        loop_walk(lv, n->as.binary.right);
+        break;
+    case N_CALL:  /* (a fn called by name stays a global) */
+        if (n->as.call.callee->kind != N_VAR || n->as.call.callee->as.var.kind != VAR_GLOBAL) lv->ok = 0;
+        loop_walk_list(lv, &n->as.call.args);
+        break;
+    case N_METHOD:
+        loop_walk(lv, n->as.method.object);
+        loop_walk_list(lv, &n->as.method.args);
+        break;
+    case N_INDEX:
+        loop_walk(lv, n->as.index.object);
+        loop_walk(lv, n->as.index.index);
+        break;
+    case N_FIELD: loop_walk(lv, n->as.field.object); break;
+    case N_RANGE:
+        loop_walk(lv, n->as.range.start);
+        loop_walk(lv, n->as.range.end);
+        break;
+    case N_REF: case N_EXPR: loop_walk(lv, n->as.expr); break;
+    case N_LIST: loop_walk_list(lv, &n->as.items); break;
+    case N_TYPED_LIST: loop_walk_list(lv, &n->as.tlist.items); break;
+    case N_LET:
+        if (n->as.let.is_fn || n->as.let.var.kind != VAR_LOCAL) lv->ok = 0;
+        loop_ref(lv, &n->as.let.var);
+        loop_walk(lv, n->as.let.value);
+        break;
+    case N_BLOCK: loop_walk_list(lv, &n->as.block.stmts); break;
+    case N_IF:
+        loop_walk(lv, n->as.if_s.cond);
+        loop_walk(lv, n->as.if_s.then_branch);
+        loop_walk(lv, n->as.if_s.else_branch);
+        break;
+    case N_WHILE:
+        loop_walk(lv, n->as.while_s.cond);
+        loop_walk(lv, n->as.while_s.body);
+        break;
+    case N_FOR:
+        loop_ref(lv, &n->as.for_s.first);
+        if (n->as.for_s.two) loop_ref(lv, &n->as.for_s.second);
+        loop_walk(lv, n->as.for_s.iter);
+        loop_walk(lv, n->as.for_s.body);
+        break;
+    default:  /* closures, try, text, maps...: not native */
+        lv->ok = 0;
+        break;
+    }
+}
+
+/* Top-level statement `index` of a file (of `frame_slots` slots), when it is
+ * a loop: a candidate, as a fn of the globals it uses. */
+static void consider_loop(Gen *g, Interp *I, Node *s, int index, uint64_t hash, int frame_slots) {
+    if (s->kind != N_FOR && s->kind != N_WHILE) return;
+    LoopVars lv;
+    memset(&lv, 0, sizeof lv);
+    lv.g = g;
+    lv.ok = 1;
+    lv.shift = -1;
+    loop_walk(&lv, s);
+    if (!lv.ok) return;
+    lv.shift = lv.n;
+    loop_walk(&lv, s);
+    FuncDecl *d = xmalloc(sizeof(FuncDecl));
+    Node *body = xmalloc(sizeof(Node));
+    memset(d, 0, sizeof *d);
+    memset(body, 0, sizeof *body);
+    body->kind = N_BLOCK;
+    body->line = s->line;
+    body->as.block.stmts.items = xmalloc(sizeof(Node *));
+    body->as.block.stmts.items[0] = s;
+    body->as.block.stmts.count = body->as.block.stmts.cap = 1;
+    d->nparams = lv.n;
+    d->params = xmalloc(sizeof(ObjString *) * (size_t)(lv.n + 1));
+    d->modes = xmalloc((size_t)lv.n + 1);
+    d->defaults = xmalloc(sizeof(Node *) * (size_t)(lv.n + 1));
+    d->body = body;
+    d->nslots = frame_slots + lv.n;
+    d->line = s->line;
+    Cand c;
+    memset(&c, 0, sizeof c);
+    for (int i = 0; i < lv.n; i++) {
+        d->params[i] = lv.names[i];
+        d->modes[i] = PARAM_REF;
+        d->defaults[i] = NULL;
+        c.params[i] = UNTYPED;  /* (its uses say: a Number, a Bool or a record) */
+        c.hint[i] = lv.hint[i] & 15;
+        c.fixed[i] = lv.hint[i] >= 16;
+        c.written[i] = writes_to(s, i);
+        g->shapes = xrealloc(g->shapes, sizeof(*g->shapes) * (size_t)(g->nshapes + 1));
+        g->shapes[g->nshapes].n = 0;
+        g->shapes[g->nshapes].parent = g->nshapes;
+        c.shape[i] = g->nshapes++;
+    }
+    char key[32];
+    snprintf(key, sizeof key, "@%d", index);
+    c.d = d;
+    c.key = lube_intern(I, key, strlen(key));
+    c.hash = hash;
+    c.ret = NT_NONE;
+    c.ok = 1;
+    c.loop = 1;
+    g->cands = xrealloc(g->cands, sizeof(Cand) * (size_t)(g->ncands + 1));
+    g->cands[g->ncands++] = c;
 }
 
 /* For a fn with record parameters: the wrapper the VM calls with the
@@ -928,17 +1340,28 @@ static void note_declared(Gen *g, Node *s) {
  * calls the machine code, and writes back to & parameters the fields that
  * changed. Returns 0 when the fn has no record parameter. */
 static int records_wrapper(Gen *g, Cand *k, int i, StrBuf *c) {
-    int recs = 0;
+    int recs = k->loop;  /* (a loop's wrapper takes its globals) */
     for (int p = 0; p < k->d->nparams; p++) recs |= RECORD(k->params[p]);
     if (!recs) return 0;
+    if (k->loop) {
+        sb_printf(c, "static const char *const gn_%d[] = {", i);
+        for (int p = 0; p < k->d->nparams; p++) sb_printf(c, "\"%s\", ", k->d->params[p]->chars);
+        sb_puts(c, "0};\n");
+    }
     for (int p = 0; p < k->d->nparams; p++) {
         if (!RECORD(k->params[p])) continue;
         int sh = k->shape[p];
         sb_printf(c, "static const char *const fs_%d_%d[] = {", i, p);
-        for (int f = 0; f < g->shapes[sh].n; f++) sb_printf(c, "\"%s\", ", g->shapes[sh].fields[f]->chars);
+        for (int f = 0; f < SHAPE(g, sh)->n; f++) sb_printf(c, "\"%s\", ", SHAPE(g, sh)->fields[f]->chars);
         sb_printf(c, "0};\nstatic LUBE_THREAD_LOCAL LubeRecCache rc_%d_%d;\n", i, p);
     }
     sb_printf(c, "static int wv_%d(Interp *I, Value *args, double *out, int left) {\n    int R = 1;\n", i);
+    if (k->loop && k->d->nparams) {  /* its globals, as the arguments (taken back at the end) */
+        sb_printf(c, "    Value *gv[%d], ga[%d];\n    args = ga;\n", k->d->nparams, k->d->nparams);
+        for (int p = 0; p < k->d->nparams; p++)
+            sb_printf(c, "    if (!(gv[%d] = lube_native_global(I, gn_%d[%d], %d))) return 1;\n    ga[%d] = *gv[%d];\n", p, i,
+                      p, k->written[p], p, p);
+    }
     for (int p = 0; p < k->d->nparams; p++) {
         int t = k->params[p];
         if (t == NT_RLIST)
@@ -947,16 +1370,19 @@ static int records_wrapper(Gen *g, Cand *k, int i, StrBuf *c) {
         else sb_printf(c, "    double a%d = 0;\n", p);
     }
     for (int p = 0; p < k->d->nparams; p++) {
-        int t = k->params[p], nf = RECORD(t) ? g->shapes[k->shape[p]].n : 0;
-        int ref = k->d->modes[p] == PARAM_REF;  /* (& : keep what was loaded, to see what changed) */
+        int t = k->params[p], nf = RECORD(t) ? SHAPE(g, k->shape[p])->n : 0;
+        int ref = lent_param(k, p);  /* (& or this: keep what was loaded, to see what changed) */
+        char cls[160];  /* (the class its records must be, when methods are called on them) */
+        if (k->cls[p]) snprintf(cls, sizeof cls, "\"%s\"", g->classes[k->cls[p] - 1].key->chars);
+        else strcpy(cls, "0");
         if (t == NT_RLIST) {
-            sb_printf(c, "    if (lube_reclist_load(I, &rc_%d_%d, args[%d], fs_%d_%d, %d, &r%d, &rn%d, rs%d, 256)) goto done;\n", i, p,
-                      p, i, p, nf, p, p, p);
+            sb_printf(c, "    if (lube_reclist_load(I, &rc_%d_%d, args[%d], fs_%d_%d, %d, %s, &r%d, &rn%d, rs%d, 256)) goto done;\n", i,
+                      p, p, i, p, nf, cls, p, p, p);
             if (ref) sb_printf(c, "    if (r%d != rs%d) o%d = malloc(sizeof(double) * (size_t)(rn%d * %d + 1));\n"
                                   "    if (!o%d) goto done;\n    memcpy(o%d, r%d, sizeof(double) * (size_t)(rn%d * %d));\n",
                                p, p, p, p, nf, p, p, p, p, nf);
         } else if (t == NT_REC) {
-            sb_printf(c, "    if (lube_rec_load(I, &rc_%d_%d, args[%d], fs_%d_%d, %d, rb%d)) goto done;\n", i, p, p, i, p, nf, p);
+            sb_printf(c, "    if (lube_rec_load(I, &rc_%d_%d, args[%d], fs_%d_%d, %d, %s, rb%d)) goto done;\n", i, p, p, i, p, nf, cls, p);
             if (ref) sb_printf(c, "    memcpy(ob%d, rb%d, sizeof(double) * %d);\n", p, p, nf);
         }
         else
@@ -968,16 +1394,21 @@ static int records_wrapper(Gen *g, Cand *k, int i, StrBuf *c) {
         int t = k->params[p];
         if (t == NT_RLIST) sb_printf(c, "r%d, rn%d, ", p, p);
         else if (t == NT_REC) sb_printf(c, "rb%d, ", p);
-        else sb_printf(c, "a%d, ", p);
+        else sb_printf(c, k->loop ? "&a%d, " : "a%d, ", p);
     }
     sb_puts(c, "out, left);\n    if (R == 0) {\n");
+    for (int p = 0; k->loop && p < k->d->nparams; p++)  /* (its Numbers and Bools: as the machine code left them) */
+        if (k->written[p] && !RECORD(k->params[p]))
+            sb_printf(c, "        *gv[%d] = %s_VAL(a%d%s);\n", p, k->params[p] == NT_BOOL ? "BOOL" : "NUM", p,
+                      k->params[p] == NT_BOOL ? " != 0" : "");
     for (int p = 0; p < k->d->nparams; p++) {
-        int t = k->params[p], nf = RECORD(t) ? g->shapes[k->shape[p]].n : 0;
-        if (!RECORD(t) || k->d->modes[p] != PARAM_REF) continue;  /* (& parameters only: the others were copies) */
+        int t = k->params[p], nf = RECORD(t) ? SHAPE(g, k->shape[p])->n : 0;
+        if (!RECORD(t) || !lent_param(k, p)) continue;  /* (& parameters and this only: the others were copies) */
         if (t == NT_RLIST)
             sb_printf(c, "        lube_reclist_store(I, &rc_%d_%d, &args[%d], %d, r%d, o%d);\n", i, p, p, nf, p, p);
         else
             sb_printf(c, "        lube_rec_store(I, &rc_%d_%d, &args[%d], %d, rb%d, ob%d);\n", i, p, p, nf, p, p);
+        if (k->loop) sb_printf(c, "        *gv[%d] = ga[%d];\n", p, p);  /* (a copy, if the global's was shared) */
     }
     sb_puts(c, "    }\ndone:\n");
     for (int p = 0; p < k->d->nparams; p++)
@@ -1093,6 +1524,7 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
     Gen g;
     memset(&g, 0, sizeof g);
     g.declared = new_map();
+    g.vars = new_map();
     Arena **arenas = xmalloc(sizeof(Arena *) * (size_t)nfiles);
     Node **trees = xmalloc(sizeof(Node *) * (size_t)nfiles);
     for (int i = 0; i < nfiles; i++) {  /* (each was checked when it was packed) */
@@ -1107,6 +1539,23 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
         uint64_t hash = lube_hash_text(texts[i], lens[i]);
         for (int j = 0; j < stmts->count; j++) consider(&g, stmts->items[j], hash);
     }
+    for (int i = 0; i < nfiles; i++) {  /* the methods of classes declared once */
+        NodeList *stmts = &trees[i]->as.block.stmts;
+        uint64_t hash = lube_hash_text(texts[i], lens[i]);
+        for (int j = 0; j < stmts->count; j++) {
+            Node *s = stmts->items[j];
+            Value n;
+            if (s->kind != N_CLASS || !map_get(g.declared, OBJ_VAL(s->as.klass.var.name), &n) || n.as.number > 1) continue;
+            int k = 0;
+            while (g.classes[k].node != s) k++;
+            for (int m = 0; m < s->as.klass.methods.count; m++) consider_method(&g, I, k, s->as.klass.methods.items[m], hash);
+        }
+    }
+    for (int i = 0; i < nfiles; i++) {  /* (after the fns: a loop calls them) */
+        NodeList *stmts = &trees[i]->as.block.stmts;
+        uint64_t hash = lube_hash_text(texts[i], lens[i]);
+        for (int j = 0; j < stmts->count; j++) consider_loop(&g, I, stmts->items[j], j, hash, trees[i]->as.block.frame_slots);
+    }
     for (int i = 0; i < g.ncands; i++) {  /* a global declared twice may not be this fn when it is called */
         Value n;
         map_get(g.declared, OBJ_VAL(g.cands[i].key), &n);
@@ -1114,14 +1563,17 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
     }
     StrBuf body;
     int changed = 1;
-    while (changed) {  /* drop the versions that cannot be, until the rest only call each other */
+    for (int round = 0; changed; round++) {  /* drop the versions that cannot be, until the rest only call each other */
+        int shapes = g.shape_changes;
         changed = 0;
         for (int i = 0; i < g.ncands; i++) {
             Cand *k = &g.cands[i];
             for (int mode = 0; mode < 2; mode++) {
                 if (!(mode ? k->ok_int : k->ok)) continue;
                 sb_init(&body);
-                if (!gen_function(&g, k, mode, &body)) {
+                if (!gen_function(&g, k, mode, &body) && round == 0) {
+                    changed = 1;  /* (the first round learns what kinds of records fns pass each other) */
+                } else if (g.failed) {
                     if (!mode) {
                         k->ok = 0;
                         k->why = g.line;
@@ -1132,6 +1584,7 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
                 sb_free(&body);
             }
         }
+        if (g.shape_changes != shapes) changed = 1;  /* (records grew: callers lay them out again) */
     }
 
     StrBuf c, names;
@@ -1144,7 +1597,8 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
         if (!k->ok) continue;
         sb_printf(&c, "static int nf_%d(", i);
         for (int p = 0; p < k->d->nparams; p++)
-            sb_puts(&c, k->params[p] == NT_REC ? "double *, " : k->params[p] == NT_RLIST ? "double *, int64_t, " : "double, ");
+            sb_puts(&c, k->params[p] == NT_REC ? "double *, " : k->params[p] == NT_RLIST ? "double *, int64_t, "
+                        : k->loop ? "double *, " : "double, ");  /* (a loop's Numbers: given back) */
         sb_puts(&c, "double *, int);\n");
         if (!k->ok_int) continue;
         sb_printf(&c, "static int64_t ni_%d(", i);
@@ -1157,7 +1611,8 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
         if (!k->ok) continue;
         gen_function(&g, k, 0, &c);
         if (k->ok_int) gen_function(&g, k, 1, &c);
-        sb_printf(&names, "%s%s", count++ ? ", " : "", lube_shown(k->key));
+        if (k->loop) sb_printf(&names, "%sthe loop on line %d", count++ ? ", " : "", k->d->line);
+        else sb_printf(&names, "%s%s", count++ ? ", " : "", lube_shown(k->key));
         if (records_wrapper(&g, k, i, &c)) continue;
         /* the VM calls this: the whole-number version when it can, else (or when that gives up) the other */
         sb_printf(&c, "static int w_%d(const double *a, double *out, int left) {\n    (void)a;\n", i);
@@ -1185,7 +1640,7 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
             recs |= RECORD(t);
         }
         sb_printf(&c, ":%s\", 0x%llxull, ", k->ret == NT_NUM ? "N" : k->ret == NT_BOOL ? "B" : "", (unsigned long long)k->hash);
-        if (recs) sb_printf(&c, "0, wv_%d},\n", i);
+        if (recs || k->loop) sb_printf(&c, "0, wv_%d},\n", i);
         else sb_printf(&c, "w_%d, 0},\n", i);
     }
     sb_printf(&c, "    {0, 0, 0, 0, 0}\n};\nconst int lube_nnatives = %d;\n", count);
@@ -1264,10 +1719,24 @@ int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *
     for (int i = 0; i < nfiles; i++) arena_free(arenas[i]);
     free(arenas);
     free(trees);
+    for (int i = 0; i < g.ncands; i++) {  /* (a loop's made-up fn) */
+        if (!g.cands[i].loop) continue;
+        FuncDecl *d = g.cands[i].d;
+        free(d->body->as.block.stmts.items);
+        free(d->body);
+        free(d->params);
+        free(d->modes);
+        free(d->defaults);
+        free(d);
+    }
     free(g.cands);
     release(OBJ_VAL(g.declared));
+    release(OBJ_VAL(g.vars));
     free(g.dkeys);
     free(g.dtypes);
+    free(g.dshape);
+    free(g.shapes);
+    free(g.classes);
     return status;
 }
 
@@ -1283,14 +1752,18 @@ static int rec_find(ObjMap *m, ObjString *name, int hint) {
 }
 
 /* The fields of object v into out (an instance's places cached by class). 1 if one is missing or not a Number. */
-int lube_rec_load(Interp *I, LubeRecCache *c, Value v, const char *const *fields, int nf, double *out) {
+int lube_rec_load(Interp *I, LubeRecCache *c, Value v, const char *const *fields, int nf, const char *cls, double *out) {
     if (c->I != I) {  /* (each Interp has interned names of its own) */
         for (int f = 0; f < nf; f++) c->names[f] = lube_intern(I, fields[f], strlen(fields[f]));
         c->I = I;
-        c->klass = NULL;
+        c->klass = c->exact = NULL;
     }
     if (!IS_MAP(v)) return 1;
     ObjMap *m = AS_MAP(v);
+    if (cls && (!m->klass || m->klass != c->exact)) {  /* (exactly that class: its methods are called on it) */
+        if (!m->klass || strcmp(m->klass->key->chars, cls)) return 1;
+        c->exact = m->klass;
+    }
     int same = m->klass && m->klass == c->klass;
     for (int f = 0; f < nf; f++) {
         int e = rec_find(m, c->names[f], same ? c->pos[f] : -1);
@@ -1304,8 +1777,8 @@ int lube_rec_load(Interp *I, LubeRecCache *c, Value v, const char *const *fields
 
 /* The records of list v into *out (*n of them, nf numbers each): buf, when
  * they fit in its bufsize numbers, else a new array. 1 if one is not a record. */
-int lube_reclist_load(Interp *I, LubeRecCache *c, Value v, const char *const *fields, int nf, double **out, int64_t *n,
-                      double *buf, size_t bufsize) {
+int lube_reclist_load(Interp *I, LubeRecCache *c, Value v, const char *const *fields, int nf, const char *cls, double **out,
+                      int64_t *n, double *buf, size_t bufsize) {
     *out = buf;
     if (!IS_LIST(v)) return 1;
     ObjList *l = AS_LIST(v);
@@ -1313,7 +1786,7 @@ int lube_reclist_load(Interp *I, LubeRecCache *c, Value v, const char *const *fi
     if (want > bufsize) *out = xmalloc(sizeof(double) * want);
     *n = (int64_t)l->count;
     for (size_t i = 0; i < l->count; i++)
-        if (lube_rec_load(I, c, l->items[i], fields, nf, *out + i * (size_t)nf)) return 1;
+        if (lube_rec_load(I, c, l->items[i], fields, nf, cls, *out + i * (size_t)nf)) return 1;
     return 0;
 }
 
@@ -1345,6 +1818,26 @@ void lube_reclist_store(Interp *I, LubeRecCache *c, Value *list, int nf, const d
     }
 }
 
+/* A global a loop's machine code uses (written: it may change it): NULL
+ * when it is not there yet, is lent, or (written) an `on` block watches it. */
+Value *lube_native_global(Interp *I, const char *name, int written) {
+    ObjString *s = lube_intern(I, name, strlen(name));
+    Value *v = map_find(I->globals, OBJ_VAL(s));
+    if (!v || v->type == VAL_LENT || (written && lube_global_watched(I, s))) return NULL;
+    return v;
+}
+
+/* Top-level statement `index` of src: the machine code this executable has
+ * for it (a loop, compiled from this very text), or -1. */
+int lube_native_loop(Source *src, int index) {
+    char key[32];
+    snprintf(key, sizeof key, "@%d", index);
+    for (int k = 0; k < lube_nnatives; k++)
+        if (!strcmp(lube_natives[k].key, key) && lube_natives[k].src_hash == lube_hash_text(src->text, src->length))
+            return k;
+    return -1;
+}
+
 /* After a source is compiled: its top-level fns that this executable has
  * machine code for (compiled from this very text) use it. */
 void lube_native_attach(Interp *I, FuncDecl *program, Source *src) {
@@ -1357,5 +1850,18 @@ void lube_native_attach(Interp *I, FuncDecl *program, Source *src) {
             if (lube_natives[k].src_hash == hash && !strcmp(lube_natives[k].key, d->key->chars) &&
                 (int)strcspn(lube_natives[k].sig, ":") == d->nparams)
                 d->native = &lube_natives[k];
+    }
+    for (int i = 0; i < program->code.nclasses; i++) {  /* methods: Class.name */
+        ClassDesc *cd = &program->code.classes[i];
+        size_t n = strlen(cd->key->chars);
+        for (int m = 0; m < cd->nmethods; m++) {
+            FuncDecl *d = cd->methods[m];
+            for (int k = 0; k < lube_nnatives; k++) {
+                const char *key = lube_natives[k].key;
+                if (lube_natives[k].src_hash == hash && !strncmp(key, cd->key->chars, n) && key[n] == '.' &&
+                    !strcmp(key + n + 1, d->name->chars) && (int)strcspn(lube_natives[k].sig, ":") == d->nparams)
+                    d->native = &lube_natives[k];
+            }
+        }
     }
 }

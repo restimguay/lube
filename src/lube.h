@@ -420,12 +420,14 @@ typedef struct {  /* per Interp, and per class: where the fields are */
     ObjString *names[LUBE_REC_MAX];
     struct ObjClass *klass;
     int pos[LUBE_REC_MAX];
+    struct ObjClass *exact;  /* the class they must be (methods are called on them), once found by its key */
 } LubeRecCache;
-int lube_rec_load(Interp *I, LubeRecCache *c, Value v, const char *const *fields, int nf, double *out);
-int lube_reclist_load(Interp *I, LubeRecCache *c, Value v, const char *const *fields, int nf, double **out, int64_t *n,
+int lube_rec_load(Interp *I, LubeRecCache *c, Value v, const char *const *fields, int nf, const char *cls, double *out);
+int lube_reclist_load(Interp *I, LubeRecCache *c, Value v, const char *const *fields, int nf, const char *cls, double **out, int64_t *n,
                       double *buf, size_t bufsize);
 void lube_rec_store(Interp *I, LubeRecCache *c, Value *slot, int nf, const double *vals, const double *orig);
 void lube_reclist_store(Interp *I, LubeRecCache *c, Value *list, int nf, const double *vals, const double *orig);
+Value *lube_native_global(Interp *I, const char *name, int written);
 extern const LubeNative lube_natives[];  /* (nativetab.c, or the native build's own) */
 extern const int lube_nnatives;
 
@@ -483,6 +485,7 @@ typedef enum {
     OP_CLASS_FIELD_SET, OP_CLASS_END, OP_ON, OP_LWATCH_BEFORE, OP_LWATCH_AFTER,
     OP_ASSIGN_DROP, OP_BINARY2, OP_CMP_JUMP, OP_SET_LOCAL, OP_CALL_FN, OP_INDEX2, OP_FIELD_LOCAL, OP_ARG_DEFAULT, OP_DEF_PARAM, OP_PRINT_REPL,
     OP_HOT_KEEP, OP_IF_GLOBAL, OP_FAIL, OP_LAZY_GLOBAL, OP_IMPORT_PACKAGE,
+    OP_NATIVE_LOOP,  /* a top-level loop's machine code (lube --build --native): skips its bytecode when it ran */
     OP_COUNT
 } OpCode;
 
@@ -1003,6 +1006,8 @@ char **os_files(const char *dir, const char *ext, int *n);  /* sorted; free each
 int lube_native_build(Interp *I, int nfiles, char **keys, char **texts, size_t *lens, const char *argv0,
                       const char *exe_out);
 void lube_native_attach(Interp *I, FuncDecl *program, Source *src);
+int lube_native_loop(Source *src, int index);
+int lube_global_watched(Interp *I, ObjString *name);
 uint64_t lube_hash_text(const char *text, size_t len);
 #ifdef _WIN32
 char *os_self_path(void);  /* the running program (malloc'd), or NULL */
