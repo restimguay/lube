@@ -376,7 +376,8 @@ static void *r_obj(Reader *r) {
 
 /* n things of `size` bytes from the image's arena (zeroed). */
 static void *r_alloc(Reader *r, size_t n, size_t size) {
-    size_t total = n * size ? n * size : 1;
+    size_t total = n * size;
+    if (total == 0) total = 1;
     void *p = arena_alloc(r->arena, total);
     memset(p, 0, total);
     return p;
