@@ -27,6 +27,7 @@ fn pay(x: Money): Money => x * 2
 var wallet = Money[]
 wallet.push(m(3))
 print(pay(m(1)), wallet, type(wallet), sum([m(1), m(2.5)]), sum([1, m(2)]), max([m(1), m(3)]), min(m(2), m(1)), sort([m(3), m(1), m(2)]))
+print(sum([m(5)]), sum([m(1), m(2), m(3), m(4)]), sum([0.5, m(1), m(2)]), sum([m(1), m(2)]) + sum([m(3)]))  // (each total but the last let go)
 print(abs(m(-2)), abs(m(2)), Number(m(2.5)), Number(m(-3, "JPY")), str(m(9)), "{m(9)}", repr(m(9)))
 
 // ---------- properties and methods ----------
@@ -91,6 +92,8 @@ tries(fn() => m(-90000000000000000) - m(90000000000000000))
 tries(fn() => m(90000000000000000) * 1000)
 tries(fn() => m(1).nope)
 tries(fn() => sort([m(1), m(1, "EUR")]))
+tries(fn() => sum([m(1), m(2), m(1, "EUR")]))
+tries(fn() => sum([m(1), m(2), "x"]))
 tries(fn() => m(1).allocate(5))
 tries(fn() => m(1).allocate([-1]))
 tries(fn() => m(1).allocate([0]))
