@@ -118,6 +118,64 @@ print(v)
 let kept = v
 v[1, 1] = -50
 print(kept[1, 1], v[1, 1])  // (copy-on-write: kept keeps what it had)
+print(np.arange(6).reshape(2, 3)[int64(1), 2], np.arange(6).reshape(2, 3)[1, int32(-1)])  // (sized integers: the general way)
+// positions picked by index arrays: one array alone (directly), or with others and Numbers (the general way)
+fn fancy() {
+  let a = np.arange(60).reshape(3, 4, 5)
+  let v = np.arange(10.0) * 1.5
+  print(v[[3, -1, 0, 3]], v[np.array([[1, 2], [9, 0]])], a[[2, 0]], a[[2, 0]].shape, a[.., [1, 3]].shape, a[.., [1, 3]][2, 1], a[1, [0, 3]], a[.., .., [4, 0]][1], a[1..3, [0, 2]], a[[0, 1], .., [1, 2]], a[[[0], [2]], [1, 3]])
+  print(np.flip(v)[[0, 1]], v[range(0, 10, 2)][[1, 4]], v.astype("float32")[[2, 2]], (v > 3)[[0, 9]], v.astype("uint8")[[5]], v.astype("int32")[[-2]], a.T[[0, 4]].shape, a.T[[0, 4]][1, 2])
+  var w = np.zeros(8)
+  w[[1, 3, 3]] = [5, 6, 7]
+  w[np.array([0, -1])] = 9
+  var m = np.zeros(3, 4)
+  m[[0, 2]] = 1
+  m[.., [1, 3]] = np.array([[2, 3], [4, 5], [6, 7]])
+  m[[1, 1], [0, 2]] = -1
+  var f = np.zeros(6, "float32")
+  f[[5, 0]] = [1.5, 2.5]
+  var b = np.zeros(4, "bool")
+  b[[1, 2]] = true
+  print(w, m, f, b)
+}
+fancy()
+// each dtype's quick loops: fills, arange, repeat, where, conversions, powers, norms, searchsorted, std
+print(np.ones(3, "int32"), np.ones(2, "bool"), np.ones(2, "uint8"), np.ones_like(np.zeros(2, "float32")), np.full([2], 7, "uint8"), np.arange(1, 11, 3, "int64"), np.arange(2, -3, -2, "int64"))
+let rpt = np.arange(6).reshape(2, 3)
+print(np.repeat(np.arange(3, "int32"), 2), np.repeat(rpt.astype("float32"), 2, 1), np.repeat(rpt.T, 2, 0), np.repeat(rpt > 2, 2))
+print(np.where(np.array([true, false, true]), np.array([1, 2, 3], "int32"), np.array([7], "int32")), np.where(np.array([true, false]), np.array([true, true]), false), np.array([0, 3, -1], "int32").astype("bool"), np.array([0, 2], "uint8").astype("bool"))
+print(np.array([2, 0.5], "float32") ** 3, np.array([2, 3], "float32") ** 2, np.norm(rpt.T), np.norm(np.array([3, 4], "int64")), np.norm(rpt.T, "fro"))
+print(np.searchsorted(np.arange(0.0, 20.0, 2), [15, 9, 9, 3, -1, 30]), np.searchsorted(np.arange(0.0, 20.0, 2), [15, 9, 3], {side: "right"}), np.searchsorted(np.arange(10), [3, 7]), np.searchsorted(np.arange(20.0)[range(0, 20, 2)], [5, 1]))
+print(r6(np.std(np.arange(20.0))), r6(np.var(np.arange(10, "float32") * 1.5)), r6(np.arange(30.0).reshape(3, 10).std(1)))
+// a mask of the Array's own shape (the quick way), in each dtype, against picking the same positions
+for dt in ["float64", "float32", "int64", "int32", "uint8", "bool"] {
+  let w = (np.arange(24) % 5).astype(dt).reshape(2, 3, 4)
+  let mk = w.astype("int64") > 1
+  print(dt, w[mk], w[mk].dtype, w[mk].shape, w[w.astype("int64") > 9].shape, np.array_equal(w[np.ones(2, 3, 4, "bool")], w.flatten()))
+}
+np.seed(3)
+let huge = np.randn(1000003)
+let sel = huge > 0.5
+let picked = huge[sel]
+print(picked.shape[0] == np.count_nonzero(sel), np.array_equal(picked, huge[np.nonzero(sel)[0]]), np.array_equal(huge.reshape(1000003, 1)[sel.reshape(1000003, 1)], picked), huge[..10][sel[..10]].shape[0] == np.count_nonzero(sel[..10]))
+let strided = np.arange(20.0)[range(0, 20, 2)]
+print(strided[strided > 10], np.arange(12.0).reshape(3, 4).T[np.arange(12.0).reshape(3, 4).T > 8])  // (views: the other way)
+var mw = np.arange(10.0)
+let mkept = mw
+mw[mw > 6] = -1
+var mi = np.arange(6, "int32")
+mi[mi % 2 == 0] = 7
+var mb = np.array([true, false, true])
+mb[mb] = false
+var mu = np.arange(4, "uint8")
+mu[mu > 1] = 200
+var mf = np.arange(4, "float32")
+mf[mf < 2] = 0.5
+print(mw, mkept, mi, mb, mu, mf)
+var big2 = np.arange(300000.0)
+big2[big2 > 10] = 0
+print(big2.sum(), big2[..12])
+tries(fn() => mw[mw > 0] = np.array([[1]]))
 var w = np.arange(4)
 let part = w[1..3]
 w[1] = 99
@@ -162,12 +220,43 @@ print(total, items, len(m), len(np.zeros(0)))
 print(a.sum(), a.sum(0), a.sum(1), a.sum(-1), np.sum(a, 0, {keepdims: true}), a.sum({keepdims: true}), np.sum([1, 2]), np.sum(np.zeros(0)))
 print(a.prod(), a.prod(1), a.mean(), a.mean(0), np.mean(np.zeros(0, 2), 0), a.min(), a.max(1), np.amin(a, 0), np.amax(a), a.argmin(), a.argmax(0), np.argmax([[1, 9], [8, 2]], 1))
 print(a.any(), np.any([0, 0]), a.all(), np.all([1, 0]), np.all(np.zeros(0)), a.var(), a.std(), np.var(a, 0), np.std(a, {ddof: 1}), np.var([1], {ddof: 1}), np.isnan(np.var([1], {ddof: 1})))
-print(np.array([1, 2], "int64").sum(), np.array([true, true, false]).sum(), np.array([2, 3], "int64").prod(), np.array([1, 2], "float32").sum(), np.array([1.5], "float32").mean())
+print(np.any(np.zeros(20) > 0), np.any(np.arange(20) == 17), np.any(np.arange(20, "uint8") == 3), np.all(np.ones(20, "bool")), np.all(np.arange(20) != 9), np.prod([1, 2, 3]), np.prod(np.arange(1, 5).reshape(2, 2), 0), np.array([1, 2], "int64").sum(), np.array([true, true, false]).sum(), np.array([2, 3], "int64").prod(), np.array([1, 2], "float32").sum(), np.array([1.5], "float32").mean())
 print(np.max([1, np.nan, 3]), np.argmax([1, np.nan, 3]), np.min(np.array([3, 1], "int64")), np.argmin(np.array([3, 1, 0], "int32")), np.max(np.array([true, false])))
 print(np.min(3, 1, 2), np.max(1, 5), np.min([3, 1]), np.max(a, 0), np.ptp(a), np.ptp(a, 1))
 print(np.cumsum(a), np.cumsum(a, 0), a.cumsum(1), np.cumprod([1, 2, 3]), a.cumprod(0), np.cumsum(np.array([1, 2], "int64")), np.cumprod(np.array([2, 3], "int64")), np.cumsum([true, true]))
 print(np.count_nonzero([1, 0, 2]), np.count_nonzero(a > 2, 0), np.average([1, 2, 3]), np.average([1, 2], {weights: [3, 1]}), np.average(a, 1, {weights: [1, 0, 1]}), np.average(a, 0, {weights: [1, 3]}), np.average(a, {weights: a}))
 print(np.median([3, 1, 2]), np.median([4, 1, 2, 3]), np.median(a, 0), np.median(a, 1), np.percentile([1, 2, 3, 4], 25), np.percentile(a, [0, 50, 100], 1), np.quantile([1, 2, 3], 0.5), np.median([1, np.nan]))
+fn pct(sorted, p) {  // (a percentile from the sorted values, as numpy works it out)
+  let pos = p / 100 * (len(sorted) - 1)
+  let lo = floor(pos)
+  var hi = lo
+  if lo + 1 < len(sorted) { hi = lo + 1 }
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo)
+}
+np.seed(9)
+for xs in [np.randn(100001), np.randn(100000), np.arange(50000.0), np.flip(np.arange(50000.0)), np.ones(40000), np.randint(0, 5, [30001]).astype("float64"), np.concatenate([np.arange(20000.0), np.flip(np.arange(20000.0))])] {
+  let sx = np.sort(xs)
+  let ps = [0, 0.1, 25, 50, 50, 77.7, 99.99, 100]
+  print(np.median(xs) == pct(sx, 50), np.array_equal(np.percentile(xs, ps), np.array(map(ps, fn(p) => pct(sx, p)))), np.quantile(xs, 0.3) == pct(sx, 30))
+}
+// reductions along each axis, every dtype, with ties, NaNs and -0 (by rows when the axis is not the last)
+let rbase = np.round(np.randn(5, 40, 7) * 2)
+var rnan = rbase.copy()
+rnan[3, 10, 4] = np.nan
+rnan[2, 7, ..] = np.nan
+rnan[1, .., 2] = -0.0
+for ra in [rbase, rnan, rnan.astype("float32"), rbase.astype("int64"), rbase.astype("int32"), np.abs(rbase).astype("uint8"), rbase > 0] {
+  var rl = "{ra.dtype}:"
+  for axis in [0, 1, 2] {
+    for f in [fn(x) => x.sum(axis), fn(x) => x.mean(axis), fn(x) => x.max(axis), fn(x) => x.min(axis), fn(x) => x.argmax(axis), fn(x) => x.argmin(axis), fn(x) => x.std(axis), fn(x) => x.prod(axis), fn(x) => np.any(x, axis), fn(x) => np.all(x, axis)] {
+      let rr = f(ra)
+      rl += " " + str(r4(rr.astype("float64").sum())) + "/" + str(rr[0, 0])
+    }
+  }
+  print(rl)
+}
+let mq = np.randn(300, 501)
+print(np.array_equal(np.median(mq, 1), np.sort(mq, 1)[.., 250]), np.array_equal(np.median(mq, 0), np.sort(mq, 0)[149] + (np.sort(mq, 0)[150] - np.sort(mq, 0)[149]) * 0.5), np.isnan(np.median(np.array([1, 2, np.nan, 4]) * np.ones(3, 1), 1)).all())
 let big = np.arange(300000)
 print(big.sum(), (big * 2).sum(), np.ones(300000, "float32").sum(), big.reshape(3000, 100).sum(0)[0], big.reshape(100, 3000).sum(1)[99], big.max())
 
@@ -182,26 +271,52 @@ print(np.array_equal(np.sort(shuffled), np.arange(1000)), np.array_equal(np.args
 // ---------- linear algebra ----------
 let s = np.array([[4, 1], [2, 3]])
 print(np.matmul(s, s), np.dot(s, s), s.dot([1, 0]), np.dot(2, s), np.dot(np.array(2), 3), np.inner([1, 2], [3, 4]), np.inner(s, s), np.outer([1, 2], [1, 2, 3]), np.trace(s))
-print(np.det(s), np.det(np.zeros(2, 2)), np.slogdet(s), np.slogdet(np.array([[0, 1], [1, 0]])), np.slogdet(np.zeros(1, 1)), np.solve(s, [1, 2]), np.solve(s, np.eye(2)) == np.inv(s), np.inv(np.array([[2]], "float32")).dtype)
-print(r6(np.inv(s)), np.cholesky(np.array([[4, 2], [2, 3]])), np.cholesky(np.array([[4]], "float32")).dtype)
-let q = np.qr(np.array([[1, 2], [3, 4], [5, 6]]))
-print(r6(q[0]), r6(q[1]), np.allclose(q[0] @ q[1], [[1, 2], [3, 4], [5, 6]]), np.qr(s, {mode: "complete"})[0].shape, np.qr(np.ones(2, 3))[1].shape, np.qr(np.zeros(2, 2))[1])
-let tall = np.array([[3, 1], [1, 3], [1, 1]])
-let sv = np.svd(tall)
-print(r6(sv[1]), sv[0].shape, sv[2].shape, np.allclose(sv[0][.., ..2] * sv[1] @ sv[2], tall), np.allclose(sv[0].T @ sv[0], np.eye(3)))
-let sv2 = np.svd(tall.T, {full_matrices: false})
-print(sv2[0].shape, r6(sv2[1]), sv2[2].shape, np.allclose(sv2[0] * sv2[1] @ sv2[2], tall.T), np.svd(tall.T)[2].shape, r6(np.svd(tall, {compute_uv: false})), r6(np.svd(np.zeros(2, 2))[1]))
-print(np.allclose(np.svd(tall.T)[2] @ np.svd(tall.T)[2].T, np.eye(3)), r6(np.svd(np.array([[1, 1], [1, 1]], "float32"))[1]), np.svd(np.array([[1]], "float32"))[0].dtype)
-let sym = np.array([[4, 1, 2], [1, 5, 3], [2, 3, 6]])
-let e3 = np.eigh(sym)
-print(np.round(e3[0], 10), np.allclose(sym @ e3[1], e3[1] * e3[0]), np.eigvalsh(np.array([[5, 0, 0], [0, 1, 0], [0, 0, 3]])), np.solve(np.array([[1, 2], [3, 4]]), np.array([[1, 0], [0, 1]])))
-let e = np.eigh(np.array([[2, 1], [1, 2]]))
-print(e[0], np.allclose(np.abs(e[1]), np.full([2, 2], 0.7071067811865476)), np.eigvalsh(np.array([[1, 0], [5, 2]])), np.eigvalsh(np.array([[1]], "float32")).dtype)
-let ls = np.lstsq(np.array([[1, 1], [1, 2], [1, 3]]), [1, 2, 2])
-print(r6(ls[0]), r6(ls[1]), ls[2], r6(ls[3]), np.lstsq(np.array([[1, 1], [1, 1]]), [1, 2])[2], np.lstsq(np.eye(2), np.eye(2))[1].shape, np.lstsq(np.eye(2), [1, 1], {rcond: 0.5})[2])
-print(r6(np.pinv(np.array([[1, 2], [2, 4]]))), r6(np.pinv(np.array([[1, 2]]), {rcond: 0.01})), np.matrix_rank(np.array([[1, 2], [2, 4]])), np.matrix_rank(np.eye(3)), np.matrix_rank(np.zeros(2, 2)), np.pinv(np.ones(1, 1, "float32")).dtype)
-print(np.norm([3, 4]), np.norm(s), np.norm(s, "fro"), r6(np.norm(s, "nuc")), r6(np.norm(s, 2)), r6(np.norm(s, -2)), np.norm(s, 1), np.norm(s, -1), np.norm(s, np.inf), np.norm(s, -np.inf))
-print(np.norm([3, -4], 1), np.norm([3, -4], np.inf), np.norm([3, -4], -np.inf), np.norm([3, 0, 4], 0), np.norm([3, 4], 3) > 4, np.norm(s, 2, 0), np.norm(s, 1, 1), np.norm(a, {}))
+fn decompositions() {
+  print(np.det(s), np.det(np.zeros(2, 2)), np.slogdet(s), np.slogdet(np.array([[0, 1], [1, 0]])), np.slogdet(np.zeros(1, 1)), r6(np.solve(s, [1, 2])), np.solve(s, np.eye(2)) == np.inv(s), np.inv(np.array([[2]], "float32")).dtype)
+  print(r6(np.inv(s)), np.cholesky(np.array([[4, 2], [2, 3]])), np.cholesky(np.array([[4]], "float32")).dtype)
+  let q = np.qr(np.array([[1, 2], [3, 4], [5, 6]]))
+  print(r6(q[0]), r6(q[1]), np.allclose(q[0] @ q[1], [[1, 2], [3, 4], [5, 6]]), np.qr(s, {mode: "complete"})[0].shape, np.qr(np.ones(2, 3))[1].shape, np.qr(np.zeros(2, 2))[1])
+  let tall = np.array([[3, 1], [1, 3], [1, 1]])
+  let sv = np.svd(tall)
+  print(r6(sv[1]), sv[0].shape, sv[2].shape, np.allclose(sv[0][.., ..2] * sv[1] @ sv[2], tall), np.allclose(sv[0].T @ sv[0], np.eye(3)))
+  let sv2 = np.svd(tall.T, {full_matrices: false})
+  print(sv2[0].shape, r6(sv2[1]), sv2[2].shape, np.allclose(sv2[0] * sv2[1] @ sv2[2], tall.T), np.svd(tall.T)[2].shape, r6(np.svd(tall, {compute_uv: false})), r6(np.svd(np.zeros(2, 2))[1]))
+  print(np.allclose(np.svd(tall.T)[2] @ np.svd(tall.T)[2].T, np.eye(3)), r6(np.svd(np.array([[1, 1], [1, 1]], "float32"))[1]), np.svd(np.array([[1]], "float32"))[0].dtype)
+  let sym = np.array([[4, 1, 2], [1, 5, 3], [2, 3, 6]])
+  let e3 = np.eigh(sym)
+  print(np.round(e3[0], 10), np.allclose(sym @ e3[1], e3[1] * e3[0]), np.eigvalsh(np.array([[5, 0, 0], [0, 1, 0], [0, 0, 3]])), r6(np.solve(np.array([[1, 2], [3, 4]]), np.array([[1, 0], [0, 1]]))))
+  let e = np.eigh(np.array([[2, 1], [1, 2]]))
+  print(np.round(e[0], 10), np.allclose(np.abs(e[1]), np.full([2, 2], 0.7071067811865476)), np.eigvalsh(np.array([[1, 0], [5, 2]])), np.eigvalsh(np.array([[1]], "float32")).dtype)
+  let ls = np.lstsq(np.array([[1, 1], [1, 2], [1, 3]]), [1, 2, 2])
+  print(r6(ls[0]), r6(ls[1]), ls[2], r6(ls[3]), np.lstsq(np.array([[1, 1], [1, 1]]), [1, 2])[2], np.lstsq(np.eye(2), np.eye(2))[1].shape, np.lstsq(np.eye(2), [1, 1], {rcond: 0.5})[2])
+  print(r6(np.pinv(np.array([[1, 2], [2, 4]]))), r6(np.pinv(np.array([[1, 2]]), {rcond: 0.01})), np.matrix_rank(np.array([[1, 2], [2, 4]])), np.matrix_rank(np.eye(3)), np.matrix_rank(np.zeros(2, 2)), np.pinv(np.ones(1, 1, "float32")).dtype)
+  print(np.norm([3, 4]), np.norm(s), np.norm(s, "fro"), r6(np.norm(s, "nuc")), r6(np.norm(s, 2)), r6(np.norm(s, -2)), np.norm(s, 1), np.norm(s, -1), np.norm(s, np.inf), np.norm(s, -np.inf))
+  print(np.norm([3, -4], 1), np.norm([3, -4], np.inf), np.norm([3, -4], -np.inf), np.norm([3, 0, 4], 0), np.norm([3, 4], 3) > 4, np.norm(s, 2, 0), np.norm(s, 1, 1), np.norm(a, {}))
+  // bigger ones, at random: each answer checked against what it must satisfy
+  np.seed(5)
+  let r = np.rand(40, 40)
+  let rs = r + r.T
+  let ev = np.eigh(rs)
+  print(np.allclose(rs @ ev[1], ev[1] * ev[0]), np.allclose(ev[1].T @ ev[1], np.eye(40)), np.all(ev[0][1..] >= ev[0][..39]), np.allclose(np.eigvalsh(rs), ev[0]), np.eigh(np.zeros(0, 0))[0].shape)
+  let wide = np.rand(20, 30)
+  let sw = np.svd(wide)
+  print(np.allclose(sw[0] * sw[1] @ sw[2][..20], wide), np.allclose(sw[2] @ sw[2].T, np.eye(30)), np.allclose(np.svd(wide.T, {full_matrices: false})[1], sw[1]), np.allclose(np.svd(wide, {compute_uv: false}), sw[1]))
+  let qw = np.qr(wide.T, {mode: "complete"})
+  print(np.allclose(qw[0] @ qw[1], wide.T), np.allclose(qw[0].T @ qw[0], np.eye(30)), np.allclose(np.qr(wide)[0] @ np.qr(wide)[1], wide), np.all(qw[1][np.arange(30).reshape(30, 1) > np.arange(20)] == 0))
+  let pd = r @ r.T + np.eye(40)
+  let lo = np.cholesky(pd)
+  print(np.allclose(lo @ lo.T, pd), np.all(lo[np.arange(40).reshape(40, 1) < np.arange(40)] == 0), np.allclose(r @ np.solve(r, rs), rs), np.allclose(np.inv(r) @ r, np.eye(40)), np.allclose(np.det(r) * np.det(np.inv(r)), 1))
+  var why = []
+  for bad in [fn() => np.cholesky(np.array([[1, 2], [2, 1]])), fn() => np.inv(np.zeros(3, 3)), fn() => np.solve(np.ones(2, 2), [1, 2])] {
+    try { bad() } catch e { why.push(str(e)) }
+  }
+  print(why, np.det(np.ones(3, 3)), np.slogdet(np.ones(2, 2)))
+  print(np.allclose(np.pinv(wide) @ wide @ np.pinv(wide), np.pinv(wide)), np.allclose(np.lstsq(wide.T, np.ones(30))[0], np.pinv(wide.T) @ np.ones(30)), np.matrix_rank(wide), r6(np.norm(r, 2) - np.svd(r, {compute_uv: false})[0]))
+}
+decompositions()
+np.use_blas(false)  // our own code: the same answers
+decompositions()
+np.use_blas(true)
 let bigm = np.rand(70, 300)
 let bigf = bigm.astype("float32")
 let with_blas = bigm @ bigm.T
@@ -211,7 +326,13 @@ print(np.blas(), np.allclose(bigm @ bigm.T, with_blas), np.allclose(bigf @ bigf.
 print(np.allclose(bigm[.., 0..1] @ bigm[0..1, ..], np.outer(bigm[.., 0], bigm[0, ..])), (np.zeros(2, 0) @ np.zeros(0, 40)).sum(), np.array([[1, 2], [3, 4]]) @ np.array([[1, 2], [3, 4]])[.., [1, 0]])
 let strided = np.arange(64).reshape(8, 8)[range(0, 8, 2), range(0, 8, 2)]
 print(strided @ strided, np.arange(4)[range(0, 4, 2)] @ np.ones(2))
+fn dots() {  // (vector by vector: BLAS's dot, or four sums of our own)
+  let dv = np.arange(1, 11.0)
+  return [dv @ dv, np.flip(dv) @ dv, np.dot(dv.astype("float32"), dv.astype("float32")), dv[range(0, 10, 3)] @ dv[range(0, 10, 3)]]
+}
+print(dots())
 np.use_blas(true)
+print(dots())
 print(type(np.blas()), strided @ strided)  // (the system's BLAS, or "none" where it has none)
 
 // ---------- random: numpy's numbers ----------
@@ -567,3 +688,44 @@ tries(fn() => np.choice(2, {p: [0.5]}))
 tries(fn() => np.choice(2, {p: "x"}))
 tries(fn() => np.choice(2, -1))
 tries(fn() => np.sum(a, 0, 1))
+
+// ---------- the kernels that go many elements at a time give what one at a time gives ----------
+fn kernels() {
+  // bytes counted and looked through many at a time
+  let big = np.arange(1000) % 7
+  let bm = big > 2
+  let ones = np.ones(777, "bool")
+  var holed = np.ones(777, "bool")
+  holed[300] = false
+  var late = np.ones(777, "bool")
+  late[776] = false
+  var early = np.ones(300, "bool")
+  early[0] = false
+  print(np.count_nonzero(bm), np.count_nonzero(big.astype("uint8")), np.count_nonzero(bm[0..239]), np.count_nonzero(bm[0..240]), np.count_nonzero(bm[0..241]), np.count_nonzero(np.zeros(500, "bool")), np.count_nonzero(big), np.count_nonzero(big.astype("float32")))
+  print(ones.all(), holed.all(), late.all(), early.all(), np.ones(255, "bool").all(), np.ones(256, "bool").all(), np.ones(257, "bool").all(), bm.all(), np.zeros(0, "bool").all(), holed.any(), np.zeros(600, "bool").any())
+  print(bm.reshape(10, 100).all(1), holed[0..700].reshape(7, 100).all(1), np.count_nonzero(bm.reshape(10, 100), 1))
+  // positions that need no change are used as they are
+  let x = np.arange(10) * 1.5
+  let idx = np.array([3, 0, 9, 3], "int64")
+  let neg = np.array([-1, 0, -10], "int64")
+  print(x[idx], x[neg], x[[2, 4]], x[np.array([1, 2], "int32")], x[idx.reshape(2, 2)], x[idx[0..0]])
+  let self = np.array([2, 0, 1, 3], "int64")
+  print(self[self], self[self[self]], x.reshape(2, 5)[np.array([1, 0, 1], "int64")], x.reshape(2, 5)[0..2, np.array([4, 0], "int64")])
+  try { print(x[np.array([3, 10], "int64")]) } catch e { print("error:", e) }
+  try { print(x[np.array([-11], "int64")]) } catch e { print("error:", e) }
+  try { print(x[np.array([1.5])]) } catch e { print("error:", e) }
+  var y = np.arange(6)
+  y[y] = y[np.array([5, 4, 3, 2, 1, 0], "int64")]
+  print(y)
+  var z = np.arange(5)
+  z[np.array([4, 0], "int64")] = np.array([40, 10])
+  print(z, idx)
+  // the largest and smallest along the first axis, with NaN and zeros of both signs
+  let nan = INF - INF
+  let m = np.array([[1, nan, -0.0, 5, -INF, 2], [3, 1, 0.0, nan, 2, 2], [2, 7, -0.0, 9, INF, nan]])
+  print(m.max(0), m.min(0), m.argmax(0), m.argmin(0))
+  print(m.astype("float32").max(0), m.astype("float32").min(0), np.arange(600).reshape(2, 300).max(0).sum(), np.arange(600).reshape(2, 300).min(0).sum())
+  let wide = np.arange(3000).reshape(3, 1000) % 17
+  print(wide.max(0).sum(), wide.min(0).sum(), wide.astype("float64").max(0).sum(), wide.astype("float64").argmax(0).sum(), wide.mean(0).sum())
+}
+kernels()

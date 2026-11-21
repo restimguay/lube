@@ -217,6 +217,7 @@ static void compile_var(Comp *C, VarRef *r, int raw) {
 /* Arguments: values, or the keys of & places. Returns the call descriptor
  * and adds the stack slots the arguments take to *size. */
 static int has_ref(NodeList *args);
+static void compile_call_slow(Comp *C, Node *n);
 
 static int compile_args(Comp *C, NodeList *args, int *size) {
     CallDesc cd;
@@ -252,7 +253,80 @@ static int has_ref(NodeList *args) {
     return 0;
 }
 
+/* Does evaluating this run none of the program's code, and change nothing? (Variables of the function, values
+ * written out, and operators, fields and elements of those. A global may be a class, which its name alone
+ * constructs, or made on its first use.) */
+static int is_quiet(Node *n) {
+    switch (n->kind) {
+    case N_LITERAL:
+        return 1;
+    case N_VAR:
+        return n->as.var.kind != VAR_GLOBAL;
+    case N_UNARY:
+        return is_quiet(n->as.unary.operand);
+    case N_BINARY:
+    case N_AND:
+    case N_OR:
+        return is_quiet(n->as.binary.left) && is_quiet(n->as.binary.right);
+    case N_INDEX:
+        return is_quiet(n->as.index.object) && is_quiet(n->as.index.index);
+    case N_FIELD:
+        return is_quiet(n->as.field.object);
+    case N_LIST:
+        for (int i = 0; i < n->as.items.count; i++)
+            if (!is_quiet(n->as.items.items[i])) return 0;
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+/* Is this a var of the function being compiled, one that a call may change in place? */
+static int is_own_var(Node *n) {
+    return n->kind == N_VAR && n->as.var.kind == VAR_LOCAL && n->as.var.changeable && n->as.var.origin != ORIGIN_THIS;
+}
+
+static int is_push(ObjString *name) { return name->length == 4 && memcmp(name->chars, "push", 4) == 0; }
+
+/* xs.push(v) or push(&xs, v), xs a var of this function and v quiet: OP_PUSH_CHECK (where the call would find
+ * what to call: md holds xs and the variable `push`), then v, then OP_PUSH_DO, which appends it with no call
+ * when xs holds a List or Bytes and push is the built-in. Returns OP_PUSH_DO's place, for quick_push_end once
+ * the call as any other is compiled after it (CHECK jumps to it; DO jumps past it). v being quiet, nothing
+ * differs but the time. */
+static int quick_push(Comp *C, const MethodDesc *md, Node *xs, Node *v, int line) {
+    int before = C->depth;
+    GROW(C->methods, C->nmethods, C->capmethods);
+    C->methods[C->nmethods] = *md;
+    C->line = line;
+    int check = emit2(C, OP_PUSH_CHECK, C->nmethods++, 0, 0);
+    compile_expr(C, v, 1);
+    C->line = line;
+    int done = emit2(C, OP_PUSH_DO, xs->as.var.index, 0, 0);  /* (v becomes the call's nothing) */
+    patch_word(C, check + 1, C->ncode);
+    C->depth = before;
+    return done;
+}
+
+static void quick_push_end(Comp *C, int done) { patch_word(C, done + 1, C->ncode); }
+
 static void compile_call(Comp *C, Node *n) {
+    Node *callee = n->as.call.callee;
+    NodeList *args = &n->as.call.args;
+    int done = -1;
+    if (callee->kind == N_VAR && callee->as.var.kind == VAR_GLOBAL && is_push(callee->as.var.name) && args->count == 2 &&
+        args->items[0]->kind == N_REF && is_own_var(args->items[0]->as.expr) && is_quiet(args->items[1])) {
+        MethodDesc md;
+        memset(&md, 0, sizeof md);
+        md.name = callee->as.var.name;
+        md.fallback = callee->as.var;
+        md.recv_place = compile_place(C, args->items[0]->as.expr);
+        done = quick_push(C, &md, args->items[0]->as.expr, args->items[1], n->line);
+    }
+    compile_call_slow(C, n);
+    if (done >= 0) quick_push_end(C, done);
+}
+
+static void compile_call_slow(Comp *C, Node *n) {
     Node *callee = n->as.call.callee;
     if (callee->kind == N_VAR) compile_var(C, &callee->as.var, 1);  /* a class named here is called */
     else compile_expr(C, callee, 1);
@@ -279,25 +353,30 @@ static void compile_call(Comp *C, Node *n) {
 
 static void compile_method(Comp *C, Node *n) {
     Node *recv = n->as.method.object;
+    NodeList *args = &n->as.method.args;
     MethodDesc md;
     memset(&md, 0, sizeof md);
     md.name = n->as.method.name;
     md.fallback = n->as.method.fallback;
     int before = C->depth;
+    int quick = is_own_var(recv) && md.fallback.kind == VAR_GLOBAL && args->count == 1 && is_push(md.name) &&
+                is_quiet(args->items[0]);
     if (is_place_node(recv)) {
         md.recv_place = compile_place(C, recv);
     } else {
         compile_expr(C, recv, 1);
         md.recv_place = -1;
     }
+    int done = quick ? quick_push(C, &md, recv, args->items[0], n->line) : -1;  /* (xs.push(v): see quick_push) */
     GROW(C->methods, C->nmethods, C->capmethods);
     C->methods[C->nmethods] = md;
     C->line = n->line;
     emit(C, OP_METHOD_PREP, C->nmethods++, before - C->depth + 2);  /* the receiver becomes callee + receiver slot */
     int size;
-    int cd = compile_args(C, &n->as.method.args, &size);
+    int cd = compile_args(C, args, &size);
     C->line = n->line;
     emit(C, OP_INVOKE, cd, -1 - size);
+    if (quick) quick_push_end(C, done);
 }
 
 static void compile_super(Comp *C, Node *n) {
@@ -379,7 +458,7 @@ static int is_comparison(TokenType op) {
 
 static int operand_kind(Node *n) {
     if (n->kind == N_VAR && n->as.var.kind == VAR_LOCAL) return OPND_LOCAL;
-    return n->kind == N_LITERAL && IS_NUM(n->as.literal) ? OPND_CONST : OPND_STACK;
+    return n->kind == N_LITERAL && (IS_NUM(n->as.literal) || IS_STRING(n->as.literal)) ? OPND_CONST : OPND_STACK;
 }
 
 /* Compiles the operands of a op b, those that go on the stack; returns
@@ -396,7 +475,7 @@ static int compile_operands(Comp *C, Node *a, Node *b, int *ia, int *ib) {
 
 /* The condition of an if or while, and a jump (to patch) taken when it is
  * false. A comparison compares and jumps in one instruction (OP_CMP_JUMP),
- * reading locals and Numbers in place. */
+ * reading locals and written-out Numbers and strs in place. */
 static int compile_jump_unless(Comp *C, Node *cond, int line) {
     if (cond->kind == N_BINARY && is_comparison(cond->as.binary.op)) {
         int ia, ib, kinds = compile_operands(C, cond->as.binary.left, cond->as.binary.right, &ia, &ib);
@@ -870,11 +949,12 @@ static FuncDecl *compile_function(Comp *parent, FuncDecl *d) {
     d->has_default = arena_alloc(C->arena, (size_t)(d->nparams ? d->nparams : 1));
     d->plain = !d->is_ctor && !d->on_block;
     d->plain_method = d->is_method && !d->is_ctor;
+    d->plain_ctor = d->is_ctor;
     for (int i = 0; i < d->nparams; i++) {
         d->has_ref |= d->modes[i] == PARAM_REF;
         if (d->modes[i] != PARAM_LET || d->defaults[i] || (d->types && d->types[i].set && d->types[i].d.kind != TD_NUM)) {
             d->plain = 0;
-            if (i > 0) d->plain_method = 0;  /* (`this`, parameter 0, is lent) */
+            if (i > 0) d->plain_method = d->plain_ctor = 0;  /* (`this`, parameter 0, is lent, or the new instance) */
         }
     }
     for (int i = 0; i < d->nparams; i++)  /* (debug info) an `on` block's (old, new) are in its function's frame */

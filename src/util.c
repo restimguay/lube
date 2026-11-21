@@ -150,8 +150,15 @@ double lube_round(double x) {
 }
 
 void sb_init(StrBuf *sb) {
-    sb->data = NULL;
+    sb->data = sb->stack = NULL;
     sb->len = sb->cap = 0;
+}
+
+void sb_init_on(StrBuf *sb, char *buf, size_t size) {
+    sb->data = sb->stack = buf;
+    sb->len = 0;
+    sb->cap = size;
+    buf[0] = '\0';
 }
 
 static void sb_reserve(StrBuf *sb, size_t extra) {
@@ -160,7 +167,13 @@ static void sb_reserve(StrBuf *sb, size_t extra) {
     if (need <= sb->cap) return;
     size_t cap = sb->cap ? sb->cap : 64;
     while (cap < need) cap *= 2;
-    sb->data = xrealloc(sb->data, cap);
+    if (sb->stack && sb->data == sb->stack) {  /* (out of the caller's memory: onto the heap) */
+        char *heap = xrealloc(NULL, cap);
+        memcpy(heap, sb->data, sb->len + 1);
+        sb->data = heap;
+    } else {
+        sb->data = xrealloc(sb->data, cap);
+    }
     sb->cap = cap;
 }
 
@@ -193,8 +206,22 @@ void sb_printf(StrBuf *sb, const char *fmt, ...) {
 }
 
 void sb_free(StrBuf *sb) {
-    free(sb->data);
+    if (sb->data != sb->stack) free(sb->data);
     sb_init(sb);
+}
+
+int short_decimal(double x, int64_t *z) {
+    *z = 0;
+    static const double P10D[9] = {1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000};
+    for (int k = 0; k <= 8; k++) {
+        double r = round(x * P10D[k]);
+        if (!(fabs(r) < 900719925474099.0)) return -1;  /* (2^53 / 10: past it, k places would not be unique) */
+        if (r / P10D[k] == x) {  /* (one IEEE division: the double nearest that decimal) */
+            *z = (int64_t)r;
+            return k;
+        }
+    }
+    return -1;
 }
 
 /* ---------- files ---------- */

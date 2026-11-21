@@ -16,6 +16,8 @@
         }                                                                                                      \
     } while (0)
 
+#define IS_FLOAT_DT(t) ((t) == ARR_F64 || (t) == ARR_F32)
+
 /* An operand as an operation takes it: a Tensor, an Array or a Number as it is (borrowed); a list as a float32
  * Array (in *made, to let go of). Nothing after an error (in *err). */
 static LubeValue operand(LubeVM *vm, LubeValue v, LubeValue *made, LubeValue *err) {
@@ -64,7 +66,120 @@ static LubeValue t_binary(LubeVM *vm, int op, LubeValue av, LubeValue bv) {
 
 static LubeValue t_neg(LubeVM *vm, LubeValue a) { return result(vm, UN(NEG, data_of(a)), node_new(T_NEG, 1, &a)); }
 
-static double gelu(double x) { return 0.5 * x * (1 + erf(x * 0.7071067811865476)); }
+/* ---------- the activations: forward (g NULL) or g times their slope, in pieces on several threads ---------- */
+
+typedef struct {
+    int op;
+    const void *x, *o, *g;  /* input, the forward pass's output (for the slope), the gradient (NULL: forward) */
+    void *d;
+    double k, k2;           /* leaky_relu's slope, clamp's bounds */
+} ActJob;
+
+#define ACT_BLOCK 256  /* (GELU works in blocks, in two passes over each: few constants in each loop) */
+
+static void act_f32(void *ctx, int64_t from, int64_t to) {
+    const ActJob *j = (const ActJob *)ctx;
+    const float *x = (const float *)j->x + from, *o = j->o ? (const float *)j->o + from : NULL;
+    const float *g = j->g ? (const float *)j->g + from : NULL;
+    float *d = (float *)j->d + from, kf = (float)j->k, k2f = (float)j->k2;
+    double k = j->k;
+    int64_t n = to - from;
+    float bt[ACT_BLOCK], ba[ACT_BLOCK], bb[ACT_BLOCK];
+    switch (j->op) {
+    case T_SIGMOID:
+        if (!g) for (int64_t i = 0; i < n; i++) d[i] = vm_sigmoid(x[i]);
+        else for (int64_t i = 0; i < n; i++) d[i] = g[i] * o[i] * (1 - o[i]);
+        break;
+    case T_RELU:
+        if (!g) for (int64_t i = 0; i < n; i++) d[i] = x[i] > 0 ? x[i] : 0;
+        else for (int64_t i = 0; i < n; i++) d[i] = x[i] > 0 ? g[i] : 0;
+        break;
+    case T_LEAKY_RELU:
+        if (!g) for (int64_t i = 0; i < n; i++) d[i] = x[i] > 0 ? x[i] : (float)(k * x[i]);
+        else for (int64_t i = 0; i < n; i++) d[i] = x[i] > 0 ? g[i] : (float)(k * g[i]);
+        break;
+    case T_TANH:
+        if (!g) for (int64_t i = 0; i < n; i++) d[i] = vm_tanh(x[i]);
+        else for (int64_t i = 0; i < n; i++) d[i] = g[i] * (1 - o[i] * o[i]);
+        break;
+    case T_GELU:  /* x P(Z < x); its slope P(Z < x) + x e^(-x^2/2) / sqrt(2 pi) */
+        for (int64_t s = 0; s < n; s += ACT_BLOCK) {
+            int64_t m = n - s < ACT_BLOCK ? n - s : ACT_BLOCK;
+            const float *xb = x + s;
+            for (int64_t i = 0; i < m; i++) vm_phi_part(xb[i], &bt[i], &ba[i], &bb[i]);
+            if (!g) {
+                for (int64_t i = 0; i < m; i++) d[s + i] = vm_gelu_of(xb[i], vm_phi_tail(bt[i], ba[i], bb[i]));
+            } else {
+                for (int64_t i = 0; i < m; i++) bt[i] = vm_phi_tail(bt[i], ba[i], bb[i]);
+                for (int64_t i = 0; i < m; i++) {
+                    float cdf = xb[i] < 0 ? bt[i] : 1.0f - bt[i];
+                    d[s + i] = g[s + i] * (cdf + xb[i] * vm_gauss(xb[i]) * 0.3989422804014327f);
+                }
+            }
+        }
+        break;
+    case T_SILU:
+        if (!g) for (int64_t i = 0; i < n; i++) d[i] = x[i] / (1 + vm_exp(-x[i]));
+        else
+            for (int64_t i = 0; i < n; i++) {
+                float sg = vm_sigmoid(x[i]);
+                d[i] = g[i] * sg * (1 + x[i] * (1 - sg));
+            }
+        break;
+    default:  /* T_CLAMP */
+        if (!g) for (int64_t i = 0; i < n; i++) d[i] = x[i] < kf ? kf : x[i] > k2f ? k2f : x[i];
+        else for (int64_t i = 0; i < n; i++) d[i] = x[i] >= kf && x[i] <= k2f ? g[i] : 0;
+        break;
+    }
+}
+
+static void act_f64(void *ctx, int64_t from, int64_t to) {
+    const ActJob *j = (const ActJob *)ctx;
+    const double *x = (const double *)j->x, *o = (const double *)j->o, *g = (const double *)j->g;
+    double *d = (double *)j->d, k = j->k, k2 = j->k2;
+    switch (j->op) {
+    case T_SIGMOID:
+        if (!g) for (int64_t i = from; i < to; i++) d[i] = 1 / (1 + exp(-x[i]));
+        else for (int64_t i = from; i < to; i++) d[i] = g[i] * o[i] * (1 - o[i]);
+        break;
+    case T_RELU:
+        if (!g) for (int64_t i = from; i < to; i++) d[i] = x[i] > 0 ? x[i] : 0;
+        else for (int64_t i = from; i < to; i++) d[i] = x[i] > 0 ? g[i] : 0;
+        break;
+    case T_LEAKY_RELU:
+        if (!g) for (int64_t i = from; i < to; i++) d[i] = x[i] > 0 ? x[i] : k * x[i];
+        else for (int64_t i = from; i < to; i++) d[i] = x[i] > 0 ? g[i] : k * g[i];
+        break;
+    case T_TANH:
+        if (!g) for (int64_t i = from; i < to; i++) d[i] = tanh(x[i]);
+        else for (int64_t i = from; i < to; i++) d[i] = g[i] * (1 - o[i] * o[i]);
+        break;
+    case T_GELU:  /* (P(Z < x) as erfc's: 1 + erf(x) loses everything below -6 or so) */
+        if (!g) for (int64_t i = from; i < to; i++) d[i] = 0.5 * x[i] * erfc(-x[i] * 0.7071067811865476);
+        else
+            for (int64_t i = from; i < to; i++)
+                d[i] = g[i] * (0.5 * erfc(-x[i] * 0.7071067811865476) + x[i] * exp(-0.5 * x[i] * x[i]) * 0.3989422804014327);
+        break;
+    case T_SILU:
+        if (!g) for (int64_t i = from; i < to; i++) d[i] = x[i] / (1 + exp(-x[i]));
+        else
+            for (int64_t i = from; i < to; i++) {
+                double sg = 1 / (1 + exp(-x[i]));
+                d[i] = g[i] * sg * (1 + x[i] * (1 - sg));
+            }
+        break;
+    default:  /* T_CLAMP */
+        if (!g) for (int64_t i = from; i < to; i++) d[i] = x[i] < k ? k : x[i] > k2 ? k2 : x[i];
+        else for (int64_t i = from; i < to; i++) d[i] = x[i] >= k && x[i] <= k2 ? g[i] : 0;
+        break;
+    }
+}
+
+/* Runs an activation job over n elements: on several threads when there are enough. */
+static void act_go(ActJob *j, int dtype, int64_t n) {
+    int light = j->op == T_RELU || j->op == T_LEAKY_RELU || j->op == T_CLAMP || (j->g && j->op != T_GELU && j->op != T_SILU);
+    arr->parallel(n, light ? 65536 : dtype == ARR_F32 ? 8192 : 2048, dtype == ARR_F32 ? act_f32 : act_f64, j);
+}
 
 /* an activation (or exp, log...) elementwise: k, k2 its numbers (leaky_relu's slope, clamp's bounds) */
 static LubeValue t_unary(LubeVM *vm, int op, LubeValue xv, double k, double k2) {
@@ -76,27 +191,18 @@ static LubeValue t_unary(LubeVM *vm, int op, LubeValue xv, double k, double k2) 
     case T_EXP: data = UN(EXP, data_of(x)); break;
     case T_LOG: data = UN(LOG, data_of(x)); break;
     case T_SQRT: data = UN(SQRT, data_of(x)); break;
-    case T_TANH: data = UN(TANH, data_of(x)); break;
     case T_ABS: data = UN(ABS, data_of(x)); break;
-    default: {  /* computed here: sigmoid, relu, leaky_relu, gelu, silu, clamp */
+    default: {  /* computed here: sigmoid, tanh, relu, leaky_relu, gelu, silu, clamp */
+        if (op == T_TANH && !(array_of(x) && IS_FLOAT_DT(array_of(x)->dtype))) {  /* (whole numbers: float64, as array's) */
+            data = UN(TANH, data_of(x));
+            break;
+        }
         LubeValue src = float_data(vm, x);
-        Array *s = arr->get(src), *d;
+        Array *s = arr->get(src);
         void *dp;
-        data = arr->make(vm, s->dtype, s->ndim, s->shape, &dp);
-        d = arr->get(data);
-        int64_t n = s->size;
-        BY_DTYPE(s->dtype, {
-            const T *xs = (const T *)s->data;
-            T *o = (T *)d->data;
-            switch (op) {
-            case T_SIGMOID: for (int64_t i = 0; i < n; i++) o[i] = (T)(1 / (1 + exp(-(double)xs[i]))); break;
-            case T_RELU: for (int64_t i = 0; i < n; i++) o[i] = xs[i] > 0 ? xs[i] : 0; break;
-            case T_LEAKY_RELU: for (int64_t i = 0; i < n; i++) o[i] = xs[i] > 0 ? xs[i] : (T)(k * xs[i]); break;
-            case T_GELU: for (int64_t i = 0; i < n; i++) o[i] = (T)gelu(xs[i]); break;
-            case T_SILU: for (int64_t i = 0; i < n; i++) o[i] = (T)(xs[i] / (1 + exp(-(double)xs[i]))); break;
-            default: for (int64_t i = 0; i < n; i++) o[i] = xs[i] < k ? (T)k : xs[i] > k2 ? (T)k2 : xs[i]; break;
-            }
-        });
+        data = arr->make_empty(vm, s->dtype, s->ndim, s->shape, &dp);
+        ActJob j = {op, s->data, NULL, NULL, dp, k, k2};
+        act_go(&j, s->dtype, s->size);
         lube->release(src);
         break;
     }
@@ -116,31 +222,9 @@ static LubeValue slope(LubeVM *vm, int op, LubeValue xv, LubeValue outv, LubeVal
               gs_ = arr->contiguous(vm, gv, arr->get(xs_)->dtype);
     Array *xa = arr->get(xs_), *oa = arr->get(os_), *ga = arr->get(gs_);
     void *dp;
-    LubeValue r = arr->make(vm, xa->dtype, xa->ndim, xa->shape, &dp);
-    int64_t n = xa->size;
-    BY_DTYPE(xa->dtype, {
-        const T *x = (const T *)xa->data, *o = (const T *)oa->data, *g = (const T *)ga->data;
-        T *d = (T *)dp;
-        switch (op) {
-        case T_SIGMOID: for (int64_t i = 0; i < n; i++) d[i] = g[i] * o[i] * (1 - o[i]); break;
-        case T_RELU: for (int64_t i = 0; i < n; i++) d[i] = x[i] > 0 ? g[i] : 0; break;
-        case T_LEAKY_RELU: for (int64_t i = 0; i < n; i++) d[i] = x[i] > 0 ? g[i] : (T)(k * g[i]); break;
-        case T_GELU:
-            for (int64_t i = 0; i < n; i++) {
-                double xi = x[i];
-                d[i] = (T)(g[i] * (0.5 * (1 + erf(xi * 0.7071067811865476)) + xi * exp(-0.5 * xi * xi) * 0.3989422804014327));
-            }
-            break;
-        case T_SILU:
-            for (int64_t i = 0; i < n; i++) {
-                double s = 1 / (1 + exp(-(double)x[i]));
-                d[i] = (T)(g[i] * s * (1 + x[i] * (1 - s)));
-            }
-            break;
-        case T_TANH: for (int64_t i = 0; i < n; i++) d[i] = g[i] * (1 - o[i] * o[i]); break;
-        default: for (int64_t i = 0; i < n; i++) d[i] = x[i] >= k && x[i] <= k2 ? g[i] : 0; break;  /* clamp */
-        }
-    });
+    LubeValue r = arr->make_empty(vm, xa->dtype, xa->ndim, xa->shape, &dp);
+    ActJob j = {op, xa->data, oa->data, ga->data, dp, k, k2};
+    act_go(&j, xa->dtype, xa->size);
     lube->release(xs_);
     lube->release(os_);
     lube->release(gs_);
@@ -357,6 +441,58 @@ out:
 
 /* ---------- softmax and the losses ---------- */
 
+/* Rows of softmax (or log_softmax): each row's largest by eight at once, its exp's once each (float32's without
+ * the C library) added up in double, then scaled; rows on several threads. */
+typedef struct {
+    const void *x;
+    void *o;
+    int64_t n;
+    int logs;
+} SoftJob;
+
+static void softmax_rows_f32(void *ctx, int64_t from, int64_t to) {
+    const SoftJob *j = (const SoftJob *)ctx;
+    int64_t n = j->n;
+    for (int64_t r = from; r < to; r++) {
+        const float *row = (const float *)j->x + r * n;
+        float *orow = (float *)j->o + r * n, mk[8];
+        for (int k = 0; k < 8; k++) mk[k] = -INFINITY;
+        int64_t i = 0;
+        for (; i + 8 <= n; i += 8)
+            for (int k = 0; k < 8; k++) mk[k] = row[i + k] > mk[k] ? row[i + k] : mk[k];
+        float m = -INFINITY;
+        for (int k = 0; k < 8; k++) m = mk[k] > m ? mk[k] : m;
+        for (; i < n; i++) m = row[i] > m ? row[i] : m;
+        double sk[8] = {0}, sum = 0;
+        for (i = 0; i < n; i++) orow[i] = vm_exp(row[i] - m);  /* (alone: with the sums of doubles below in its
+                                                                  loop, it would not vectorize) */
+        for (i = 0; i + 8 <= n; i += 8)
+            for (int k = 0; k < 8; k++) sk[k] += orow[i + k];
+        for (; i < n; i++) sum += orow[i];
+        sum += ((sk[0] + sk[1]) + (sk[2] + sk[3])) + ((sk[4] + sk[5]) + (sk[6] + sk[7]));
+        if (j->logs) {
+            double lse = m + log(sum);
+            for (i = 0; i < n; i++) orow[i] = (float)(row[i] - lse);
+        } else {
+            double inv = 1 / sum;
+            for (i = 0; i < n; i++) orow[i] = (float)(orow[i] * inv);
+        }
+    }
+}
+
+static void softmax_rows_f64(void *ctx, int64_t from, int64_t to) {
+    const SoftJob *j = (const SoftJob *)ctx;
+    int64_t n = j->n;
+    for (int64_t r = from; r < to; r++) {
+        const double *row = (const double *)j->x + r * n;
+        double *orow = (double *)j->o + r * n, m = -INFINITY, sum = 0;
+        for (int64_t i = 0; i < n; i++) m = row[i] > m ? row[i] : m;
+        for (int64_t i = 0; i < n; i++) sum += orow[i] = exp(row[i] - m);
+        double lse = m + log(sum);
+        for (int64_t i = 0; i < n; i++) orow[i] = j->logs ? row[i] - lse : orow[i] / sum;
+    }
+}
+
 /* softmax (or log_softmax) of x along axis: rows of the C-contiguous data with axis last */
 static LubeValue softmax_data(LubeVM *vm, LubeValue xv, int axis, int logs) {
     Array *x = array_of(xv);
@@ -369,21 +505,10 @@ static LubeValue softmax_data(LubeVM *vm, LubeValue xv, int axis, int logs) {
     lube->release(moved);
     Array *s = arr->get(src);
     void *dp;
-    LubeValue out = arr->make(vm, s->dtype, s->ndim, s->shape, &dp);
+    LubeValue out = arr->make_empty(vm, s->dtype, s->ndim, s->shape, &dp);
     int64_t n = s->ndim ? s->shape[s->ndim - 1] : 1, rows = n ? s->size / n : 0;
-    BY_DTYPE(s->dtype, {
-        const T *xs = (const T *)s->data;
-        T *o = (T *)dp;
-        for (int64_t r = 0; r < rows; r++) {
-            const T *row = xs + r * n;
-            T *orow = o + r * n;
-            double m = -INFINITY, sum = 0;
-            for (int64_t i = 0; i < n; i++) m = row[i] > m ? row[i] : m;
-            for (int64_t i = 0; i < n; i++) sum += exp(row[i] - m);
-            double lse = m + log(sum);
-            for (int64_t i = 0; i < n; i++) orow[i] = (T)(logs ? row[i] - lse : exp(row[i] - m) / sum);
-        }
-    });
+    SoftJob j = {s->data, dp, n, logs};
+    arr->parallel(rows, 16384 / (n ? n : 1) + 1, s->dtype == ARR_F32 ? softmax_rows_f32 : softmax_rows_f64, &j);
     lube->release(src);
     int back[ARR_MAXDIM];  /* (the rows' axis put back) */
     for (int d = 0; d < x->ndim; d++) back[axes[d]] = d;
@@ -572,7 +697,7 @@ static LubeValue t_embedding(LubeVM *vm, LubeValue iv, LubeValue wv) {
     memcpy(shape, ia->shape, sizeof(int64_t) * (size_t)ia->ndim);
     shape[ia->ndim] = dim;
     void *dp;
-    LubeValue data = arr->make(vm, wa->dtype, ia->ndim + 1, shape, &dp);
+    LubeValue data = arr->make_empty(vm, wa->dtype, ia->ndim + 1, shape, &dp);  /* (every row is copied in) */
     int z = arr->itemsize[wa->dtype];
     for (int64_t i = 0; i < ia->size; i++)
         memcpy((char *)dp + i * dim * z, wa->data + ((int64_t *)ia->data)[i] * dim * z, (size_t)(dim * z));
@@ -584,6 +709,50 @@ static LubeValue t_embedding(LubeVM *vm, LubeValue iv, LubeValue wv) {
 }
 
 /* layer_norm(x, weight?, bias?, eps) over x's last dimension */
+/* Rows of layer_norm: the mean and variance in four sums at once (in double), x-hat (if kept) and the output;
+ * rows on several threads. */
+typedef struct {
+    const void *x, *w, *b;
+    void *o, *h;      /* (h: x-hat, or NULL) */
+    double *rstd;     /* (or NULL) */
+    int64_t d;
+    double eps;
+    int f32;
+} NormJob;
+
+#define NORM_ROWS(T)                                                                                           \
+    do {                                                                                                       \
+        const T *ww = (const T *)j->w, *bb = (const T *)j->b;                                                  \
+        for (int64_t r = from; r < to; r++) {                                                                  \
+            const T *x = (const T *)j->x + r * d;                                                              \
+            T *o = (T *)j->o + r * d, *h = j->h ? (T *)j->h + r * d : NULL;                                    \
+            double s[4] = {0}, q[4] = {0}, mean = 0, var = 0;                                                  \
+            int64_t i = 0;                                                                                     \
+            for (; i + 4 <= d; i += 4)                                                                         \
+                for (int k = 0; k < 4; k++) s[k] += x[i + k];                                                  \
+            for (; i < d; i++) mean += x[i];                                                                   \
+            mean = (mean + ((s[0] + s[1]) + (s[2] + s[3]))) / (double)d;                                       \
+            for (i = 0; i + 4 <= d; i += 4)                                                                    \
+                for (int k = 0; k < 4; k++) q[k] += (x[i + k] - mean) * (x[i + k] - mean);                     \
+            for (; i < d; i++) var += (x[i] - mean) * (x[i] - mean);                                           \
+            var += (q[0] + q[1]) + (q[2] + q[3]);                                                              \
+            double rs = 1 / sqrt(var / (double)d + j->eps);                                                    \
+            if (j->rstd) j->rstd[r] = rs;                                                                      \
+            for (i = 0; i < d; i++) {                                                                          \
+                double hv = (x[i] - mean) * rs;                                                                \
+                if (h) h[i] = (T)hv;                                                                           \
+                o[i] = (T)(hv * (ww ? ww[i] : 1) + (bb ? bb[i] : 0));                                          \
+            }                                                                                                  \
+        }                                                                                                      \
+    } while (0)
+
+static void norm_rows(void *ctx, int64_t from, int64_t to) {
+    const NormJob *j = (const NormJob *)ctx;
+    int64_t d = j->d;
+    if (j->f32) NORM_ROWS(float);
+    else NORM_ROWS(double);
+}
+
 static LubeValue t_layer_norm(LubeVM *vm, LubeValue xv, LubeValue wv, LubeValue bv, double eps) {
     LubeValue mx, err;
     LubeValue x = operand(vm, xv, &mx, &err);
@@ -598,38 +767,22 @@ static LubeValue t_layer_norm(LubeVM *vm, LubeValue xv, LubeValue wv, LubeValue 
         return lube->error(vm, "layer_norm(): the weight and bias must have the last dimension's length (%.0f)", (double)d);
     }
     LubeValue wc = w ? arr->contiguous(vm, data_of(wv), xa->dtype) : lube->nothing(), bc = b ? arr->contiguous(vm, data_of(bv), xa->dtype) : lube->nothing();
-    void *dp, *hp, *rp;
-    LubeValue data = arr->make(vm, xa->dtype, xa->ndim, xa->shape, &dp);
-    LubeValue xhat = arr->make(vm, xa->dtype, xa->ndim, xa->shape, &hp), rstd = arr->make(vm, ARR_F64, 1, &rows, &rp);
-    BY_DTYPE(xa->dtype, {
-        const T *xr = (const T *)xa->data, *ww = w ? (const T *)arr->get(wc)->data : NULL, *bb = b ? (const T *)arr->get(bc)->data : NULL;
-        T *o = (T *)dp, *h = (T *)hp;
-        for (int64_t r = 0; r < rows; r++) {
-            double mean = 0, var = 0;
-            for (int64_t i = 0; i < d; i++) mean += xr[r * d + i];
-            mean /= (double)d;
-            for (int64_t i = 0; i < d; i++) var += (xr[r * d + i] - mean) * (xr[r * d + i] - mean);
-            double rs = 1 / sqrt(var / (double)d + eps);
-            ((double *)rp)[r] = rs;
-            for (int64_t i = 0; i < d; i++) {
-                double hv = (xr[r * d + i] - mean) * rs;
-                h[r * d + i] = (T)hv;
-                o[r * d + i] = (T)(hv * (ww ? ww[i] : 1) + (bb ? bb[i] : 0));
-            }
-        }
-    });
+    LubeValue in[3] = {x, w ? wv : NUM(0), b ? bv : NUM(0)};
+    Node *nd = node_new(T_LAYER_NORM, 3, in);  /* (first: x-hat and 1/std are kept only for a backward pass) */
+    void *dp, *hp = NULL, *rp = NULL;
+    LubeValue data = arr->make_empty(vm, xa->dtype, xa->ndim, xa->shape, &dp);
+    LubeValue xhat = nd ? arr->make_empty(vm, xa->dtype, xa->ndim, xa->shape, &hp) : lube->nothing();
+    LubeValue rstd = nd ? arr->make_empty(vm, ARR_F64, 1, &rows, &rp) : lube->nothing();
+    NormJob j = {xa->data, w ? arr->get(wc)->data : NULL, b ? arr->get(bc)->data : NULL, dp, hp, (double *)rp, d, eps,
+                 xa->dtype == ARR_F32};
+    arr->parallel(rows, 16384 / (d ? d : 1) + 1, norm_rows, &j);
     lube->release(xs);
     lube->release(wc);
     lube->release(bc);
-    LubeValue in[3] = {x, w ? wv : NUM(0), b ? bv : NUM(0)};
-    Node *nd = node_new(T_LAYER_NORM, 3, in);
     if (nd) {
         nd->saved[0] = xhat;
         nd->saved[1] = rstd;
         nd->flag = (w != NULL) | (b != NULL) << 1;
-    } else {
-        lube->release(xhat);
-        lube->release(rstd);
     }
     lube->release(mx);
     return result(vm, data, nd);
@@ -641,7 +794,7 @@ static LubeValue t_dropout(LubeVM *vm, LubeValue x, double p, int training) {
     LubeValue xs = float_data(vm, x);
     Array *xa = arr->get(xs);
     void *mp, *dp;
-    LubeValue mask = arr->make(vm, xa->dtype, xa->ndim, xa->shape, &mp), data = arr->make(vm, xa->dtype, xa->ndim, xa->shape, &dp);
+    LubeValue mask = arr->make_empty(vm, xa->dtype, xa->ndim, xa->shape, &mp), data = arr->make_empty(vm, xa->dtype, xa->ndim, xa->shape, &dp);
     arr->fill_random(mp, xa->dtype, xa->size, 0, 0, 1);
     BY_DTYPE(xa->dtype, {
         T *m = (T *)mp, *o = (T *)dp;
@@ -675,6 +828,30 @@ static LubeValue t_dropout(LubeVM *vm, LubeValue x, double p, int training) {
                 }                                                                                              \
             }
 
+/* im2col for images from..to, on several threads */
+typedef struct {
+    const void *x;
+    void *cols;
+    int64_t C, H, W, K, S, P, OH, OW;
+    int f32;
+} ColJob;
+
+static void im2col_images(void *ctx, int64_t from, int64_t to) {
+    const ColJob *j = (const ColJob *)ctx;
+    int64_t C = j->C, H = j->H, W = j->W, K = j->K, OH = j->OH, OW = j->OW;
+    for (int64_t n = from; n < to; n++) {
+        if (j->f32) {
+            const float *xi = (const float *)j->x + n * C * H * W;
+            float *ci = (float *)j->cols + n * C * K * K * OH * OW;
+            IM2COL(float, xi, ci, C, H, W, K, j->S, j->P, OH, OW)
+        } else {
+            const double *xi = (const double *)j->x + n * C * H * W;
+            double *ci = (double *)j->cols + n * C * K * K * OH * OW;
+            IM2COL(double, xi, ci, C, H, W, K, j->S, j->P, OH, OW)
+        }
+    }
+}
+
 /* conv2d(x (N, C, H, W), weight (O, C, K, K), bias (O) or nothing, stride, padding) */
 static LubeValue t_conv2d(LubeVM *vm, LubeValue xv, LubeValue wv, LubeValue bv, int stride, int pad) {
     Array *x = array_of(xv), *w = array_of(wv), *b = lube->kind(bv) == LUBE_NOTHING ? NULL : array_of(bv);
@@ -688,14 +865,9 @@ static LubeValue t_conv2d(LubeVM *vm, LubeValue xv, LubeValue wv, LubeValue bv, 
     Array *xa = arr->get(xs);
     int64_t cshape[3] = {N, C * K * K, OH * OW};
     void *cp;
-    LubeValue cols = arr->make(vm, xa->dtype, 3, cshape, &cp);
-    BY_DTYPE(xa->dtype, {
-        for (int64_t n = 0; n < N; n++) {
-            const T *xi = (const T *)xa->data + n * C * H * W;
-            T *ci = (T *)cp + n * C * K * K * OH * OW;
-            IM2COL(T, xi, ci, C, H, W, K, stride, pad, OH, OW)
-        }
-    });
+    LubeValue cols = arr->make_empty(vm, xa->dtype, 3, cshape, &cp);  /* (IM2COL writes every element, 0s too) */
+    ColJob cj = {xa->data, cp, C, H, W, K, stride, pad, OH, OW, xa->dtype == ARR_F32};
+    arr->parallel(N, 16384 / (C * K * K * OH * OW + 1) + 1, im2col_images, &cj);
     lube->release(xs);
     int64_t w2s[2] = {O, C * K * K};
     LubeValue wc = arr->contiguous(vm, data_of(wv), xa->dtype);
@@ -706,12 +878,21 @@ static LubeValue t_conv2d(LubeVM *vm, LubeValue xv, LubeValue wv, LubeValue bv, 
     int64_t oshape[4] = {N, O, OH, OW};
     LubeValue data = arr->reshape(vm, prod, 4, oshape);
     lube->release(prod);
-    if (b) {
-        int64_t bs[4] = {1, O, 1, 1};
-        LubeValue bb = arr->reshape(vm, data_of(bv), 4, bs), sum = BIN(ADD, data, bb);
-        lube->release(bb);
-        lube->release(data);
-        data = sum;
+    if (b) {  /* (the bias added in place: the product is this function's own) */
+        Array *da = arr->get(data);
+        LubeValue bc = arr->contiguous(vm, data_of(bv), da->dtype);
+        arr->own(da);
+        int64_t plane = OH * OW;
+        BY_DTYPE(da->dtype, {
+            T *d = (T *)da->data;
+            const T *bb = (const T *)arr->get(bc)->data;
+            for (int64_t n = 0; n < N; n++)
+                for (int64_t o = 0; o < O; o++) {
+                    T *p = d + (n * O + o) * plane, add = bb[o];
+                    for (int64_t i = 0; i < plane; i++) p[i] += add;
+                }
+        });
+        lube->release(bc);
     }
     LubeValue in[3] = {xv, wv, b ? bv : NUM(0)};
     Node *nd = node_new(T_CONV2D, 3, in);

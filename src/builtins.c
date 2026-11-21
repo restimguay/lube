@@ -298,7 +298,7 @@ NATIVE(n_push) {
     }
     make_unique(&argv[0]);
     ObjList *l = AS_LIST(argv[0]);
-    for (int i = 1; i < argc; i++) list_push(l, lube_check_elem(I, type_name(argv[0]), elem, argv[i]));  /* checked */
+    for (int i = 1; i < argc; i++) list_push(l, CHECK_ELEM(I, type_name(argv[0]), elem, argv[i]));  /* checked */
     return NIL_VAL;
 }
 
@@ -315,7 +315,7 @@ NATIVE(n_insert) {
     (void)argc;
     NEED_LIST(0);
     NEED_INT(1);
-    Value item = lube_check_elem(I, type_name(argv[0]), AS_LIST(argv[0])->elem, argv[2]);
+    Value item = CHECK_ELEM(I, type_name(argv[0]), AS_LIST(argv[0])->elem, argv[2]);
     if (IS_ERR(item)) return item;
     make_unique(&argv[0]);
     ObjList *l = AS_LIST(argv[0]);
@@ -542,11 +542,185 @@ static int sort_numbers(Interp *I, ObjList *src, ObjList *out) {
     return failed ? -1 : 0;
 }
 
+/* sort() of texts alone: the same merge sort and the same order (bytes, then length), each text carrying its
+ * first 8 bytes as a number, so that most comparisons are one of numbers. */
+typedef struct {
+    uint64_t key;  /* (the first 8 bytes, big-endian, zeros after a short one) */
+    ObjString *s;
+    Value v;
+} TextKey;
+
+static int text_before(const TextKey *b, const TextKey *a) {  /* b < a */
+    if (b->key != a->key) return b->key < a->key;
+    size_t n = b->s->length < a->s->length ? b->s->length : a->s->length;
+    int c = memcmp(b->s->chars, a->s->chars, n);
+    return c ? c < 0 : b->s->length < a->s->length;
+}
+
+static void sort_texts(ObjList *src, ObjList *out) {
+    size_t n = src->count;
+    TextKey *a = xmalloc(sizeof(TextKey) * (n ? n : 1)), *tmp = xmalloc(sizeof(TextKey) * (n ? n : 1));
+    for (size_t i = 0; i < n; i++) {
+        ObjString *t = text_of(src->items[i]);
+        uint64_t k = 0;
+        for (size_t b = 0; b < 8; b++) k = k << 8 | (b < t->length ? (unsigned char)t->chars[b] : 0);
+        a[i].key = k;
+        a[i].s = t;
+        a[i].v = src->items[i];
+    }
+    for (size_t width = 1; width < n; width *= 2) {
+        for (size_t lo = 0; lo < n; lo += 2 * width) {
+            size_t mid = lo + width < n ? lo + width : n, hi = lo + 2 * width < n ? lo + 2 * width : n;
+            size_t i = lo, j = mid, k = lo;
+            while (i < mid && j < hi) tmp[k++] = text_before(&a[j], &a[i]) ? a[j++] : a[i++];
+            while (i < mid) tmp[k++] = a[i++];
+            while (j < hi) tmp[k++] = a[j++];
+        }
+        TextKey *t = a;
+        a = tmp;
+        tmp = t;
+    }
+    list_reserve(out, n);
+    for (size_t i = 0; i < n; i++) out->items[out->count++] = retain(a[i].v);
+    free(a);
+    free(tmp);
+}
+
+/* sort(xs, key): key a function of one item, called once for each (as Python's key=), the items then in the
+ * order of their keys (compared as sort() compares items), equal ones as they came. */
+typedef struct {
+    Value key;
+    size_t at;
+} Keyed;
+
+static int keyed_before(Interp *I, const Keyed *b, const Keyed *a, int how, int *failed) {
+    if (how == 1) return b->key.as.number < a->key.as.number;  /* (Numbers, no nan among them) */
+    if (how == 2) {                                            /* (texts) */
+        ObjString *x = text_of(b->key), *y = text_of(a->key);
+        size_t n = x->length < y->length ? x->length : y->length;
+        int c = memcmp(x->chars, y->chars, n);
+        return c ? c < 0 : x->length < y->length;
+    }
+    return compare(I, b->key, a->key, "sort", failed) < 0;
+}
+
+/* Sorts keys k (with their places in at) by a stable LSD radix sort, a byte at a time, skipping bytes all share. */
+static void radix_keyed(uint64_t *k, size_t *at, size_t n) {
+    uint64_t *kt = xmalloc(sizeof(uint64_t) * (n ? n : 1));
+    size_t *att = xmalloc(sizeof(size_t) * (n ? n : 1)), (*count)[256] = xmalloc(8 * sizeof *count);
+    memset(count, 0, 8 * sizeof *count);
+    for (size_t i = 0; i < n; i++)
+        for (int d = 0; d < 8; d++) count[d][(k[i] >> (8 * d)) & 255]++;
+    for (int d = 0; d < 8 && n; d++) {
+        if (count[d][(k[0] >> (8 * d)) & 255] == n) continue;
+        size_t pos = 0;
+        for (int b = 0; b < 256; b++) {
+            size_t c = count[d][b];
+            count[d][b] = pos;
+            pos += c;
+        }
+        for (size_t i = 0; i < n; i++) {
+            size_t to = count[d][(k[i] >> (8 * d)) & 255]++;
+            kt[to] = k[i];
+            att[to] = at[i];
+        }
+        memcpy(k, kt, sizeof(uint64_t) * n);
+        memcpy(at, att, sizeof(size_t) * n);
+    }
+    free(kt);
+    free(att);
+    free(count);
+}
+
+/* A stable merge sort of x[0..n) by keyed_before (buf: room for n more); 0 after an error (in *failed). */
+static void merge_keyed(Interp *I, Keyed *x, Keyed *buf, size_t n, int how, int *failed) {
+    Keyed *a = x, *b = buf;
+    for (size_t width = 1; width < n && !*failed; width *= 2) {
+        for (size_t lo = 0; lo < n && !*failed; lo += 2 * width) {
+            size_t mid = lo + width < n ? lo + width : n, hi = lo + 2 * width < n ? lo + 2 * width : n;
+            size_t i = lo, j = mid, k = lo;
+            while (i < mid && j < hi && !*failed) b[k++] = keyed_before(I, &a[j], &a[i], how, failed) ? a[j++] : a[i++];
+            while (i < mid) b[k++] = a[i++];
+            while (j < hi) b[k++] = a[j++];
+        }
+        Keyed *t = a;
+        a = b;
+        b = t;
+    }
+    if (a != x) memcpy(x, a, sizeof(Keyed) * n);
+}
+
+static Value sort_by_key(Interp *I, ObjList *src, Value key) {
+    size_t n = src->count;
+    Keyed *a = xmalloc(sizeof(Keyed) * (n ? n : 1)), *tmp = xmalloc(sizeof(Keyed) * (n ? n : 1));
+    size_t made = 0;
+    int nums = 1, texts = 1, failed = 0;
+    for (; made < n; made++) {
+        Value item = src->items[made];
+        Value k = need_result(I, lube_call(I, key, 1, &item), "sort");
+        if (IS_ERR(k)) {
+            failed = 1;
+            break;
+        }
+        a[made].key = k;
+        a[made].at = made;
+        nums &= IS_NUM(k) && k.as.number == k.as.number;
+        texts &= IS_TEXT(k);
+    }
+    if (!failed && n && (nums || texts)) {  /* (Numbers: a radix sort of their bits; texts: of their first 8 bytes) */
+        uint64_t *k = xmalloc(sizeof(uint64_t) * n);
+        size_t *at = xmalloc(sizeof(size_t) * n);
+        for (size_t i = 0; i < n; i++) {
+            uint64_t b = 0;
+            if (nums) {
+                double x = a[i].key.as.number == 0 ? 0.0 : a[i].key.as.number;  /* (-0 is 0) */
+                memcpy(&b, &x, sizeof b);
+                b = b >> 63 ? ~b : b | 0x8000000000000000ull;
+            } else {
+                ObjString *t = text_of(a[i].key);
+                for (size_t c = 0; c < 8; c++) b = b << 8 | (c < t->length ? (unsigned char)t->chars[c] : 0);
+            }
+            k[i] = b;
+            at[i] = i;
+        }
+        radix_keyed(k, at, n);
+        for (size_t i = 0; i < n; i++) tmp[i] = a[at[i]];
+        memcpy(a, tmp, sizeof(Keyed) * n);
+        for (size_t lo = 0; texts && lo < n;) {  /* (texts with the same first 8 bytes: by the rest, stably) */
+            size_t hi = lo + 1;
+            while (hi < n && k[hi] == k[lo]) hi++;
+            if (hi - lo > 1) merge_keyed(I, a + lo, tmp, hi - lo, 2, &failed);
+            lo = hi;
+        }
+        free(k);
+        free(at);
+    } else if (!failed) {
+        merge_keyed(I, a, tmp, made, 0, &failed);
+    }
+    Value result = ERR_VAL;
+    if (!failed) {
+        ObjList *out = new_list();
+        out->elem = src->elem;
+        list_reserve(out, n);
+        for (size_t i = 0; i < n; i++) out->items[out->count++] = retain(src->items[a[i].at]);
+        result = OBJ_VAL(out);
+    }
+    for (size_t i = 0; i < made; i++) release(a[i].key);
+    free(a);
+    free(tmp);
+    return result;
+}
+
 /* Stable bottom-up merge sort into a new list. */
 NATIVE(n_sort) {
     Value cmp = argc > 1 ? argv[1] : NIL_VAL;
     if (!IS_NIL(cmp)) NEED_FN(1);
     LIST_ARG(src, 0);
+    if (IS_FUNCTION(cmp) && AS_FUNCTION(cmp)->decl->nparams == 1 && !AS_FUNCTION(cmp)->decl->is_method) {  /* a key */
+        Value r = sort_by_key(I, src, cmp);
+        release(OBJ_VAL(src));
+        return r;
+    }
     size_t n = src->count, numbers = IS_NIL(cmp);
     for (size_t i = 0; i < n && numbers; i++) numbers = IS_NUM(src->items[i]);
     if (numbers) {  /* the common case, without a comparison call for each pair */
@@ -556,6 +730,15 @@ NATIVE(n_sort) {
         if (IS_ERR(result)) release(OBJ_VAL(out));
         release(OBJ_VAL(src));
         return result;
+    }
+    int texts = IS_NIL(cmp);
+    for (size_t i = 0; i < n && texts; i++) texts = IS_TEXT(src->items[i]);
+    if (texts) {  /* the other common one */
+        ObjList *out = new_list();
+        out->elem = src->elem;
+        sort_texts(src, out);
+        release(OBJ_VAL(src));
+        return OBJ_VAL(out);
     }
     Value *a = xmalloc(sizeof(Value) * (n ? n : 1));
     Value *tmp = xmalloc(sizeof(Value) * (n ? n : 1));
@@ -886,7 +1069,13 @@ NATIVE(n_sum) {
     (void)argc;
     LIST_ARG(src, 0);
     Value total = NUM_VAL(0);
-    for (size_t i = 0; i < src->count; i++) {
+    size_t i = 0;
+    if (src->count && IS_NUM(src->items[0])) {  /* (a run of Numbers: added as doubles, in the same order) */
+        double s = src->items[0].as.number;
+        for (i = 1; i < src->count && IS_NUM(src->items[i]); i++) s += src->items[i].as.number;
+        total = NUM_VAL(s);
+    }
+    for (; i < src->count; i++) {
         Value item = src->items[i];
         if (!IS_NUMERIC(item) && !IS_MONEY(item)) {
             Value e = lube_error(I, "sum() can only add numbers, found %s", a_type(item));
@@ -1454,7 +1643,7 @@ static const struct {
     LUBE_BUILTIN(uint32, n_uint32, 0, 1, 0)
     LUBE_BUILTIN(uint64, n_uint64, 0, 1, 0)
     /* changing collections in place (first argument taken with &) */
-    LUBE_BUILTIN(push, n_push, 2, -1, 1)
+    LUBE_BUILTIN(push, n_push, 2, -1, 2)  /* (2: the VM appends one value to a local List itself, as n_push does) */
     LUBE_BUILTIN(pop, n_pop, 1, 1, 1)
     LUBE_BUILTIN(insert, n_insert, 3, 3, 1)
     LUBE_BUILTIN(remove, n_remove, 2, 2, 1)

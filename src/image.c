@@ -211,7 +211,8 @@ static void w_func(Writer *w, const FuncDecl *d) {
     for (int i = 0; d->types && i < d->nparams; i++) w_type(w, &d->types[i]);
     w_type(w, &d->ret);
     w_u32(o, (uint32_t)d->strict | (uint32_t)d->is_arrow << 1 | (uint32_t)d->is_method << 2 | (uint32_t)d->is_ctor << 3 |
-                 (uint32_t)d->has_ref << 4 | (uint32_t)d->plain << 5 | (uint32_t)d->plain_method << 6);
+                 (uint32_t)d->has_ref << 4 | (uint32_t)d->plain << 5 | (uint32_t)d->plain_method << 6 |
+                 (uint32_t)d->plain_ctor << 7);
     w_u32(o, (uint32_t)d->nslots);
     w_u32(o, (uint32_t)d->line);
     w_str(w, d->key);
@@ -553,6 +554,7 @@ static void r_func(Reader *r, FuncDecl *d) {
     d->has_ref = (unsigned char)((f >> 4) & 1);
     d->plain = (unsigned char)((f >> 5) & 1);
     d->plain_method = (unsigned char)((f >> 6) & 1);
+    d->plain_ctor = (unsigned char)((f >> 7) & 1);
     d->nslots = r_int(r);
     d->line = r_int(r);
     d->key = r_str(r);

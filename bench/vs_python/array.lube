@@ -1,0 +1,289 @@
+// array.lube: the plugin array (array.py does the same with numpy): making Arrays, every elementwise operator and
+// function, comparisons and masks, where and clip, reductions over everything and along each axis, sorting and
+// selecting, indexing, slicing, changing items, shapes, dtypes, and files. Both sides draw the same numbers (array
+// gives numpy's for the same seed). The size is the number of elements (or of iterations, for the loops).
+import "harness"
+import array as np
+import fs
+
+fn cols(n) {  // the 2-D Arrays: n elements in rows of this many
+  if n <= 1000 { return 40 }
+  if n <= 200000 { return 400 }
+  return 4000
+}
+fn weighted(a) => (a.astype("float64") * np.arange(a.size).reshape(a.shape)).sum() / a.size  // (depends on the order)
+
+for n in [1000, 100000, 10000000] {
+  np.seed(10)
+  let x = np.rand(n) * 2 - 1         // [-1, 1)
+  let p = np.rand(n) + 0.5           // [0.5, 1.5)
+  let q = np.rand(n) + 0.5
+  let pp = 1 + (np.rand(n) - 0.5) * 1e-3   // near 1: products
+  let idx = np.randint(0, n, n)
+  let x10 = x * 10
+  let p1 = p + 1
+  let q1 = q - 1
+  let x32 = x.astype("float32")
+  let p32 = p.astype("float32")
+  let q32 = q.astype("float32")
+  let mask = x > 0
+  let mask2 = q1 > 0
+  let mask_all = p > 0
+  let c = cols(n)
+  let r = n / c
+  let m2 = x.reshape(r, c)
+  let row = x[0..c]
+  let col = x[0..r].reshape(r, 1)
+  let inp = {x: x, p: p, q: q, x10: x10, p1: p1, x32: x32, p32: p32, mask: mask}
+
+  // ---------- making Arrays ----------
+  bench("zeros", n, fn() => np.zeros(n))
+  bench("ones", n, fn() => np.ones(n))
+  bench("full", n, fn() => np.full(n, 7))
+  bench("arange", n, fn() => np.arange(n))
+  bench("linspace", n, fn() => np.linspace(0, 1, n))
+  let k = round(sqrt(n))
+  bench("eye", n, fn() => np.eye(k))
+  bench("zeros_like", n, fn() => np.zeros_like(x))
+  bench("copy", n, fn() => x.copy())
+  np.seed(11)
+  bench("rand", n, fn() => np.rand(n))
+  np.seed(11)
+  bench("randn", n, fn() => np.randn(n))
+  np.seed(11)
+  bench("randint", n, fn() => np.randint(0, 100, n))
+  np.seed(11)
+  bench("uniform", n, fn() => np.uniform(-1, 1, n))
+  np.seed(11)
+  bench("normal", n, fn() => np.normal(3, 2, n))
+  np.seed(11)
+  bench_chk("permutation", n, fn() => np.permutation(n), weighted)
+  let lst = x.to_list()
+  bench("array_from_list", n, fn() => np.array(lst))
+  bench("to_list", n, fn() => x.to_list())
+  let raw = x.to_bytes()
+  bench("to_bytes", n, fn() => x.to_bytes())
+  bench("from_bytes", n, fn() => np.from_bytes(raw, "float64"))
+
+  // ---------- elementwise: one Array ----------
+  let unary = [["negative", "x", np.negative], ["abs", "x", np.abs], ["sqrt", "p", np.sqrt], ["cbrt", "x", np.cbrt],
+               ["exp", "x", np.exp], ["exp2", "x", np.exp2], ["expm1", "x", np.expm1], ["log", "p", np.log],
+               ["log2", "p", np.log2], ["log10", "p", np.log10], ["log1p", "p", np.log1p], ["sin", "x", np.sin],
+               ["cos", "x", np.cos], ["tan", "x", np.tan], ["arcsin", "x", np.arcsin], ["arccos", "x", np.arccos],
+               ["arctan", "x", np.arctan], ["sinh", "x", np.sinh], ["cosh", "x", np.cosh], ["tanh", "x", np.tanh],
+               ["arcsinh", "x", np.arcsinh], ["arccosh", "p1", np.arccosh], ["arctanh", "x", np.arctanh],
+               ["erf", "x", np.erf], ["floor", "x10", np.floor], ["ceil", "x10", np.ceil], ["trunc", "x10", np.trunc],
+               ["rint", "x10", np.rint], ["round_2", "x10", fn(a) => np.round(a, 2)], ["sign", "x", np.sign],
+               ["square", "x", np.square], ["reciprocal", "p", np.reciprocal], ["isnan", "x", np.isnan],
+               ["isinf", "x", np.isinf], ["isfinite", "x", np.isfinite], ["logical_not", "mask", np.logical_not],
+               ["abs_f32", "x32", np.abs], ["sqrt_f32", "p32", np.sqrt], ["exp_f32", "x32", np.exp],
+               ["log_f32", "p32", np.log], ["sin_f32", "x32", np.sin], ["tanh_f32", "x32", np.tanh]]
+  for u in unary {
+    let f = u[2]
+    let a = inp[u[1]]
+    bench(u[0], n, fn() => f(a))
+  }
+
+  // ---------- elementwise: two Arrays, or an Array and a Number ----------
+  bench("add", n, fn() => x + q)
+  bench("subtract", n, fn() => x - q)
+  bench("multiply", n, fn() => x * q)
+  bench("divide", n, fn() => x / q)
+  bench("mod", n, fn() => x % q)
+  bench("power", n, fn() => p ** q)
+  bench("add_scalar", n, fn() => x + 1.5)
+  bench("multiply_scalar", n, fn() => x * 2.5)
+  bench("power_scalar_2", n, fn() => x ** 2)
+  bench("maximum", n, fn() => np.maximum(x, q1))
+  bench("minimum", n, fn() => np.minimum(x, q1))
+  bench("arctan2", n, fn() => np.arctan2(x, q))
+  bench("hypot", n, fn() => np.hypot(x, q))
+  bench("fmod", n, fn() => np.fmod(x, q))
+  bench("floor_divide", n, fn() => np.floor_divide(x10, q))
+  bench("copysign", n, fn() => np.copysign(q, x))
+  bench("add_f32", n, fn() => x32 + q32)
+  bench("multiply_f32", n, fn() => x32 * q32)
+  bench("divide_f32", n, fn() => x32 / q32)
+  bench("expr_axpy", n, fn() => 2.5 * x + q)
+  bench("expr_poly", n, fn() => x * x * 3 + x * 2 + 1)
+  bench("broadcast_row", n, fn() => m2 + row)
+  bench("broadcast_col", n, fn() => m2 * col)
+
+  // ---------- comparisons and masks, where, clip ----------
+  bench("less", n, fn() => x < q1)
+  bench("greater_scalar", n, fn() => x > 0)
+  bench("equal", n, fn() => x == q1)
+  bench("logical_and", n, fn() => np.logical_and(mask, mask2))
+  bench("logical_or", n, fn() => np.logical_or(mask, mask2))
+  bench("logical_xor", n, fn() => np.logical_xor(mask, mask2))
+  bench("isclose", n, fn() => np.isclose(x, q1))
+  bench("allclose", n, fn() => np.allclose(x, x))
+  bench("bool_index", n, fn() => x[mask])
+  bench("where_scalar", n, fn() => np.where(mask, x, 0))
+  bench("where_arrays", n, fn() => np.where(mask, x, q))
+  bench("nonzero", n, fn() => np.nonzero(mask))
+  bench("clip", n, fn() => np.clip(x, -0.5, 0.5))
+  bench("setitem_mask", n, fn() {
+    var b = x.copy()
+    b[mask] = 0
+    return b
+  })
+
+  // ---------- reductions over everything ----------
+  bench("sum", n, fn() => x.sum())
+  bench("prod", n, fn() => pp.prod())
+  bench("mean", n, fn() => x.mean())
+  bench("std", n, fn() => x.std())
+  bench("var", n, fn() => x.var())
+  bench("min", n, fn() => x.min())
+  bench("max", n, fn() => x.max())
+  bench("argmin", n, fn() => x.argmin())
+  bench("argmax", n, fn() => x.argmax())
+  bench("ptp", n, fn() => np.ptp(x))
+  bench("any", n, fn() => mask.any())
+  bench("all", n, fn() => mask_all.all())
+  bench("count_nonzero", n, fn() => np.count_nonzero(mask))
+  bench("average_weighted", n, fn() => np.average(x, {weights: p}))
+  bench("dot_1d", n, fn() => np.dot(x, q))
+  bench("cumsum", n, fn() => x.cumsum())
+  bench("cumprod", n, fn() => pp.cumprod())
+  bench("sum_f32", n, fn() => x32.sum())
+  bench("mean_f32", n, fn() => x32.mean())
+  bench("max_f32", n, fn() => x32.max())
+  bench("std_f32", n, fn() => x32.std())
+  bench("cumsum_f32", n, fn() => x32.cumsum())
+
+  // ---------- reductions along an axis (rows of cols(n)) ----------
+  for axis in [0, 1] {
+    bench("sum_axis{axis}", n, fn() => m2.sum(axis))
+    bench("mean_axis{axis}", n, fn() => m2.mean(axis))
+    bench("std_axis{axis}", n, fn() => m2.std(axis))
+    bench("min_axis{axis}", n, fn() => m2.min(axis))
+    bench("max_axis{axis}", n, fn() => m2.max(axis))
+    bench("argmax_axis{axis}", n, fn() => m2.argmax(axis))
+    bench("cumsum_axis{axis}", n, fn() => m2.cumsum(axis))
+  }
+
+  // ---------- indexing, slicing, changing items ----------
+  bench("slice_view", n, fn() => x[1..n - 1])
+  bench("slice_step_copy", n, fn() => x[range(0, n, 2)].copy())
+  bench("slice_2d_view", n, fn() => m2[1..r - 1, 1..c - 1])
+  bench("fancy_index", n, fn() => x[idx])
+  let rows = idx[0..r] % r
+  bench("fancy_rows", n, fn() => m2[rows])
+  bench("take_3", n, fn() => x[[0, 5, 9]])
+  bench("setitem_slice", n, fn() {
+    var b = x.copy()
+    b[10..n - 10] = 1.5
+    return b
+  })
+  bench("setitem_fancy", n, fn() {
+    var b = x.copy()
+    b[idx] = 0
+    return b
+  })
+
+  // ---------- shapes and dtypes ----------
+  bench("reshape", n, fn() => x.reshape(r, c))
+  bench("transpose_view", n, fn() => m2.T)
+  bench("transpose_copy", n, fn() => m2.T.copy())
+  bench("flatten", n, fn() => m2.flatten())
+  bench("ravel_transposed", n, fn() => m2.T.ravel())
+  bench("concatenate", n, fn() => np.concatenate([x, q]))
+  bench("concatenate_axis1", n, fn() => np.concatenate([m2, m2], 1))
+  bench("stack", n, fn() => np.stack([x, q]))
+  bench("vstack", n, fn() => np.vstack([m2, m2]))
+  bench("hstack", n, fn() => np.hstack([m2, m2]))
+  bench("tile", n, fn() => np.tile(x, 2))
+  bench("repeat", n, fn() => np.repeat(x, 2))
+  bench("roll", n, fn() => np.roll(x, 1))
+  bench("flip", n, fn() => np.flip(x))
+  bench("astype_f64_f32", n, fn() => x.astype("float32"))
+  bench("astype_f32_f64", n, fn() => x32.astype("float64"))
+  bench("astype_f64_i64", n, fn() => x10.astype("int64"))
+  bench("astype_f64_bool", n, fn() => x.astype("bool"))
+
+  // ---------- files (written first, so that each case can run alone) ----------
+  let npy = H_TMP + "/arr_{n}.npy"
+  let st = H_TMP + "/arr_{n}.safetensors"
+  np.save(npy, x)
+  np.save_safetensors(st, {a: x, b: x32})
+  bench("save_npy", n, fn() {
+    np.save(npy, x)
+    return 0
+  })
+  bench("load_npy", n, fn() => np.load(npy))
+  bench("save_safetensors", n, fn() {
+    np.save_safetensors(st, {a: x, b: x32})
+    return 0
+  })
+  bench("load_safetensors", n, fn() => np.load_safetensors(st))
+  fs.remove_file(npy)
+  fs.remove_file(st)
+  if n <= 100000 {
+    let txt = H_TMP + "/arr_{n}.txt"
+    np.savetxt(txt, x, {fmt: "%.6f"})
+    bench("savetxt", n, fn() {
+      np.savetxt(txt, x, {fmt: "%.6f"})
+      return 0
+    })
+    bench_tol("loadtxt", n, fn() => np.loadtxt(txt), false, 1e-6)
+    fs.remove_file(txt)
+  }
+}
+
+// ---------- loops over items: scalar indexing and changes ----------
+for n in [1000, 100000, 1000000] {
+  np.seed(12)
+  let x = np.rand(n)
+  let g = np.rand(1000, 1000)
+  bench("getitem_scalar_loop", n, fn() {
+    var s = 0
+    for i in 0..n { s += x[i] }
+    return s
+  })
+  bench("getitem_2d_loop", n, fn() {
+    var s = 0
+    for i in 0..n { s += g[i % 1000, (i * 7) % 1000] }
+    return s
+  })
+  bench("setitem_scalar_loop", n, fn() {
+    var b = np.zeros(n)
+    for i in 0..n { b[i] = i }
+    return b
+  })
+  bench("iterate", n, fn() {
+    var s = 0
+    for v in x { s += v }
+    return s
+  })
+}
+
+// ---------- sorting and selecting ----------
+for n in [1000, 200000, 10000000] {
+  np.seed(13)
+  let s = np.rand(n)
+  let si = np.randint(0, n, n)
+  let few = np.randint(0, max(1, n / 10), n)
+  let needles = np.rand(min(n, 1000000))
+  let bins = np.randint(0, 1000, n)
+  let s32 = s.astype("float32")
+  let s2 = s.reshape(n / 100, 100)
+  let hay = np.sort(s)
+  bench_chk("sort", n, fn() => np.sort(s), weighted)
+  bench_chk("sort_f32", n, fn() => np.sort(s32), weighted)
+  bench_chk("sort_int64", n, fn() => np.sort(si), weighted)
+  bench_chk("argsort", n, fn() => np.argsort(s), fn(r) => weighted(s[r]))
+  bench_chk("argsort_int64", n, fn() => np.argsort(si), fn(r) => weighted(si[r]))
+  bench_chk("sort_axis1", n, fn() => np.sort(s2, 1), weighted)
+  bench("median", n, fn() => np.median(s))
+  bench("median_axis1", n, fn() => np.median(s2, 1))
+  bench("percentile", n, fn() => np.percentile(s, [5, 50, 95]))
+  bench("quantile", n, fn() => np.quantile(s, 0.3))
+  bench("unique_ints", n, fn() => np.unique(few))
+  bench("unique_floats", n, fn() => np.unique(s))
+  bench("unique_counts", n, fn() => np.unique(few, {return_counts: true}))
+  bench("searchsorted", n, fn() => np.searchsorted(hay, needles))
+  bench("bincount", n, fn() => np.bincount(bins))
+  bench_skip("partition", n, "array has no partition")
+}

@@ -1,0 +1,44 @@
+// llm.lube: the plugin llm (llm.py does the same with llama-cpp-python, llama.cpp underneath): loading a GGUF
+// model, tokenizing, reading a prompt (the logits after it), generating greedily and with sampling. The models are
+// the extra arguments; the size is the model and the amount of text or tokens. Each side uses its own default
+// number of threads.
+import "harness"
+import llm
+
+let STORY = "Once upon a time, there was a little girl named Lily. She loved to play outside in the sunshine. One day, she saw a big, red ball in the park. She ran to it and picked it up. It was soft and bouncy. Lily wanted to share the ball with her friend Tom, so she went to his house and knocked on the door. Tom was happy to see her and they played catch until the sun went down. "
+
+fn text_of(n) {  // n characters of the story, again and again
+  var t = ""
+  while len(t) < n { t += STORY }
+  return slice(t, 0, n)
+}
+
+for path in EXTRA {
+  let parts = split(path, "/")
+  let label = replace(parts[len(parts) - 1], ".gguf", "")
+  bench_chk("load", label, fn() => llm.load(path), fn(m) => m.vocab_size)
+  let model = llm.load(path)
+  for n in [1000, 100000] {
+    let text = text_of(n)
+    bench("tokenize", "{label}/{n}ch", fn() => model.tokenize(text))
+  }
+  let ids = model.tokenize(text_of(100000))
+  bench("detokenize", "{label}/100000ch", fn() => model.detokenize(ids))
+  var lengths = [16, 100]
+  if model.context_length > 128 { lengths = [16, 128, 384] }
+  for n in lengths {
+    let toks = slice(ids, 0, n)
+    bench("prompt_eval", "{label}/{n}tok", fn() {
+      model.reset()
+      return model.forward(toks).argmax()
+    })
+  }
+  bench("generate_greedy", "{label}/64tok", fn() {
+    model.reset()
+    return model.generate("Once upon a time", {max_tokens: 64, temperature: 0})
+  })
+  bench_nochk("generate_sampled", "{label}/64tok", fn() {
+    model.reset()
+    return model.generate("Once upon a time", {max_tokens: 64, temperature: 0.8, top_k: 40, top_p: 0.95, seed: 42})
+  })
+}

@@ -1,0 +1,116 @@
+// harness.lube: the timing and checksums shared by the Lube side of bench/vs_python (harness.py is its twin,
+// and does the same thing the same way). Each area's script imports it and calls bench() once per case:
+//
+//     lube AREA.lube TMPDIR [MIN_SECONDS] [REPEATS] [FILTER] [extra...]
+//
+// One line per case: case <TAB> size <TAB> seconds per call <TAB> checksum. A case is called once (warm-up, and
+// its checksum), then calibrated so that one measurement (n calls) takes at least MIN_SECONDS, then measured
+// REPEATS times (3 when a call takes over 1 s, 1 over 5 s); the best measurement over n is printed.
+// The checksum is "sum,sum of |x|" of the result (or of what chk() makes of it), and optionally ",rtol".
+
+var H_TMP = "/tmp"
+var H_MIN = 0.05
+var H_REPEATS = 5
+var H_FILTER = ""
+if len(args) > 0 { H_TMP = args[0] }
+if len(args) > 1 { H_MIN = Number(args[1]) }
+if len(args) > 2 { H_REPEATS = Number(args[2]) }
+if len(args) > 3 { H_FILTER = args[3] }
+let EXTRA = slice(args, 4)
+
+fn h_parts(r) {  // [sum, sum of |x|]
+  let t = type(r)
+  if t == "Number" { return [r, abs(r)] }
+  if t == "Bool" {
+    if r { return [1, 1] }
+    return [0, 0]
+  }
+  if t == "str" { return [len(r), len(r)] }
+  if t == "String" { return [len(r.value), len(r.value)] }
+  if t == "Bytes" { return [len(r), len(r)] }
+  if t == "Array" {
+    let f = r.astype("float64")
+    let s = f.sum()
+    return [s, 2 * f.clip(0, INF).sum() - s]
+  }
+  if t == "Tensor" { return h_parts(r.data) }
+  if t == "Money" { return [r.units, abs(r.units)] }
+  if t == "Complex" { return [r.real + r.imag, abs(r.real) + abs(r.imag)] }
+  if r is List or t == "Object" or r is Map {
+    var s = 0
+    var a = 0
+    var items = []
+    if r is List { items = List(r) } else { items = values(r) }
+    for x in items {
+      let p = h_parts(x)
+      s += p[0]
+      a += p[1]
+    }
+    return [s, a]
+  }
+  return [Number(r), abs(Number(r))]  // (sized integers)
+}
+
+fn h_checksum(r, rtol) {
+  let p = h_parts(r)
+  if rtol > 0 { return "{p[0]},{p[1]},{rtol}" }
+  return "{p[0]},{p[1]}"
+}
+
+fn h_time(f, n) {
+  let t0 = now()
+  for i in 0..n { f() }
+  return now() - t0
+}
+
+fn h_clean(e) => replace(replace(str(e), "\t", " "), "\n", " ")
+
+// FILTER: a part of the case names to run, or "=" and a list of exact names: "=sum,sort"
+fn h_wanted(name) {
+  if H_FILTER == "" { return true }
+  if starts_with(H_FILTER, "=") { return contains(split(slice(H_FILTER, 1), ","), name) }
+  return H_FILTER in name
+}
+
+// Times f(); prints its line; returns the seconds per call (or -1 if it failed or was filtered out).
+// chk turns the result into what the checksum sums (false: the result itself); rtol > 0 loosens the comparison.
+fn bench_full(name, size, f, chk, rtol) {
+  if not h_wanted(name) { return -1 }
+  try {
+    let t0 = now()
+    let r = f()
+    let first = now() - t0
+    var c = ""
+    if chk == false { c = h_checksum(r, rtol) } else if chk == "-" { c = "-" } else { c = h_checksum(chk(r), rtol) }
+    var n = 1
+    var t = first
+    while t < H_MIN {
+      let per = max(t / n, 1e-9)
+      var next = ceil(H_MIN * 1.25 / per)
+      if next > n * 100 { next = n * 100 }
+      if next <= n { next = n * 2 }
+      n = next
+      t = h_time(f, n)
+    }
+    var reps = H_REPEATS
+    if t / n > 1 { reps = min(reps, 3) }
+    if t / n > 5 { reps = 1 }
+    var best = INF
+    for i in 0..reps { best = min(best, h_time(f, n)) }
+    print("{name}\t{size}\t{best / n}\t{c}")
+    return best / n
+  } catch e {
+    print("{name}\t{size}\terror\t{h_clean(e)}")
+    return -1
+  }
+}
+
+fn bench(name, size, f) => bench_full(name, size, f, false, 0)
+fn bench_chk(name, size, f, chk) => bench_full(name, size, f, chk, 0)
+fn bench_tol(name, size, f, chk, rtol) => bench_full(name, size, f, chk, rtol)
+fn bench_nochk(name, size, f) => bench_full(name, size, f, "-", 0)  // (results that can't match: other random draws)
+
+// A case not run, with why (an estimate of its time, or what is missing).
+fn bench_skip(name, size, why) {
+  if h_wanted(name) { print("{name}\t{size}\tskip\t{h_clean(why)}") }
+}

@@ -69,8 +69,10 @@ static int64_t position(LubeVM *vm, double d, int64_t n, int axis, LubeValue *er
     return (int64_t)k;
 }
 
-/* Reads the indexes (argv[1..argc-1]) against a. 0 after an error (in *err). */
-static int index_parse(LubeVM *vm, const Array *a, int argc, const LubeValue *argv, Index *ix, LubeValue *err) {
+/* Reads the indexes (argv[1..argc-1]) against a. 0 after an error (in *err). borrow: an Array of positions
+ * that needs no change (int64, in a row, none negative or past the end) is used as it is, not copied: for
+ * reading only, since a[a] = v would change the positions it goes by. */
+static int index_parse(LubeVM *vm, const Array *a, int argc, const LubeValue *argv, Index *ix, LubeValue *err, int borrow) {
     ix->n = 0;
     ix->arrays = 0;
     int axis = 0;
@@ -140,9 +142,33 @@ static int index_parse(LubeVM *vm, const Array *a, int argc, const LubeValue *ar
         it->axis = axis;
         if (ia) {  /* positions */
             it->kind = IX_ARRAY;
+            int64_t len = a->shape[axis];
+            int fine = ia->dtype == ARR_I64 && is_contiguous(ia);
+            if (fine && borrow) {
+                const int64_t *in = (const int64_t *)ia->data;
+                int outside = 0;
+                for (int64_t i = 0; i < ia->size; i++) outside |= (uint64_t)in[i] >= (uint64_t)len;
+                if (!outside) {
+                    it->idx = ia;
+                    it->keep = lube->kind(made) == LUBE_NOTHING ? lube->retain(v) : made;
+                    ix->n++;
+                    ix->arrays++;
+                    axis++;
+                    continue;
+                }
+            }
             it->keep = arr_new(vm, ARR_I64, ia->ndim, ia->shape, &it->idx, 0);
             ix->n++;
-            for (int64_t i = 0; i < ia->size; i++) {
+            int64_t *out = (int64_t *)it->idx->data;
+            if (fine) {  /* (whole numbers in a row: counted from the end when negative, checked all at once) */
+                const int64_t *in = (const int64_t *)ia->data;
+                for (int64_t i = 0; i < ia->size; i++) {
+                    int64_t k = in[i] < 0 ? in[i] + len : in[i];
+                    fine &= k >= 0 && k < len;
+                    out[i] = k;
+                }
+            }
+            for (int64_t i = 0; i < ia->size && !fine; i++) {  /* (the general way, which gives the errors) */
                 double d = load(elem_at(ia, i), ia->dtype);
                 int64_t p = position(vm, d, a->shape[axis], axis, err);
                 if (p < 0) {
@@ -282,6 +308,18 @@ static int64_t advanced_offset(const Array *a, const Index *ix, const Advanced *
     return off;
 }
 
+/* The index array, when it is the only one and no Number is among the indexes: then position l's offset is
+ * base_off + idx[l] * the axis's stride (the array is its own broadcast shape, C-contiguous: index_parse made
+ * it). Else NULL. */
+static const IndexItem *single_array(const Index *ix, const Advanced *p) {
+    const IndexItem *one = NULL;
+    for (int k = 0; k < ix->n; k++) {
+        if (ix->items[k].kind == IX_INT) return NULL;
+        if (ix->items[k].kind == IX_ARRAY) one = &ix->items[k];
+    }
+    return ix->arrays == 1 && one && p->nb == one->idx->ndim ? one : NULL;
+}
+
 /* The order of the result's axes from [arrays' axes, slices' axes] to where they go. */
 static void advanced_axes(const Advanced *p, int *axes) {
     int k = 0;
@@ -300,17 +338,101 @@ static void permuted(const Array *a, const int *axes, Array *v) {
 }
 
 /* a[...] */
+/* ---------- a[mask], the mask a bool Array of a's own shape, both C-contiguous: numpy's most common case,
+ * done directly, in chunks (counted, then copied without branches), on several threads when it is big ---------- */
+
+#define MASK_CHUNK 16384
+
+typedef struct {
+    const unsigned char *m, *src;
+    unsigned char *dst;
+    int64_t n, z;     /* elements, item size */
+    int64_t *at;      /* each chunk's trues; then where its elements go */
+} MaskJob;
+
+static void mask_count(void *ctx, int64_t from, int64_t to) {
+    MaskJob *j = (MaskJob *)ctx;
+    for (int64_t c = from; c < to; c++) {
+        int64_t s = c * MASK_CHUNK, e = s + MASK_CHUNK < j->n ? s + MASK_CHUNK : j->n, k = 0;
+        for (int64_t i = s; i < e; i++) k += j->m[i] != 0;
+        j->at[c] = k;
+    }
+}
+
+/* (each write lands at the next free place; only the true ones move on from it: up to the chunk's last true one,
+ * so that no write passes the chunk's share) */
+#define MASK_COPY(T)                                                                                               do {                                                                                                               const T *src_ = (const T *)j->src;                                                                             T *dst_ = (T *)j->dst + j->at[c];                                                                              for (int64_t i = s, k = 0; i <= last; i++) {                                                                      dst_[k] = src_[i];                                                                                             k += j->m[i] != 0;                                                                                         }                                                                                                          } while (0)
+
+static void mask_copy(void *ctx, int64_t from, int64_t to) {
+    MaskJob *j = (MaskJob *)ctx;
+    for (int64_t c = from; c < to; c++) {
+        int64_t s = c * MASK_CHUNK, e = s + MASK_CHUNK < j->n ? s + MASK_CHUNK : j->n, last = e - 1;
+        while (last >= s && !j->m[last]) last--;
+        if (j->z == 8) MASK_COPY(uint64_t);
+        else if (j->z == 4) MASK_COPY(uint32_t);
+        else MASK_COPY(unsigned char);
+    }
+}
+
+/* The mask, if index v is a bool Array of a's shape, both C-contiguous; else NULL. */
+static Array *whole_mask(const Array *a, LubeValue v) {
+    Array *m = arr_of(v);
+    if (!m || m->dtype != ARR_BOOL || m->ndim != a->ndim || a->ndim == 0 || !is_contiguous(m) || !is_contiguous(a))
+        return NULL;
+    for (int d = 0; d < a->ndim; d++)
+        if (m->shape[d] != a->shape[d]) return NULL;
+    return m;
+}
+
+static LubeValue masked(LubeVM *vm, const Array *a, const Array *m) {
+    int64_t n = a->size, chunks = (n + MASK_CHUNK - 1) / MASK_CHUNK, count = 0;
+    MaskJob j = {m->data, a->data, NULL, n, ITEMSIZE[a->dtype], (int64_t *)malloc(sizeof(int64_t) * (size_t)(chunks + 1))};
+    if (!j.at) abort();  /* LCOV_EXCL_LINE: out of memory */
+    int64_t grain = PARALLEL_WORK / MASK_CHUNK;
+    par_for(chunks, grain, mask_count, &j);
+    for (int64_t c = 0; c < chunks; c++) {
+        int64_t k = j.at[c];
+        j.at[c] = count;
+        count += k;
+    }
+    Array *r;
+    LubeValue rv = arr_new(vm, a->dtype, 1, &count, &r, 0);
+    j.dst = r->data;
+    par_for(chunks, grain, mask_copy, &j);
+    free(j.at);
+    return rv;
+}
+
+/* One element's offset (in elements) when idx is a whole number in range for each of a's axes: 1; else 0, and the
+ * general way takes it (and gives the errors). */
+static int element_at(const Array *a, int nidx, const LubeValue *idx, int64_t *off) {
+    if (nidx != a->ndim || nidx == 0) return 0;
+    int64_t at = 0;
+    for (int d = 0; d < nidx; d++) {
+        if (lube->kind(idx[d]) != LUBE_NUMBER) return 0;
+        double x = lube->number(idx[d]), k = x < 0 ? x + (double)a->shape[d] : x;
+        if (!(k >= 0 && k < (double)a->shape[d]) || x != floor(x)) return 0;
+        at += (int64_t)k * a->strides[d];
+    }
+    *off = at;
+    return 1;
+}
+
 static LubeValue index_get(LubeVM *vm, int argc, const LubeValue *argv) {
     Array *a = arr_of(argv[0]);
     Index ix;
     LubeValue err;
-    if (!index_parse(vm, a, argc, argv, &ix, &err)) return err;
+    int64_t off;
+    if (element_at(a, argc - 1, argv + 1, &off)) return elem_value(a->data + off * ITEMSIZE[a->dtype], a->dtype);
+    Array *mask = argc == 2 ? whole_mask(a, argv[1]) : NULL;
+    if (mask) return masked(vm, a, mask);
+    if (!index_parse(vm, a, argc, argv, &ix, &err, 1)) return err;
     LubeValue r;
     if (!ix.arrays) {
         Array v;
         basic_view(a, &ix, &v);
         if (v.ndim == 0) {
-            r = elem_value(v.data, v.dtype);
+            r = elem_value(v.data, v.dtype);  /* LCOV_EXCL_LINE: (element_at takes every such index first) */
         } else {
             Array *out;
             r = arr_view(vm, a, &out);
@@ -344,10 +466,25 @@ static LubeValue index_get(LubeVM *vm, int argc, const LubeValue *argv) {
     memcpy(src.strides, p.sstride, sizeof(int64_t) * (size_t)p.ns);
     memcpy(dst.shape, p.sshape, sizeof(int64_t) * (size_t)p.ns);
     c_strides(&dst);
-    for (int64_t l = 0; l < L && block; l++) {
-        src.data = a->data + (p.base_off + advanced_offset(a, &ix, &p, l)) * ITEMSIZE[a->dtype];
-        dst.data = g->data + l * block * ITEMSIZE[a->dtype];
-        copy_into(&dst, &src);
+    const IndexItem *one = single_array(&ix, &p);
+    int z = ITEMSIZE[a->dtype];
+    if (one && block == 1) {  /* (a[positions]: each one element, gathered directly) */
+        const int64_t *idx = (const int64_t *)one->idx->data;
+        int64_t st = a->strides[one->axis];
+        const unsigned char *base = a->data + p.base_off * z;
+        if (z == 8) for (int64_t l = 0; l < L; l++) ((uint64_t *)g->data)[l] = *(const uint64_t *)(const void *)(base + idx[l] * st * 8);
+        else if (z == 4) for (int64_t l = 0; l < L; l++) ((uint32_t *)g->data)[l] = *(const uint32_t *)(const void *)(base + idx[l] * st * 4);
+        else for (int64_t l = 0; l < L; l++) g->data[l] = base[idx[l] * st];
+    } else {
+        int rows = one && is_contiguous(&src) && block > 1;  /* (whole rows: copied as blocks) */
+        for (int64_t l = 0; l < L && block; l++) {
+            int64_t off = one ? p.base_off + ((const int64_t *)one->idx->data)[l] * a->strides[one->axis]
+                              : p.base_off + advanced_offset(a, &ix, &p, l);
+            src.data = a->data + off * z;
+            dst.data = g->data + l * block * z;
+            if (rows) memcpy(dst.data, src.data, (size_t)(block * z));
+            else copy_into(&dst, &src);
+        }
     }
     if (p.at > 0) {  /* the arrays' axes go after the first slices */
         int axes[ARR_MAXDIM];
@@ -368,13 +505,39 @@ static LubeValue index_set(LubeVM *vm, int argc, const LubeValue *argv) {
     Array *a = arr_of(argv[0]);
     Operand o;
     LubeValue err;
+    int64_t off;
+    if (lube->kind(argv[argc - 1]) == LUBE_NUMBER && element_at(a, argc - 2, argv + 1, &off)) {  /* a[i, j] = x */
+        arr_own(a);
+        element_at(a, argc - 2, argv + 1, &off);  /* (its memory its own now: perhaps laid out anew) */
+        store(a->data + off * ITEMSIZE[a->dtype], a->dtype, lube->number(argv[argc - 1]));
+        return lube->nothing();
+    }
     if (!operand_of(vm, argv[argc - 1], &o, &err)) return err;
     Array *val;
     LubeValue kv = o.a ? lube->retain(lube->nothing()) : scalar_array(vm, o.num, a->dtype, &val);
     if (o.a) val = o.a;
     Index ix;
     LubeValue r = lube->nothing();
-    if (!index_parse(vm, a, argc - 1, argv, &ix, &err)) {
+    Array *mask = argc == 3 ? whole_mask(a, argv[1]) : NULL;
+    if (mask && val->size == 1 && val->ndim <= 1 && val->dtype == a->dtype) {  /* a[mask] = x: x wherever the mask is true */
+        arr_own(a);
+        const unsigned char *m = mask->data;
+        int64_t n = a->size;
+        if (a->dtype == ARR_F64 || a->dtype == ARR_I64) {
+            uint64_t x, *d = (uint64_t *)a->data;
+            memcpy(&x, val->data, 8);
+            for (int64_t i = 0; i < n; i++) d[i] = m[i] ? x : d[i];
+        } else if (a->dtype == ARR_F32 || a->dtype == ARR_I32) {
+            uint32_t x, *d = (uint32_t *)a->data;
+            memcpy(&x, val->data, 4);
+            for (int64_t i = 0; i < n; i++) d[i] = m[i] ? x : d[i];
+        } else {
+            unsigned char x = *val->data, *d = a->data;
+            for (int64_t i = 0; i < n; i++) d[i] = m[i] ? x : d[i];
+        }
+        goto out;
+    }
+    if (!index_parse(vm, a, argc - 1, argv, &ix, &err, 0)) {
         r = err;
         goto out;
     }
@@ -430,15 +593,33 @@ static LubeValue index_set(LubeVM *vm, int argc, const LubeValue *argv) {
         src.shape[d] = ordered.shape[p.nb + d];
         src.strides[d] = ordered.strides[p.nb + d];
     }
-    for (int64_t l = 0; l < L && block; l++) {
-        int64_t soff = 0, r2 = l;
-        for (int d = p.nb - 1; d >= 0; d--) {
-            soff += (r2 % ordered.shape[d]) * ordered.strides[d];
-            r2 /= ordered.shape[d];
+    const IndexItem *one = single_array(&ix, &p);
+    int z = ITEMSIZE[a->dtype];
+    if (one && block == 1 && p.nb == 1) {  /* (a[positions] = values: each one element, directly) */
+        const int64_t *idx = (const int64_t *)one->idx->data;
+        int64_t st = a->strides[one->axis], sst = ordered.strides[0];
+        unsigned char *base = a->data + p.base_off * z, *src = ordered.data;
+        if (z == 8)
+            for (int64_t l = 0; l < L; l++)
+                *(uint64_t *)(void *)(base + idx[l] * st * 8) = *(const uint64_t *)(const void *)(src + l * sst * 8);
+        else if (z == 4)
+            for (int64_t l = 0; l < L; l++)
+                *(uint32_t *)(void *)(base + idx[l] * st * 4) = *(const uint32_t *)(const void *)(src + l * sst * 4);
+        else
+            for (int64_t l = 0; l < L; l++) base[idx[l] * st] = src[l * sst];
+    } else {
+        for (int64_t l = 0; l < L && block; l++) {
+            int64_t soff = 0, r2 = l;
+            for (int d = p.nb - 1; d >= 0; d--) {
+                soff += (r2 % ordered.shape[d]) * ordered.strides[d];
+                r2 /= ordered.shape[d];
+            }
+            int64_t off = one ? p.base_off + ((const int64_t *)one->idx->data)[l] * a->strides[one->axis]
+                              : p.base_off + advanced_offset(a, &ix, &p, l);
+            dst.data = a->data + off * z;
+            src.data = ordered.data + soff * z;
+            copy_into(&dst, &src);
         }
-        dst.data = a->data + (p.base_off + advanced_offset(a, &ix, &p, l)) * ITEMSIZE[a->dtype];
-        src.data = ordered.data + soff * ITEMSIZE[a->dtype];
-        copy_into(&dst, &src);
     }
     lube->release(kf);
     index_done(&ix);

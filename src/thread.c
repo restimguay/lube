@@ -107,9 +107,21 @@ int lube_cores(void) {
     return si.dwNumberOfProcessors > 0 ? (int)si.dwNumberOfProcessors : 1;
 }
 
+void *lube_pages(size_t n) {
+    void *p = VirtualAlloc(NULL, n, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    if (!p) lube_out_of_memory();
+    return p;
+}
+
+void lube_pages_free(void *p, size_t n) {
+    (void)n;
+    if (p) VirtualFree(p, 0, MEM_RELEASE);
+}
+
 #else
 #include <dirent.h>
 #include <pthread.h>
+#include <sys/mman.h>
 #include <unistd.h>
 
 /* The files in a folder whose names end in ext, sorted (NULL with *n = -1
@@ -177,5 +189,15 @@ int thread_start(void (*fn)(void *), void *arg, size_t stack_size) {
 int lube_cores(void) {
     long n = sysconf(_SC_NPROCESSORS_ONLN);
     return n > 0 ? (int)n : 1;
+}
+
+void *lube_pages(size_t n) {
+    void *p = mmap(NULL, n, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (p == MAP_FAILED) lube_out_of_memory(); /* LCOV_EXCL_LINE: only if the system has no memory left */
+    return p;
+}
+
+void lube_pages_free(void *p, size_t n) {
+    if (p) munmap(p, n);
 }
 #endif

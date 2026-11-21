@@ -1,0 +1,54 @@
+// linalg.lube: the plugin array's linear algebra (linalg.py does the same with numpy.linalg): matrix products in
+// float64 and float32, solve, inv, det, eigh, eigvalsh, svd, qr, cholesky, lstsq, pinv, norm, matrix_rank, on
+// n x n matrices. A case whose time at 300 promises more than 10 s at 1000 (n^3.5) is skipped there, with the estimate.
+import "harness"
+import array as np
+
+fn absum(a) => np.abs(a).sum()
+
+var at300 = {}
+fn run(name, n, f, chk) {
+  if n == 1000 and has(at300, name) {
+    let est = at300[name] * (1000 / 300) ** 3.5  // (cubic, and worse: caches)
+    if est > 10 {
+      bench_skip(name, n, "est. {fixed(est, 1)} s a call (from n=300)")
+      return
+    }
+  }
+  var t = 0
+  if chk == false { t = bench(name, n, f) } else { t = bench_chk(name, n, f, chk) }
+  if n == 300 and t > 0 { at300[name] = t }
+}
+
+for n in [10, 50, 300, 1000] {
+  np.seed(20)
+  let A = np.rand(n, n)
+  let A2 = np.rand(n, n)
+  let v = np.rand(n)
+  let B = np.eye(n) + (np.rand(n, n) - 0.5) / n   // well conditioned: det, inv, solve
+  let S = A @ A.T + np.eye(n) * n                 // symmetric positive definite: eigh, cholesky
+  let T = np.rand(2 * n, n)                       // tall: lstsq
+  let tb = np.rand(2 * n)
+  let A32 = A.astype("float32")
+  let A232 = A2.astype("float32")
+
+  run("matmul_f64", n, fn() => A @ A2, false)
+  run("matmul_f32", n, fn() => A32 @ A232, false)
+  run("matvec_f64", n, fn() => A @ v, false)
+  run("outer", n, fn() => np.outer(v, v), false)
+  run("solve", n, fn() => np.solve(B, v), false)
+  run("solve_matrix", n, fn() => np.solve(B, A2), false)
+  run("inv", n, fn() => np.inv(B), false)
+  run("det", n, fn() => np.det(B), false)
+  run("eigh", n, fn() => np.eigh(S), fn(r) => [r[0].sum(), absum(r[1])])
+  run("eigvalsh", n, fn() => np.eigvalsh(S), false)
+  run("svd", n, fn() => np.svd(A), fn(r) => [r[1].sum(), absum(r[0]), absum(r[2])])
+  run("svd_values", n, fn() => np.svd(A, {compute_uv: false}), false)
+  run("qr", n, fn() => np.qr(A), fn(r) => [absum(r[0]), absum(r[1])])
+  run("cholesky", n, fn() => np.cholesky(S), false)
+  run("lstsq", n, fn() => np.lstsq(T, tb), fn(r) => r[0])
+  run("pinv", n, fn() => np.pinv(A), false)
+  run("norm_fro", n, fn() => np.norm(A), false)
+  run("norm_2", n, fn() => np.norm(A, 2), false)
+  run("matrix_rank", n, fn() => np.matrix_rank(A), false)
+}

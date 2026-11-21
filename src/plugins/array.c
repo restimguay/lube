@@ -29,7 +29,12 @@
 #else
 #define FUSED
 #endif
+#include "vecmath.h"
+#if defined(__aarch64__) && defined(__ARM_NEON)
+#include <arm_neon.h>  /* (max and min of a row: NEON's own, which keep a NaN) */
+#endif
 
+#include <float.h>
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
@@ -230,6 +235,26 @@ FN(f_asarray) {
     return arr_from(vm, argv[0], dtype, &a);
 }
 
+/* Every element of a (C-contiguous) set to value, as store() would set one: stored once, then copied along. */
+static void fill_with(Array *a, double value) {
+    if (!a->size) return;
+    store(a->data, a->dtype, value);
+    int64_t n = a->size;
+    uint64_t x8, *d8 = (uint64_t *)a->data;
+    uint32_t x4, *d4 = (uint32_t *)a->data;
+    switch (ITEMSIZE[a->dtype]) {
+    case 8:
+        memcpy(&x8, d8, 8);
+        for (int64_t i = 1; i < n; i++) d8[i] = x8;
+        break;
+    case 4:
+        memcpy(&x4, d4, 4);
+        for (int64_t i = 1; i < n; i++) d4[i] = x4;
+        break;
+    default: memset(a->data + 1, a->data[0], (size_t)(n - 1)); break;
+    }
+}
+
 static LubeValue filled(LubeVM *vm, const char *fname, int argc, const LubeValue *argv, double value) {
     int nd, dtype;
     int64_t shape[ARR_MAXDIM];
@@ -237,8 +262,7 @@ static LubeValue filled(LubeVM *vm, const char *fname, int argc, const LubeValue
     if (!shape_args(vm, fname, argc, argv, 0, &nd, shape, &dtype, &err)) return err;
     Array *a;
     LubeValue v = arr_new(vm, dtype < 0 ? ARR_F64 : dtype, nd, shape, &a, value == 0);
-    if (a && value != 0)
-        for (int64_t i = 0; i < a->size; i++) store(a->data + i * ITEMSIZE[a->dtype], a->dtype, value);
+    if (a && value != 0) fill_with(a, value);
     return v;
 }
 
@@ -273,9 +297,8 @@ static LubeValue like(LubeVM *vm, const char *fname, int argc, const LubeValue *
         return err;
     }
     Array *r;
-    LubeValue v = arr_new(vm, dtype, a->ndim, a->shape, &r, 1);
-    if (value != 0)
-        for (int64_t i = 0; i < r->size; i++) store(r->data + i * ITEMSIZE[dtype], dtype, value);
+    LubeValue v = arr_new(vm, dtype, a->ndim, a->shape, &r, value == 0);
+    if (value != 0) fill_with(r, value);
     lube->release(keep);
     return v;
 }
@@ -310,8 +333,19 @@ FN(f_arange) {
     int64_t len = (int64_t)count;
     Array *a;
     LubeValue v = arr_new(vm, dtype, 1, &len, &a, 0);
-    if (a)
-        for (int64_t i = 0; i < len; i++) store(a->data + i * ITEMSIZE[dtype], dtype, start + (double)i * step);
+    if (a) {  /* (start + i step, as store() would set each: a loop for each dtype) */
+        if (dtype == ARR_F64) {
+            for (int64_t i = 0; i < len; i++) ((double *)a->data)[i] = start + (double)i * step;
+        } else if (dtype == ARR_F32) {
+            for (int64_t i = 0; i < len; i++) ((float *)a->data)[i] = (float)(start + (double)i * step);
+        } else if (dtype == ARR_I64 && start == floor(start) && step == floor(step) && fabs(start) < 9e15 &&
+                   fabs(start + (double)len * step) < 9e15) {
+            int64_t s0 = (int64_t)start, st = (int64_t)step;
+            for (int64_t i = 0; i < len; i++) ((int64_t *)a->data)[i] = s0 + i * st;
+        } else {
+            for (int64_t i = 0; i < len; i++) store(a->data + i * ITEMSIZE[dtype], dtype, start + (double)i * step);
+        }
+    }
     return v;
 }
 
@@ -883,7 +917,29 @@ FN(f_repeat) {
     shape[axis] *= (int64_t)n;
     Array *dst;
     LubeValue r = s->ndim == ARR_MAXDIM ? lube->error(vm, "repeat(): too many dimensions") : arr_new(vm, s->dtype, s->ndim, shape, &dst, 0);
-    if (s->ndim < ARR_MAXDIM && dst && dst->size) {
+    if (s->ndim < ARR_MAXDIM && dst && dst->size && is_contiguous(s)) {  /* (directly: each element, or block, n times) */
+        int64_t len = s->shape[axis], inner = 1, outer = 1, times = (int64_t)n;
+        for (int d = 0; d < s->ndim; d++) {
+            if (d < axis) outer *= s->shape[d];
+            if (d > axis) inner *= s->shape[d];
+        }
+        int z = ITEMSIZE[s->dtype];
+        if (inner == 1 && z == 8) {
+            const uint64_t *x = (const uint64_t *)s->data;
+            uint64_t *o = (uint64_t *)dst->data;
+            for (int64_t i = 0; i < outer * len; i++)
+                for (int64_t j = 0; j < times; j++) o[i * times + j] = x[i];
+        } else if (inner == 1 && z == 4) {
+            const uint32_t *x = (const uint32_t *)s->data;
+            uint32_t *o = (uint32_t *)dst->data;
+            for (int64_t i = 0; i < outer * len; i++)
+                for (int64_t j = 0; j < times; j++) o[i * times + j] = x[i];
+        } else {
+            size_t block = (size_t)(inner * z);
+            for (int64_t i = 0; i < outer * len; i++)
+                for (int64_t j = 0; j < times; j++) memcpy(dst->data + (i * times + j) * (int64_t)block, s->data + i * (int64_t)block, block);
+        }
+    } else if (s->ndim < ARR_MAXDIM && dst && dst->size) {
         Array dv = *dst, sv = *s;  /* (axis split into [length, n]) */
         dv.ndim = sv.ndim = s->ndim + 1;
         for (int d = s->ndim; d > axis; d--) {
@@ -919,8 +975,8 @@ FN(f_roll) {
         lube->release(keep);
         return err;
     }
-    Array *c;
-    LubeValue src = arr_copy(vm, a, -1, &c), r;
+    Array *c = a;
+    LubeValue src = is_contiguous(a) ? lube->retain(keep) : arr_copy(vm, a, -1, &c), r;  /* (a copy only if need be) */
     Array *dst;
     r = arr_new(vm, a->dtype, a->ndim, a->shape, &dst, 0);
     int64_t outer = 1, n = a->size, inner = 1;
@@ -933,9 +989,12 @@ FN(f_roll) {
     }
     int z = ITEMSIZE[a->dtype];
     int64_t s = n ? (((int64_t)sh % n) + n) % n : 0;
-    for (int64_t o = 0; o < outer; o++)
-        for (int64_t k = 0; k < n; k++)
-            memcpy(dst->data + ((o * n + (k + s) % n) * inner) * z, c->data + ((o * n + k) * inner) * z, (size_t)(inner * z));
+    for (int64_t o = 0; o < outer && n; o++) {  /* (two blocks: the first n - s go s on, the last s to the front) */
+        const unsigned char *from = c->data + o * n * inner * z;
+        unsigned char *to = dst->data + o * n * inner * z;
+        memcpy(to + s * inner * z, from, (size_t)((n - s) * inner * z));
+        memcpy(to, from + (n - s) * inner * z, (size_t)(s * inner * z));
+    }
     lube->release(src);
     lube->release(keep);
     return r;
@@ -1070,23 +1129,51 @@ typedef struct {
     int dtype;
 } WhereCtx;
 
+#define WHERE_LOOP(T)                                                                                          \
+    do {                                                                                                       \
+        T *o = (T *)p[0];                                                                                      \
+        const T *x = (const T *)p[2], *y = (const T *)p[3];                                                    \
+        const unsigned char *c = p[1];                                                                         \
+        if (st[0] == 1 && st[1] == 1 && st[2] == 1 && st[3] == 1)                                              \
+            for (int64_t i = 0; i < n; i++) o[i] = c[i] ? x[i] : y[i];                                         \
+        else if (st[0] == 1 && st[1] == 1 && st[2] == 1 && st[3] == 0)                                         \
+            for (int64_t i = 0; i < n; i++) o[i] = c[i] ? x[i] : y[0];                                         \
+        else                                                                                                   \
+            for (int64_t i = 0; i < n; i++) o[i * st[0]] = c[i * st[1]] ? x[i * st[2]] : y[i * st[3]];         \
+    } while (0)
+
 static void where_run(void *ctx, int64_t n, unsigned char *const *p, const int64_t *st) {
-    int z = ITEMSIZE[((const WhereCtx *)ctx)->dtype];
-    for (int64_t i = 0; i < n; i++)
-        memcpy(p[0] + i * st[0] * z, p[1][i * st[1]] ? p[2] + i * st[2] * z : p[3] + i * st[3] * z, (size_t)z);
+    switch (ITEMSIZE[((const WhereCtx *)ctx)->dtype]) {  /* (by size: the bits are copied, whatever they mean) */
+    case 8: WHERE_LOOP(uint64_t); break;
+    case 4: WHERE_LOOP(uint32_t); break;
+    default: WHERE_LOOP(unsigned char); break;
+    }
 }
 
 /* nonzero(a): a list of Arrays of positions, one for each axis, where a is not 0 */
 static LubeValue nonzero(LubeVM *vm, const Array *a) {
+    Array *b;
+    LubeValue kb = arr_copy(vm, a, ARR_BOOL, &b);  /* (each x != 0, in C order) */
+    const unsigned char *m = b->data;
     int64_t count = 0;
-    for (int64_t i = 0; i < a->size; i++) count += load(elem_at(a, i), a->dtype) != 0;
+    for (int64_t i = 0; i < a->size; i++) count += m[i];
     LubeValue r = lube->new_list(vm);
     int nd = a->ndim ? a->ndim : 1;
     Array *idx[ARR_MAXDIM];
     for (int d = 0; d < nd; d++) lube->list_push(r, arr_new(vm, ARR_I64, 1, &count, &idx[d], 0));
     int64_t at = 0;
+    if (a->ndim == 1) {  /* (the positions themselves; each write at the next free place, up to the last one) */
+        int64_t *o = (int64_t *)idx[0]->data, last = a->size - 1;
+        while (last >= 0 && !m[last]) last--;
+        for (int64_t i = 0; i <= last; i++) {
+            o[at] = i;
+            at += m[i];
+        }
+        lube->release(kb);
+        return r;
+    }
     for (int64_t i = 0; i < a->size; i++) {
-        if (load(elem_at(a, i), a->dtype) == 0) continue;
+        if (!m[i]) continue;
         int64_t rest = i;
         for (int d = a->ndim - 1; d >= 0; d--) {
             ((int64_t *)idx[d]->data)[at] = rest % a->shape[d];
@@ -1095,6 +1182,7 @@ static LubeValue nonzero(LubeVM *vm, const Array *a) {
         if (!a->ndim) ((int64_t *)idx[0]->data)[at] = 0;
         at++;
     }
+    lube->release(kb);
     return r;
 }
 
@@ -1157,7 +1245,7 @@ FN(f_where) {
         Loop L;
         loop_make(&L, &s, 4, base, size);
         WhereCtx w = {dtype};
-        if (dst->size) loop_go(&L, where_run, &w);
+        if (dst->size) loop_go(&L, where_run, &w, 1);
     }
     lube->release(kx);
     lube->release(ky);
@@ -1196,11 +1284,24 @@ static LubeValue close_to(LubeVM *vm, int argc, const LubeValue *argv) {
         av.ndim = bv.ndim = nd;
         memcpy(av.shape, shape, sizeof(int64_t) * (size_t)nd);
         memcpy(bv.shape, shape, sizeof(int64_t) * (size_t)nd);
-        for (int64_t i = 0; i < dst->size; i++) {
-            double x = *(const double *)elem_at(&av, i), y = *(const double *)elem_at(&bv, i);
-            int c = x == y || fabs(x - y) <= atol + rtol * fabs(y);
-            if (x != x || y != y) c = equal_nan && x != x && y != y;
-            dst->data[i] = (unsigned char)c;
+        int flat_a = is_contiguous(&av), flat_b = is_contiguous(&bv), one_b = 1;
+        for (int d = 0; d < nd; d++) one_b &= bv.strides[d] == 0;
+        if (flat_a && (flat_b || one_b)) {  /* (in a row, against a row or one Number: directly) */
+            const double *A = (const double *)av.data, *B = (const double *)bv.data;
+            int64_t sb = one_b ? 0 : 1;
+            for (int64_t i = 0; i < dst->size; i++) {
+                double x = A[i], y = B[i * sb];
+                int c = x == y || fabs(x - y) <= atol + rtol * fabs(y);
+                if (x != x || y != y) c = equal_nan && x != x && y != y;
+                dst->data[i] = (unsigned char)c;
+            }
+        } else {
+            for (int64_t i = 0; i < dst->size; i++) {
+                double x = *(const double *)elem_at(&av, i), y = *(const double *)elem_at(&bv, i);
+                int c = x == y || fabs(x - y) <= atol + rtol * fabs(y);
+                if (x != x || y != y) c = equal_nan && x != x && y != y;
+                dst->data[i] = (unsigned char)c;
+            }
         }
         if (!oa.a && !ob.a) r = scalar_out(r);
     }
@@ -1347,9 +1448,24 @@ FN(m_cumprod) { return cum_call(vm, "cumprod", 1, argv[0], argc, argv); }
 /* count_nonzero(a, axis?) */
 FN(f_count_nonzero) {
     ARRAY_ARG(a, keep, 0);
-    LubeValue nz = un_op(vm, ARR_NOT, keep), c = un_op(vm, ARR_NOT, nz);  /* (as bools) */
-    lube->release(nz);
-    (void)a;
+    if (argc < 2 && is_contiguous(a)) {  /* (of everything, in a row: counted where it is) */
+        int64_t c = 0, n = a->size, i = 0;
+        if (ITEMSIZE[a->dtype] == 1) {  /* (bytes: 240 at a time, counted in a byte, sixteen or more side by side) */
+            for (; i + 240 <= n; i += 240) {
+                unsigned char k = 0;
+                for (int j = 0; j < 240; j++) k += a->data[i + j] != 0;
+                c += k;
+            }
+        }
+        BY_ANY(a->dtype, {
+            const T *x = (const T *)a->data;
+            for (; i < n; i++) c += x[i] != 0;
+        });
+        lube->release(keep);
+        return lube->number_value((double)c);
+    }
+    Array *b;
+    LubeValue c = arr_copy(vm, a, ARR_BOOL, &b);  /* (as bools, each x != 0) */
     LubeValue r = reduce_call(vm, FNAME, ARR_SUM, c, argc, argv);
     lube->release(c);
     lube->release(keep);
@@ -1404,23 +1520,6 @@ FN(f_average) {
  * ==================================================================== */
 
 #define LESS_NAN(a, b) ((a) < (b) || ((b) != (b) && (a) == (a)))  /* (NaN goes last, as numpy sorts it) */
-
-/* Sorts idx[0..n) by keys, keeping equal keys in order (a merge sort). */
-static void sort_index(int64_t *idx, int64_t *tmp, int64_t n, const double *kd, const int64_t *ki) {
-    for (int64_t width = 1; width < n; width *= 2) {
-        for (int64_t lo = 0; lo < n; lo += 2 * width) {
-            int64_t mid = lo + width < n ? lo + width : n, hi = lo + 2 * width < n ? lo + 2 * width : n;
-            int64_t i = lo, j = mid, k = lo;
-            while (i < mid && j < hi) {
-                int take_right = kd ? LESS_NAN(kd[idx[j]], kd[idx[i]]) : ki[idx[j]] < ki[idx[i]];
-                tmp[k++] = take_right ? idx[j++] : idx[i++];
-            }
-            while (i < mid) tmp[k++] = idx[i++];
-            while (j < hi) tmp[k++] = idx[j++];
-        }
-        memcpy(idx, tmp, sizeof(int64_t) * (size_t)n);
-    }
-}
 
 /* a with axis moved last, as a C-contiguous copy (of dtype): rows of `*n` along that axis. */
 static LubeValue axis_last(LubeVM *vm, const Array *a, int axis, int dtype, Array **out, int64_t *n) {
@@ -1492,6 +1591,39 @@ static void radix_sort(uint64_t *key, int64_t *idx, int64_t n, uint64_t *kt, int
     free(count);
 }
 
+/* Sorts a short run of keys (and idx with them), keeping equal keys in order: insertion-sorted runs of 16, then
+ * merged (a radix sort's passes cost more than that for a few hundred). kt, it: room for n more of each. */
+static void short_sort(uint64_t *key, int64_t *idx, int64_t n, uint64_t *kt, int64_t *it) {
+    for (int64_t lo = 0; lo < n; lo += 16) {
+        int64_t hi = lo + 16 < n ? lo + 16 : n;
+        for (int64_t i = lo + 1; i < hi; i++) {
+            uint64_t k = key[i];
+            int64_t x = idx[i], j = i;
+            for (; j > lo && key[j - 1] > k; j--) {
+                key[j] = key[j - 1];
+                idx[j] = idx[j - 1];
+            }
+            key[j] = k;
+            idx[j] = x;
+        }
+    }
+    for (int64_t width = 16; width < n; width *= 2) {
+        for (int64_t lo = 0; lo < n; lo += 2 * width) {
+            int64_t mid = lo + width < n ? lo + width : n, hi = lo + 2 * width < n ? lo + 2 * width : n;
+            int64_t i = lo, j = mid, k = lo;
+            while (i < mid && j < hi) {
+                int right = key[j] < key[i];
+                kt[k] = right ? key[j] : key[i];
+                it[k++] = right ? idx[j++] : idx[i++];
+            }
+            while (i < mid) kt[k] = key[i], it[k++] = idx[i++];
+            while (j < hi) kt[k] = key[j], it[k++] = idx[j++];
+        }
+        memcpy(key, kt, sizeof(uint64_t) * (size_t)n);
+        memcpy(idx, it, sizeof(int64_t) * (size_t)n);
+    }
+}
+
 typedef struct {
     unsigned char *rows;  /* (C-contiguous, sorted in place unless args) */
     int64_t *out;         /* argsort: the positions */
@@ -1513,7 +1645,8 @@ static void sort_rows(void *ctx, int64_t from, int64_t to) {
             key[i] = sort_key(p + i * z, j->dtype);
             idx[i] = i;
         }
-        radix_sort(key, idx, n, key + n, idx + n);
+        if (n <= 1024) short_sort(key, idx, n, key + n, idx + n);
+        else radix_sort(key, idx, n, key + n, idx + n);
         if (j->out) {
             memcpy(j->out + r * n, idx, sizeof(int64_t) * (size_t)n);
         } else if (j->dtype == ARR_F64) {
@@ -1566,6 +1699,113 @@ FN(f_argsort) {
 FN(m_sort) { return sorted(vm, "sort", argv[0], argc, argv, 0); }
 FN(m_argsort) { return sorted(vm, "argsort", argv[0], argc, argv, 1); }
 
+static int cmp_double(const void *a, const void *b) {
+    double x = *(const double *)a, y = *(const double *)b;
+    return (x > y) - (x < y);
+}
+
+#define SWAP_D(i, j) do { double t_ = x[i]; x[i] = x[j]; x[j] = t_; } while (0)
+
+/* Floyd and Rivest's selection of the k-th smallest within x[left..right]: a pivot chosen from a sample around
+ * where the k-th should be (selected the same way first), so that each pass leaves little; a slice that will not
+ * shrink in `depth` passes is sorted instead. */
+static void fr_select(double *x, int64_t left, int64_t right, int64_t k, int depth) {
+    while (right > left) {
+        if (depth-- <= 0) {  /* LCOV_EXCL_START: (only inputs made to defeat the sample get here) */
+            qsort(x + left, (size_t)(right - left + 1), sizeof(double), cmp_double);
+            return;
+        }  /* LCOV_EXCL_STOP */
+        if (right - left > 600) {
+            double n = (double)(right - left + 1), i = (double)(k - left + 1), z = log(n), s = 0.5 * exp(2 * z / 3);
+            double sd = 0.5 * sqrt(z * s * (n - s) / n) * (i < n / 2 ? -1 : 1);
+            double nl = (double)k - i * s / n + sd, nr = (double)k + (n - i) * s / n + sd;
+            fr_select(x, nl > (double)left ? (int64_t)nl : left, nr < (double)right ? (int64_t)nr : right, k, depth);
+        }
+        double t = x[k];
+        int64_t i = left, j = right;
+        SWAP_D(left, k);
+        if (x[right] > t) SWAP_D(right, left);
+        while (i < j) {
+            SWAP_D(i, j);
+            i++;
+            j--;
+            while (x[i] < t) i++;
+            while (x[j] > t) j--;
+        }
+        if (x[left] == t) {
+            SWAP_D(left, j);
+        } else {
+            j++;
+            SWAP_D(j, right);
+        }
+        if (j <= k) left = j + 1;  /* (left of j: no larger than t; right of it: no smaller) */
+        if (k <= j) right = j - 1;
+    }
+}
+
+/* Puts the k-th smallest of x[0..n) (no NaN among them) at x[k], those before it no larger and those after no
+ * smaller. */
+static void select_kth(double *x, int64_t n, int64_t k) {
+    if (k == 0 || k == n - 1) {  /* (the smallest or the largest: one pass) */
+        int64_t m = 0;
+        for (int64_t i = 1; i < n; i++)
+            if (k ? x[i] > x[m] : x[i] < x[m]) m = i;
+        SWAP_D(k, m);
+        return;
+    }
+    int depth = 16;
+    for (int64_t len = n; len > 1; len >>= 1) depth += 2;
+    fr_select(x, 0, n - 1, k, depth);
+}
+#undef SWAP_D
+
+/* The quantiles of rows of n: each row copied, and the elements each q needs selected from it. */
+typedef struct {
+    const double *d;
+    double *o, *qs;      /* the q's, as fractions */
+    int64_t n, nrows, nq;
+    int64_t *pos;        /* the ranks wanted (each q's two neighbors), ascending, npos of them */
+    int64_t npos;
+} QuantJob;
+
+/* Selects each rank of pos (ascending, np of them, all in lo..hi-1) into place within x[lo..hi): the middle one
+ * first, then those before it within the part before it, and those after within the part after. */
+static void select_many(double *x, int64_t lo, int64_t hi, const int64_t *pos, int64_t np) {
+    if (np == 0) return;
+    int64_t m = np / 2, k = pos[m];
+    select_kth(x + lo, hi - lo, k - lo);
+    select_many(x, lo, k, pos, m);
+    select_many(x, k + 1, hi, pos + m + 1, np - m - 1);
+}
+
+static void quantile_rows(void *ctx, int64_t from, int64_t to) {
+    QuantJob *j = (QuantJob *)ctx;
+    int64_t n = j->n;
+    double *x = (double *)malloc(sizeof(double) * (size_t)n);
+    if (!x) abort();  /* LCOV_EXCL_LINE: out of memory */
+    for (int64_t r = from; r < to; r++) {
+        const double *row = j->d + r * n;
+        int nan = 0;
+        for (int64_t i = 0; i < n; i++) {
+            x[i] = row[i];
+            nan |= row[i] != row[i];
+        }
+        if (!nan) select_many(x, 0, n, j->pos, j->npos);
+        for (int64_t k = 0; k < j->nq; k++) {
+            double pos = j->qs[k] * (double)(n - 1);
+            int64_t lo = (int64_t)floor(pos), hi = lo + 1 < n ? lo + 1 : lo;
+            double frac = pos - (double)lo;
+            j->o[k * j->nrows + r] = nan ? NAN : x[lo] + (x[hi] - x[lo]) * frac;
+        }
+    }
+    free(x);
+}
+
+static int cmp_i64(const void *a, const void *b) {
+    int64_t x = *(const int64_t *)a, y = *(const int64_t *)b;
+    return (x > y) - (x < y);
+}
+
 /* percentile(a, q, axis?) (q in 0..100) and quantile (q in 0..1): linear between the two nearest, as numpy's
  * default; q a Number or several (their axis first). median(a, axis?) is percentile 50. */
 static LubeValue quantiles(LubeVM *vm, const char *fname, LubeValue av, LubeValue qv, double scale, int argc,
@@ -1608,24 +1848,24 @@ static LubeValue quantiles(LubeVM *vm, const char *fname, LubeValue av, LubeValu
     Array *dst;
     LubeValue r = nd > ARR_MAXDIM ? lube->error(vm, "%s(): too many dimensions", fname) : arr_new(vm, ARR_F64, nd, shape, &dst, 0);
     if (nd <= ARR_MAXDIM) {
-        double *d = (double *)rows->data, *o = (double *)dst->data;
-        int64_t *idx = (int64_t *)malloc(sizeof(int64_t) * (size_t)n), *tmp = (int64_t *)malloc(sizeof(int64_t) * (size_t)n);
-        double *s = (double *)malloc(sizeof(double) * (size_t)n);
-        if (!idx || !tmp || !s) abort();  /* LCOV_EXCL_LINE: out of memory */
-        for (int64_t r2 = 0; r2 < nrows; r2++) {
-            for (int64_t i = 0; i < n; i++) idx[i] = i;
-            sort_index(idx, tmp, n, d + r2 * n, NULL);
-            for (int64_t i = 0; i < n; i++) s[i] = d[r2 * n + idx[i]];
-            for (int64_t k = 0; k < q->size; k++) {
-                double pos = load(elem_at(q, k), q->dtype) / scale * (double)(n - 1);
-                int64_t lo = (int64_t)floor(pos), hi = lo + 1 < n ? lo + 1 : lo;
-                double frac = pos - (double)lo;
-                o[k * nrows + r2] = s[n - 1] != s[n - 1] ? NAN : s[lo] + (s[hi] - s[lo]) * frac;
-            }
+        int64_t nq = q->size;
+        double *qs = (double *)malloc(sizeof(double) * (size_t)(nq + 1));
+        int64_t *pos = (int64_t *)malloc(sizeof(int64_t) * (size_t)(2 * nq + 1)), npos = 0;
+        if (!qs || !pos) abort();  /* LCOV_EXCL_LINE: out of memory */
+        for (int64_t k = 0; k < nq; k++) {
+            qs[k] = load(elem_at(q, k), q->dtype) / scale;
+            int64_t lo = (int64_t)floor(qs[k] * (double)(n - 1));
+            pos[npos++] = lo;
+            if (lo + 1 < n) pos[npos++] = lo + 1;
         }
-        free(idx);
-        free(tmp);
-        free(s);
+        qsort(pos, (size_t)npos, sizeof(int64_t), cmp_i64);
+        int64_t uniq = 0;
+        for (int64_t i = 0; i < npos; i++)
+            if (!uniq || pos[i] != pos[uniq - 1]) pos[uniq++] = pos[i];
+        QuantJob j = {(const double *)rows->data, (double *)dst->data, qs, n, nrows, nq, pos, uniq};
+        par_for(nrows, PARALLEL_WORK / n + 1, quantile_rows, &j);
+        free(qs);
+        free(pos);
     }
     lube->release(rv);
     lube->release(flatv);
@@ -1665,38 +1905,38 @@ FN(f_unique) {
     int want_index = opt_bool(vm, opts, "return_index", 0), want_inverse = opt_bool(vm, opts, "return_inverse", 0),
         want_counts = opt_bool(vm, opts, "return_counts", 0);
     int64_t n = a->size;
-    double *kd = (double *)calloc((size_t)(n + 1), sizeof(double));  /* (zeroed: the one not used is read too, gcc thinks) */
-    int64_t *ki = (int64_t *)calloc((size_t)(n + 1), sizeof(int64_t)), *idx = (int64_t *)malloc(sizeof(int64_t) * (size_t)(n + 1)),
-            *tmp = (int64_t *)malloc(sizeof(int64_t) * (size_t)(n + 1));
-    if (!kd || !ki || !idx || !tmp) abort();  /* LCOV_EXCL_LINE: out of memory */
-    int is_int = !IS_FLOAT(a->dtype);
-    for (int64_t i = 0; i < n; i++) {
+    int z = ITEMSIZE[a->dtype];
+    Array *flat = a;  /* (C-contiguous: read without working out each position) */
+    LubeValue kflat = is_contiguous(a) ? lube->retain(keep) : arr_copy(vm, a, -1, &flat);
+    uint64_t *key = (uint64_t *)malloc(sizeof(uint64_t) * (size_t)(2 * n + 1));
+    int64_t *idx = (int64_t *)malloc(sizeof(int64_t) * (size_t)(2 * n + 1)), *tmp = idx + n;
+    if (!key || !idx) abort();  /* LCOV_EXCL_LINE: out of memory */
+    for (int64_t i = 0; i < n; i++) {  /* (sort keys keep the values' order; -0 counts as 0, every NaN as one) */
+        key[i] = sort_key(flat->data + i * z, a->dtype);
+        if (key[i] == 0x7fffffffffffffffull && IS_FLOAT(a->dtype)) key[i] = 0x8000000000000000ull;
         idx[i] = i;
-        if (is_int) ki[i] = load_int(elem_at(a, i), a->dtype);
-        else kd[i] = load(elem_at(a, i), a->dtype);
     }
-    sort_index(idx, tmp, n, is_int ? NULL : kd, is_int ? ki : NULL);
+    radix_sort(key, idx, n, key + n, idx + n);  /* (stable: equal ones in the order they came) */
     int64_t groups = 0;
-    for (int64_t i = 0; i < n; i++) {  /* tmp[g]: where group g starts in idx */
-        int same = i > 0 && (is_int ? ki[idx[i]] == ki[idx[i - 1]]
-                                    : kd[idx[i]] == kd[idx[i - 1]] || (kd[idx[i]] != kd[idx[i]] && kd[idx[i - 1]] != kd[idx[i - 1]]));
-        if (!same) tmp[groups++] = i;
-    }
-    Array *vals, *first, *inv, *counts;
+    for (int64_t i = 0; i < n; i++)  /* tmp[g]: where group g starts in idx */
+        if (i == 0 || key[i] != key[i - 1]) tmp[groups++] = i;
+    Array *vals, *first = NULL, *inv = NULL, *counts = NULL;
     LubeValue vv = arr_new(vm, a->dtype, 1, &groups, &vals, 0);
-    LubeValue fv = arr_new(vm, ARR_I64, 1, &groups, &first, 0), iv = arr_new(vm, ARR_I64, 1, &n, &inv, 0),
-              cv = arr_new(vm, ARR_I64, 1, &groups, &counts, 0);
+    int64_t none = 0;  /* (what is not asked for is not made) */
+    LubeValue fv = arr_new(vm, ARR_I64, 1, want_index ? &groups : &none, &first, 0),
+              iv = arr_new(vm, ARR_I64, 1, want_inverse ? &n : &none, &inv, 0),
+              cv = arr_new(vm, ARR_I64, 1, want_counts ? &groups : &none, &counts, 0);
     for (int64_t g = 0; g < groups; g++) {
         int64_t from = tmp[g], to = g + 1 < groups ? tmp[g + 1] : n;
-        memcpy(vals->data + g * ITEMSIZE[a->dtype], elem_at(a, idx[from]), (size_t)ITEMSIZE[a->dtype]);
-        ((int64_t *)first->data)[g] = idx[from];
-        ((int64_t *)counts->data)[g] = to - from;
-        for (int64_t i = from; i < to; i++) ((int64_t *)inv->data)[idx[i]] = g;
+        memcpy(vals->data + g * z, flat->data + idx[from] * z, (size_t)z);
+        if (want_index) ((int64_t *)first->data)[g] = idx[from];
+        if (want_counts) ((int64_t *)counts->data)[g] = to - from;
+        if (want_inverse)
+            for (int64_t i = from; i < to; i++) ((int64_t *)inv->data)[idx[i]] = g;
     }
-    free(kd);
-    free(ki);
+    free(key);
     free(idx);
-    free(tmp);
+    lube->release(kflat);
     lube->release(keep);
     if (!want_index && !want_inverse && !want_counts) {
         lube->release(fv);
@@ -1733,6 +1973,31 @@ FN(f_searchsorted) {
     }
     Array *dst;
     LubeValue r = arr_new(vm, ARR_I64, v->ndim, v->shape, &dst, 0);
+    if (a->dtype == ARR_F64 && is_contiguous(a) && is_contiguous(v)) {  /* (in a row: no positions worked out) */
+        const double *A = (const double *)a->data;
+        int64_t n = a->shape[0];
+        for (int64_t i = 0; i < v->size; i++) {
+            double x = load(v->data + i * ITEMSIZE[v->dtype], v->dtype);
+            /* (without branches: the half to go on in is picked by a select, which a long search misses no
+             * branch on; the same place as the halving below finds) */
+            int64_t at = 0;
+            if (n > 0) {
+                const double *base = A;
+                int64_t len = n;
+                while (len > 1) {
+                    int64_t half = len / 2;
+                    int on = right ? !LESS_NAN(x, base[half]) : LESS_NAN(base[half], x);
+                    base = on ? base + half : base;
+                    len -= half;
+                }
+                at = (base - A) + (right ? !LESS_NAN(x, *base) : LESS_NAN(*base, x));
+            }
+            ((int64_t *)dst->data)[i] = at;
+        }
+        lube->release(kv);
+        lube->release(keep);
+        return scalar_out(r);
+    }
     for (int64_t i = 0; i < v->size; i++) {
         double x = load(elem_at(v, i), v->dtype);
         int64_t lo = 0, hi = a->shape[0];
@@ -1758,7 +2023,18 @@ FN(f_bincount) {
         return lube->error(vm, "bincount() needs an Array of 1 dimension");
     }
     int64_t len = (int64_t)opt_num(vm, opts, "minlength", 0);
-    for (int64_t i = 0; i < x->size; i++) {
+    int ints = x->dtype == ARR_I64 && is_contiguous(x);  /* (whole numbers in a row: checked and counted directly) */
+    if (ints) {
+        const int64_t *X = (const int64_t *)x->data;
+        int64_t top = -1, low = 0;
+        for (int64_t i = 0; i < x->size; i++) {
+            top = X[i] > top ? X[i] : top;
+            low = X[i] < low ? X[i] : low;
+        }
+        ints = low >= 0 && top <= MAX_ELEMENTS;
+        if (ints && top + 1 > len) len = top + 1;
+    }
+    for (int64_t i = 0; i < x->size && !ints; i++) {
         double d = load(elem_at(x, i), x->dtype);
         if (d < 0 || d != floor(d) || d > (double)MAX_ELEMENTS) {
             lube->release(keep);
@@ -1780,6 +2056,14 @@ FN(f_bincount) {
     }
     Array *dst;
     LubeValue r = arr_new(vm, wa ? ARR_F64 : ARR_I64, 1, &len, &dst, 1);
+    if (ints && !wa) {
+        const int64_t *X = (const int64_t *)x->data;
+        int64_t *D = (int64_t *)dst->data;
+        for (int64_t i = 0; i < x->size; i++) D[X[i]]++;
+        lube->release(kw);
+        lube->release(keep);
+        return r;
+    }
     for (int64_t i = 0; i < x->size; i++) {
         int64_t k = (int64_t)load(elem_at(x, i), x->dtype);
         if (wa) ((double *)dst->data)[k] += load(elem_at(wa, i), wa->dtype);
@@ -1953,7 +2237,10 @@ FN(f_norm) {
     }
     const char *os = lube->str(ord, NULL);
     int has_ord = lube->kind(ord) == LUBE_NUMBER || os;
-    if (!has_ord || (os && !strcmp(os, "fro") && a->ndim == 2 && axis == ARR_ALL_AXES)) {  /* sqrt of the sum of squares */
+    if ((!has_ord || (os && !strcmp(os, "fro") && a->ndim == 2)) && axis == ARR_ALL_AXES && IS_FLOAT(a->dtype) &&
+        is_contiguous(a)) {  /* (of every element, in a row: the squares' sum in one pass) */
+        r = lube->number_value(sqrt(sum_or_squares(a->data, a->dtype, a->size, 1, 0.0)));
+    } else if (!has_ord || (os && !strcmp(os, "fro") && a->ndim == 2 && axis == ARR_ALL_AXES)) {  /* sqrt of the sum of squares */
         LubeValue sq = un_op(vm, ARR_SQUARE, keep), f = arr_from(vm, sq, ARR_F64, &a);
         LubeValue s = reduce_op(vm, ARR_SUM, f, axis, 0, 0);
         r = scalar_out(un_op(vm, ARR_SQRT, s));
@@ -2429,9 +2716,7 @@ FN(f_threads) {
         double n = lube->number(argv[0]);
         if (lube->kind(argv[0]) != LUBE_NUMBER || n < 0 || n != floor(n) || n > MAX_THREADS)
             return lube->error(vm, "threads() takes a whole number in 0..%d (0: one per core)", MAX_THREADS);
-        lube->lock_acquire(pool_lock);
-        thread_limit = (int)n;
-        lube->lock_release(pool_lock);
+        STORE(thread_limit, (int)n);
     }
     return lube->number_value(threads_now());
 }
@@ -2605,6 +2890,13 @@ static LubeValue export_make(LubeVM *vm, int dtype, int nd, const int64_t *shape
     return v;
 }
 
+static LubeValue export_make_empty(LubeVM *vm, int dtype, int nd, const int64_t *shape, void **data) {
+    Array *a;
+    LubeValue v = arr_new(vm, dtype, nd, shape, &a, 0);
+    if (data) *data = a ? a->data : NULL;
+    return v;
+}
+
 static LubeValue export_from(LubeVM *vm, LubeValue x, int dtype) {
     Array *a;
     return arr_from(vm, x, dtype, &a);
@@ -2639,7 +2931,7 @@ static const ArrayExports EXPORTS = {
     ARRAY_EXPORTS, NULL, DTYPE_NAMES, ITEMSIZE,
     export_get, export_make, export_from, export_contiguous, export_binary, un_op, matmul, export_reduce,
     export_reshape, transposed, sum_to, index_get, par_for, export_own, export_fill_random,
-    export_load_st, export_save_st, export_seed, export_describe,
+    export_load_st, export_save_st, export_seed, export_describe, export_make_empty,
 };
 static ArrayExports exports;
 

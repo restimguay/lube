@@ -1,0 +1,335 @@
+// core.lube: the language itself (core.py does the same in Python): calls, loops, text, objects and maps,
+// lists, sorting, closures, classes and methods, exceptions. The size is the number of items or iterations.
+import "harness"
+import random
+
+fn fib(n) {
+  if n < 2 { return n }
+  return fib(n - 1) + fib(n - 2)
+}
+fn add(a, b) => a + b
+
+class Point {
+  var x = 0
+  var y = 0
+  constructor(x, y) {
+    this.x = x
+    this.y = y
+  }
+  fn move(dx) { this.x += dx }
+  fn norm2() => this.x * this.x + this.y * this.y
+}
+class Point3 extends Point {
+  var z = 0
+  constructor(x, y, z) {
+    super(x, y)
+    this.z = z
+  }
+  fn norm2() => super.norm2() + this.z * this.z
+}
+
+fn weighted(xs) {  // a checksum that depends on the order: sum of (i + 1) * x
+  var s = 0
+  for i, x in xs { s += (i + 1) * x }
+  return s
+}
+fn weighted_len(xs) {
+  var s = 0
+  for i, x in xs { s += (i + 1) * len(x) }
+  return s
+}
+
+for n in [15, 20, 25] { bench("fib_recursive", n, fn() => fib(n)) }
+
+for n in [1000, 100000, 1000000] {
+  bench("loop_for_range", n, fn() {
+    var s = 0
+    for i in 0..n { s += i * i }
+    return s
+  })
+  bench("loop_while", n, fn() {
+    var s = 0
+    var i = 0
+    while i < n {
+      s += i
+      i += 1
+    }
+    return s
+  })
+}
+
+for n in [1000, 100000] {
+  bench("loop_float_math", n, fn() {
+    var x = 0.5
+    var s = 0
+    for i in 0..n {
+      x = x * 1.0000001 + 0.25
+      s += x / (i + 1)
+    }
+    return s
+  })
+  bench("call_function", n, fn() {
+    var s = 0
+    for i in 0..n { s = add(s, i) }
+    return s
+  })
+  let adder = fn(a, b) => a + b
+  bench("call_closure", n, fn() {
+    var s = 0
+    for i in 0..n { s = adder(s, i) }
+    return s
+  })
+  bench("make_closures", n, fn() {
+    var fs = []
+    for i in 0..n { fs.push(fn(x) => x + i) }
+    return len(fs)
+  })
+}
+
+// ---------- text ----------
+random.seed(1)
+for n in [1000, 100000] {
+  bench("str_concat", n, fn() {
+    var s = ""
+    for i in 0..n { s += "ab" }
+    return len(s)
+  })
+  bench("str_interpolate", n, fn() {
+    var total = 0
+    for i in 0..n { total += len("w{i}-{i % 13}") }
+    return total
+  })
+  bench("str_from_number", n, fn() {
+    var total = 0
+    for i in 0..n { total += len(str(i * 0.5)) }
+    return total
+  })
+  var parts = []
+  for i in 0..n { parts.push(str(i)) }
+  let text = join(parts, ",")
+  bench("str_join", n, fn() => len(join(parts, ",")))
+  bench("str_split", n, fn() => len(split(text, ",")))
+  bench("str_replace", n, fn() => len(replace(text, "1", "one")))
+  bench("str_upper", n, fn() => len(upper(text)))
+  bench("str_to_number", n, fn() {
+    var s = 0
+    for p in parts { s += Number(p) }
+    return s
+  })
+  bench("str_contains", n, fn() {
+    var c = 0
+    for p in parts {
+      if "99" in p { c += 1 }
+    }
+    return c
+  })
+  let words = map(list(0..n), fn(i) => "w{i % 97}-{i % 13}")
+  bench("str_compare_eq", n, fn() {
+    var c = 0
+    for w in words {
+      if w == "w5-5" { c += 1 }
+    }
+    return c
+  })
+}
+
+// ---------- objects (dicts) and maps ----------
+for n in [1000, 100000, 1000000] {
+  let ks = map(list(0..n), fn(i) => "k{i}")
+  bench("dict_insert_str", n, fn() {
+    var d = {}
+    for k in ks { d[k] = 1 }
+    return len(keys(d))
+  })
+}
+for n in [1000, 100000] {
+  let ks = map(list(0..n), fn(i) => "k{i}")
+  var d = {}
+  for i, k in ks { d[k] = i }
+  bench("dict_lookup_str", n, fn() {
+    var s = 0
+    for k in ks { s += d[k] }
+    return s
+  })
+  bench("dict_get_default", n, fn() {
+    var s = 0
+    for i in 0..n { s += get(d, "nope", 1) }
+    return s
+  })
+  bench("dict_insert_int", n, fn() {
+    var e = {}
+    for i in 0..n { e[i] = i }
+    return len(keys(e))
+  })
+  bench("dict_count_words", n, fn() {
+    var counts = {}
+    for k in ks {
+      let w = slice(k, 0, 3)
+      counts[w] = get(counts, w, 0) + 1
+    }
+    return len(keys(counts))
+  })
+  bench("dict_iterate", n, fn() {
+    var s = 0
+    for k, v in d { s += v }
+    return s
+  })
+  bench("map_tuple_keys", n, fn() {
+    var seen = Map
+    for i in 0..n { seen[[i % 50, i % 7]] = i }
+    return len(keys(seen))
+  })
+  bench("object_create", n, fn() {
+    var s = 0
+    for i in 0..n {
+      let o = {x: i, y: 2, name: "p"}
+      s += o.x
+    }
+    return s
+  })
+}
+
+// ---------- lists ----------
+for n in [1000, 100000, 1000000] {
+  bench("list_append", n, fn() {
+    var xs = []
+    for i in 0..n { xs.push(i) }
+    return len(xs)
+  })
+}
+for n in [1000, 100000] {
+  let xs = list(0..n)
+  bench("list_index_sum", n, fn() {
+    var s = 0
+    for i in 0..n { s += xs[i] }
+    return s
+  })
+  bench("list_iterate", n, fn() {
+    var s = 0
+    for x in xs { s += x }
+    return s
+  })
+  bench("list_set_item", n, fn() {
+    var ys = [0] * n
+    for i in 0..n { ys[i] = i }
+    return weighted(ys)
+  })
+  bench("list_map", n, fn() => map(xs, fn(x) => x * 2))
+  bench("list_filter", n, fn() => filter(xs, fn(x) => x % 3 == 0))
+  bench("list_reduce", n, fn() => reduce(xs, fn(a, b) => a + b, 0))
+  bench("list_sum_builtin", n, fn() => sum(xs))
+  bench("list_slice", n, fn() => slice(xs, 1, n - 1))
+  bench("list_reverse", n, fn() => weighted(reverse(xs)))
+  bench("list_contains", n, fn() => contains(xs, n - 1))
+  bench("list_copy_on_write", n, fn() {
+    var ys = xs
+    ys[0] = 5
+    return ys[0]
+  })
+  bench("list_of_lists", n, fn() {
+    var grid = []
+    for i in 0..n { grid.push([i, i + 1]) }
+    return len(grid)
+  })
+}
+
+// ---------- sorting ----------
+for n in [1000, 100000, 1000000] {
+  random.seed(2)
+  let nums = map(list(0..n), fn(i) => random.random())
+  bench_chk("sort_numbers", n, fn() => sort(nums), weighted)
+}
+for n in [1000, 100000] {
+  random.seed(3)
+  let nums = map(list(0..n), fn(i) => random.random())
+  let ints = map(list(0..n), fn(i) => random.randint(0, 1000000))
+  let strs = map(ints, fn(i) => "s{i}")
+  bench_chk("sort_ints", n, fn() => sort(ints), weighted)
+  bench_chk("sort_strings", n, fn() => sort(strs), weighted_len)
+  bench_chk("sort_custom_order", n, fn() => sort(nums, fn(x) => -x), weighted)
+  let people = map(list(0..n), fn(i) => {name: strs[i], age: ints[i] % 100})
+  bench_chk("sort_objects_by_field", n, fn() => sort(people, fn(p) => p.age), fn(r) => weighted(map(r, fn(p) => p.age)))
+}
+
+// ---------- classes and methods ----------
+for n in [1000, 100000] {
+  bench("class_construct", n, fn() {
+    var s = 0
+    for i in 0..n {
+      let p = Point(i, 2)
+      s += p.x
+    }
+    return s
+  })
+  bench("method_call", n, fn() {
+    var p = Point(1, 2)
+    var s = 0
+    for i in 0..n { s += p.norm2() }
+    return s
+  })
+  bench("method_mutate", n, fn() {
+    var p = Point(0, 0)
+    for i in 0..n { p.move(1) }
+    return p.x
+  })
+  bench("field_read_write", n, fn() {
+    var p = Point(0, 0)
+    for i in 0..n { p.y = p.x + i }
+    return p.y
+  })
+  bench("method_inherited_super", n, fn() {
+    let p = Point3(1, 2, 3)
+    var s = 0
+    for i in 0..n { s += p.norm2() }
+    return s
+  })
+  bench("list_of_instances", n, fn() {
+    var ps = []
+    for i in 0..n { ps.push(Point(i, i)) }
+    var s = 0
+    for p in ps { s += p.x }
+    return s
+  })
+}
+
+// ---------- exceptions ----------
+for n in [1000, 100000] {
+  bench("try_no_throw", n, fn() {
+    var c = 0
+    for i in 0..n {
+      try { c += 1 } catch e { c -= 1 }
+    }
+    return c
+  })
+  bench("throw_catch", n, fn() {
+    var c = 0
+    for i in 0..n {
+      try { throw "bad" } catch e { c += 1 }
+    }
+    return c
+  })
+  bench("catch_index_error", n, fn() {
+    let xs = [1, 2]
+    var c = 0
+    for i in 0..n {
+      try { c += xs[5] } catch e { c += 1 }
+    }
+    return c
+  })
+  bench("catch_in_callee", n, fn() {
+    var c = 0
+    for i in 0..n {
+      try { c += fib(-1) + [1][3] } catch e { c += 1 }
+    }
+    return c
+  })
+}
+
+// ---------- bytes ----------
+for n in [1000, 100000] {
+  bench("bytes_build", n, fn() {
+    var b = Bytes()
+    for i in 0..n { push(&b, i % 256) }
+    return len(b)
+  })
+}

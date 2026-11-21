@@ -1,0 +1,57 @@
+// money.lube: Lube's Money (money.py does the same with Python's decimal, rounding half up to the cent):
+// making amounts, adding, multiplying and rounding, formatting, splitting and allocating, converting.
+// The size is the number of amounts.
+import "harness"
+import random
+
+fn units(xs) => map(xs, fn(x) => x.units)
+fn weighted(xs) {  // a checksum that depends on the order
+  var s = 0
+  for i, x in xs { s += (i + 1) * x }
+  return s
+}
+
+for n in [1000, 100000] {
+  random.seed(5)
+  let cents = map(list(0..n), fn(i) => random.randint(1, 10000000))
+  let nums = map(cents, fn(c) => c / 100)
+  let texts = map(cents, fn(c) => "{floor(c / 100)}.{pad_left(c % 100, 2, "0")}")
+  let ms = map(nums, fn(x) => m(x))
+
+  bench("from_number", n, fn() => map(nums, fn(x) => m(x)))
+  bench("from_text", n, fn() => map(texts, fn(t) => m(t)))
+  bench("add_loop", n, fn() {
+    var t = m(0)
+    for x in ms { t += x }
+    return t
+  })
+  bench("sum_builtin", n, fn() => sum(ms))
+  bench("add_number", n, fn() => map(ms, fn(x) => x + 1))
+  bench("multiply_round", n, fn() => map(ms, fn(x) => x * 0.0725))
+  bench("multiply_int", n, fn() => map(ms, fn(x) => x * 3))
+  bench("divide_round", n, fn() => map(ms, fn(x) => x / 3))
+  bench("tax_total", n, fn() {
+    var t = m(0)
+    for x in ms { t += x * 0.0725 }
+    return t
+  })
+  bench("compound_interest", n, fn() {
+    var t = m(0)
+    for x in ms {
+      var b = x
+      for k in 0..12 { b = b * 1.01 }
+      t += b
+    }
+    return t
+  })
+  bench("compare_max", n, fn() => max(ms))
+  bench_chk("sort", n, fn() => sort(ms), fn(r) => weighted(units(r)))
+  bench("round_to_units", n, fn() => map(ms, fn(x) => x.round()))
+  bench("format_default", n, fn() => map(ms, fn(x) => str(x)))
+  bench("format_custom", n, fn() => map(ms, fn(x) => x.format({thousands: ".", decimal: ","})))
+  bench_chk("split_7", n, fn() => map(ms, fn(x) => x.split(7)), fn(r) => map(r, fn(s) => weighted(units(s))))
+  bench_chk("allocate_5", n, fn() => map(ms, fn(x) => x.allocate([1, 2, 3, 5, 8])), fn(r) => map(r, fn(s) => weighted(units(s))))
+  bench("convert_to_jpy", n, fn() => map(ms, fn(x) => x.to("JPY", 151.234)))
+  bench("convert_to_eur", n, fn() => map(ms, fn(x) => x.to("EUR", 0.9234)))
+  bench("units", n, fn() => sum(map(ms, fn(x) => x.units)))
+}

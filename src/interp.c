@@ -73,10 +73,57 @@ Value lube_throw(Interp *I, Value v) {
     return ERR_VAL;
 }
 
+/* A message made of text, %s, %d and %lu alone (most are), written without printf, which costs more than
+ * the rest of raising an error that a program catches: its length, cut short as vsnprintf's would be, or -1
+ * for a format with anything else in it (nothing is taken from ap then). */
+static int plain_message(char *buf, size_t size, const char *fmt, va_list ap) {
+    for (const char *p = fmt; *p; p++) {
+        if (*p != '%') continue;
+        p++;
+        if (*p == 'l' && p[1] == 'u') p++;
+        else if (*p != 's' && *p != 'd') return -1;
+    }
+    size_t n = 0;
+    for (const char *p = fmt; *p;) {
+        char digits[24];
+        const char *s = p;
+        size_t len = 0;
+        if (*p != '%') {  /* the text up to the next % */
+            while (p[len] && p[len] != '%') len++;
+            p += len;
+        } else if (p[1] == 's') {
+            s = va_arg(ap, const char *);
+            len = strlen(s);
+            p += 2;
+        } else {  /* a whole number: its digits, from the last */
+            int is_int = p[1] == 'd';
+            long d = is_int ? va_arg(ap, int) : 0;
+            unsigned long u = is_int ? (d < 0 ? 0 - (unsigned long)d : (unsigned long)d) : va_arg(ap, unsigned long);
+            char *q = digits + sizeof digits;
+            do *--q = (char)('0' + u % 10);
+            while (u /= 10);
+            q[-1] = '-';
+            q -= d < 0;
+            s = q;
+            len = (size_t)(digits + sizeof digits - q);
+            p += is_int ? 2 : 3;
+        }
+        if (len > size - 1 - n) len = size - 1 - n;
+        memcpy(buf + n, s, len);
+        n += len;
+    }
+    buf[n] = 0;
+    return (int)n;
+}
+
 LUBE_COLD static Value verror(Interp *I, const char *fmt, va_list ap) {
     char buf[1024];
-    vsnprintf(buf, sizeof buf, fmt, ap);
-    return lube_throw(I, OBJ_VAL(new_string(buf, strlen(buf))));
+    int n = plain_message(buf, sizeof buf, fmt, ap);
+    if (n < 0) {
+        vsnprintf(buf, sizeof buf, fmt, ap);
+        n = (int)strlen(buf);
+    }
+    return lube_throw(I, OBJ_VAL(new_string(buf, (size_t)n)));
 }
 
 Value lube_error(Interp *I, const char *fmt, ...) {
@@ -449,6 +496,15 @@ static inline int num_op(int op, double x, double y, Value *out) {
     }
 }
 
+/* a == b or a != b for two strs, without the general comparison: 1 and *out, or 0 for anything else */
+static inline int str_eq_op(int op, Value a, Value b, Value *out) {
+    if ((op != T_EQ && op != T_NEQ) || !IS_STRING(a) || !IS_STRING(b)) return 0;
+    ObjString *x = AS_STRING(a), *y = AS_STRING(b);
+    int eq = x == y || (x->length == y->length && memcmp(x->chars, y->chars, x->length) == 0);
+    *out = BOOL_VAL(eq == (op == T_EQ));
+    return 1;
+}
+
 static Value binary_op(Interp *I, TokenType op, Value a, Value b) {
     Value quick;
     if (IS_NUM(a) && IS_NUM(b) && num_op(op, a.as.number, b.as.number, &quick)) return quick;
@@ -503,7 +559,7 @@ static Value binary_op(Interp *I, TokenType op, Value a, Value b) {
             list_reserve(out, x->count + y->count);
             for (size_t i = 0; i < x->count; i++) out->items[out->count++] = retain(x->items[i]);
             for (size_t i = 0; i < y->count; i++) {
-                Value v = lube_check_elem(I, type_name(a), out->elem, y->items[i]);
+                Value v = CHECK_ELEM(I, type_name(a), out->elem, y->items[i]);
                 if (IS_ERR(v)) {
                     release(OBJ_VAL(out));
                     return v;
@@ -822,6 +878,10 @@ static Value *navigate(Interp *I, Value *slot, Place *p, ObjMap **made, int *ele
                 *ftype = &c->field_types[f];
             }
             Value *child = map_find(m, key);
+            if (!child && IS_NUM(key) && key.as.number != key.as.number) {
+                lube_error(I, "nan cannot be a key: it is not equal to itself, so it would never be found again");
+                return NULL;
+            }
             if (!child) {
                 if (i < p->nkeys - 1 || !made) {
                     ObjString *k = value_repr(key);
@@ -834,8 +894,7 @@ static Value *navigate(Interp *I, Value *slot, Place *p, ObjMap **made, int *ele
                     release(OBJ_VAL(k));
                     return NULL;
                 }
-                map_set(m, retain(key), NIL_VAL);
-                child = map_find(m, key);
+                child = map_slot(m, key);
                 *made = m;
             }
             slot = child;
@@ -1033,7 +1092,7 @@ static Value call_from_c(Interp *I, Value fn, int has_self, Value self, int argc
 Value lube_call(Interp *I, Value fn, int argc, Value *argv) {
     if (IS_FUNCTION(fn)) {
         FuncDecl *d = AS_FUNCTION(fn)->decl;
-        for (int i = 0; i < d->nparams; i++)
+        for (int i = 0; d->has_ref && i < d->nparams; i++)
             if (d->modes[i] == PARAM_REF)
                 return lube_error(I, "%s() changes its argument '%s' with &, so it cannot be used as a callback",
                                   callee_name(fn), d->params[i]->chars);
@@ -1299,6 +1358,21 @@ static int fast_assign(Interp *I, PlaceDesc *pd, TokenType op, Value *rhs) {
     for (int i = 0; i < pd->nkeys; i++) {  /* (only the last step's type matters: the others hold containers) */
         int last = i == pd->nkeys - 1;
         if (!IS_OBJ(*slot) || slot->as.obj->rc != 1) return 0;
+        if (IS_MAP(*slot) && !AS_MAP(*slot)->klass) {  /* an Object or a Map: o.x = v, counts[w] += 1 */
+            ObjMap *m = AS_MAP(*slot);
+            Value key = keys[i], *child;
+            if (!IS_STRING(key) && !(IS_NUM(key) && key.as.number == key.as.number)) return 0;
+            if (last && op == T_ASSIGN && m->vtype == TT_ANY && m->ktype == TT_ANY) {
+                slot = map_slot(m, key);  /* (a new key holds nothing until the store below, which cannot fail) */
+                numeric = 0;
+                continue;
+            }
+            child = map_find(m, key);
+            if (!child || (last && m->vtype != TT_ANY && m->vtype != TT_NUMBER)) return 0;
+            numeric = m->vtype == TT_NUMBER;
+            slot = child;
+            continue;
+        }
         if (pd->is_field[i]) {
             int fs = IS_INSTANCE(*slot) ? field_slot(AS_MAP(*slot), AS_STRING(keys[i])) : -1;
             if (fs < 0 || (last && AS_MAP(*slot)->klass->field_types[fs].kind != TD_NUM)) return 0;
@@ -1419,7 +1493,7 @@ LUBE_NOINLINE static Value do_assign(Interp *I, TokenType op, Place *place, Valu
 
     if (op == T_ASSIGN) {
         if (elem != TT_ANY) {  /* into a typed list or map */
-            Value c = lube_check_elem(I, type_name(*holder), elem, rhs);
+            Value c = CHECK_ELEM(I, type_name(*holder), elem, rhs);
             release(rhs);
             rhs = c;
         }
@@ -1479,7 +1553,7 @@ LUBE_NOINLINE static Value do_assign(Interp *I, TokenType op, Place *place, Valu
     else if (!IS_NUM(*slot) || !IS_NUM(rhs) || !num_op(bin, slot->as.number, rhs.as.number, &r)) r = binary_op(I, bin, *slot, rhs);
     release(rhs);
     if (!IS_ERR(r) && elem != TT_ANY) {
-        Value c = lube_check_elem(I, type_name(*holder), elem, r);
+        Value c = CHECK_ELEM(I, type_name(*holder), elem, r);
         release(r);
         r = c;
     }
@@ -1771,6 +1845,8 @@ static Value return_loans(Interp *I, int args, Loan *loans, int n, Value result)
 /* Starts a call to fn with the argc arguments at stack[base...]: checks
  * them (errors belong to the caller), then pushes a frame. Returns it, or
  * NULL after raising an error. */
+LUBE_INLINE Frame *push_frame(Interp *I, ObjFunction *fn, const char *name, int base, int argc);
+
 static Frame *enter(Interp *I, ObjFunction *fn, int base, int argc) {
     FuncDecl *d = fn->decl;
     const char *name = callee_name(OBJ_VAL(fn));
@@ -1792,6 +1868,21 @@ static Frame *enter(Interp *I, ObjFunction *fn, int base, int argc) {
         lube_error(I, "stack overflow: too much recursion");
         return NULL;
     }
+    return push_frame(I, fn, name, base, argc);
+}
+
+/* May a call of d, whose parameters from `first` on are plain (see FuncDecl.plain), start without enter()?
+ * When it has every argument, those of Number parameters are Numbers, and there is room for its frame. */
+static inline int plain_args(Interp *I, FuncDecl *d, int base, int argc, int first) {
+    if (argc != d->nparams || I->depth >= LUBE_MAX_FRAMES || base + d->nslots + d->code.maxstack > LUBE_STACK_MAX) return 0;
+    for (int i = first; d->types && i < argc; i++)
+        if (d->types[i].set && !IS_NUM(I->stack[base + i])) return 0;
+    return 1;
+}
+
+/* The frame of a call to fn whose argc arguments, at stack[base...], are checked (or need no check). */
+LUBE_INLINE Frame *push_frame(Interp *I, ObjFunction *fn, const char *name, int base, int argc) {
+    FuncDecl *d = fn->decl;
     for (int i = base + argc; i < base + d->nslots; i++) I->stack[i] = NIL_VAL;
     I->sp = base + d->nslots;
     Frame *f = new_frame(I);
@@ -1864,8 +1955,7 @@ static Value new_instance(Interp *I, ObjClass *cls, int argc, ObjFunction **ctor
     if (!stack_room(I, 1)) return lube_error(I, "stack overflow: too much recursion");
     ObjMap *inst = new_map();
     inst->klass = cls;
-    for (int i = 0; i < cls->nfields; i++)
-        map_set(inst, retain(OBJ_VAL(cls->field_names[i])), retain(cls->field_defaults[i]));
+    map_fill(inst, cls->field_names, cls->field_defaults, (size_t)cls->nfields);
     *ctor = d ? AS_FUNCTION(owner->constructor) : NULL;
     return OBJ_VAL(inst);
 }
@@ -1900,7 +1990,9 @@ static int start_call(Interp *I, int ci, int argc, Loan *loans, int nloans, int 
             memmove(&I->stack[base + 1], &I->stack[base], sizeof(Value) * (size_t)argc);
             I->stack[base] = r;
             I->sp++;
-            Frame *f = enter(I, ctor, base, argc + 1);
+            FuncDecl *d = ctor->decl;  /* (plain parameters, all given: nothing for enter() to check) */
+            Frame *f = d->plain_ctor && plain_args(I, d, base, argc + 1, 1)
+                           ? push_frame(I, ctor, callee_name(OBJ_VAL(ctor)), base, argc + 1) : enter(I, ctor, base, argc + 1);
             if (f) {
                 f->construct = 1;
                 f->call_base = ci;
@@ -1937,10 +2029,32 @@ static int push_call(Interp *I, Value callee, int mode, Value self, Place *place
     return 0;
 }
 
+/* A package's member called at md: found through md's cache when it still holds (the entry at the slot it
+ * remembers must still be that global's), else as package_member finds it, and remembered. */
+static Value package_callee(Interp *I, Value pkgv, MethodDesc *md) {
+    ObjString *pkg = AS_PACKAGE(pkgv)->name;
+    ObjMap *g = I->globals;
+    int at = md->cache_gslot - 1;
+    if (md->cache_pkg == pkg && at >= 0 && (size_t)at < g->used && g->entries[at].live &&
+        g->entries[at].key.as.obj == (Obj *)md->cache_key)
+        return retain(g->entries[at].value);
+    Value v = package_member(I, pkgv, md->name);
+    if (IS_ERR(v)) return v;
+    ObjString *key = lube_global_key(I, pkg, md->name);
+    Value *slot = map_find(g, OBJ_VAL(key));
+    if (slot) {
+        MapEntry *e = (MapEntry *)(void *)((char *)slot - offsetof(MapEntry, value));
+        md->cache_pkg = pkg;
+        md->cache_key = key;
+        md->cache_gslot = (int)(e - g->entries) + 1;
+    }
+    return v;
+}
+
 LUBE_NOINLINE static int prep_method(Interp *I, MethodDesc *md, Value obj, Place *place, int have_place) {
     ObjString *name = md->name;
     if (IS_PACKAGE(obj)) {  /* geometry.area(s): a package's function */
-        Value callee = package_member(I, obj, name);
+        Value callee = package_callee(I, obj, md);
         release(obj);
         if (have_place) place_free(place);
         if (IS_ERR(callee)) return -1;
@@ -2420,6 +2534,7 @@ static Value execute(Interp *I) {
         case OP_MAP: {
             int n = ARG_OF(in);
             ObjMap *m = new_map();
+            map_reserve(m, (size_t)n);
             for (int i = I->sp - 2 * n; i < I->sp; i += 2) map_set(m, I->stack[i], I->stack[i + 1]);
             I->sp -= 2 * n;
             PUSH(OBJ_VAL(m));
@@ -2443,7 +2558,7 @@ static Value execute(Interp *I) {
             Value b = I->stack[I->sp - 1], a = I->stack[I->sp - 2];
             int op = ARG_OF(in);
             if (!IS_NUM(a) || !IS_NUM(b) || !num_op(op, a.as.number, b.as.number, &r)) {
-                r = binary_op(I, (TokenType)op, a, b);
+                if (!str_eq_op(op, a, b, &r)) r = binary_op(I, (TokenType)op, a, b);
                 release(a);
                 release(b);
             }
@@ -2452,13 +2567,13 @@ static Value execute(Interp *I) {
             PUSH(r);
             break;
         }
-        case OP_BINARY2: {  /* a op b, b (and perhaps a) read in place: a local or a Number */
+        case OP_BINARY2: {  /* a op b, b (and perhaps a) read in place: a local, or a Number or str written out */
             int arg = ARG_OF(in), op = arg & 0xff, ka = (arg >> 8) & 3, kb = arg >> 10;
             Value b = kb == OPND_LOCAL ? I->stack[f->base + (int)ip[1]] : K(ip[1]);
             Value a = ka == OPND_LOCAL ? I->stack[f->base + (int)ip[0]] : ka == OPND_CONST ? K(ip[0]) : TOP;
             ip += 2;
             if (!IS_NUM(a) || !IS_NUM(b) || !num_op(op, a.as.number, b.as.number, &r)) {
-                r = binary_op(I, (TokenType)op, a, b);
+                if (!str_eq_op(op, a, b, &r)) r = binary_op(I, (TokenType)op, a, b);
                 if (ka == OPND_STACK) release(a);
             }
             if (ka == OPND_STACK) I->sp--;
@@ -2475,7 +2590,7 @@ static Value execute(Interp *I) {
                                          : I->stack[I->sp - stacked];
             ip += 3;
             if (!IS_NUM(a) || !IS_NUM(b) || !num_op(op, a.as.number, b.as.number, &r)) {
-                r = binary_op(I, (TokenType)op, a, b);
+                if (!str_eq_op(op, a, b, &r)) r = binary_op(I, (TokenType)op, a, b);
                 if (ka == OPND_STACK) release(a);
                 if (kb == OPND_STACK) release(b);
             }
@@ -2739,6 +2854,17 @@ static Value execute(Interp *I) {
                     push_call(I, retain(md->cache_method), SELF_LEND, NIL_VAL, &place);
                     break;
                 }
+                if (root && IS_PACKAGE(*root) && md->cache_pkg == AS_PACKAGE(*root)->name) {
+                    /* math.sqrt(x): the package's function last called here, if its global is still where it was
+                     * (as package_callee finds it) */
+                    ObjMap *g = I->globals;
+                    int at = md->cache_gslot - 1;
+                    if (at >= 0 && (size_t)at < g->used && g->entries[at].live &&
+                        g->entries[at].key.as.obj == (Obj *)md->cache_key && IS_CALLABLE(g->entries[at].value)) {
+                        push_call(I, retain(g->entries[at].value), SELF_NONE, NIL_VAL, NULL);
+                        break;
+                    }
+                }
                 Value *fn = root && root->type == VAL_OBJ && !IS_MAP(*root) && !IS_PACKAGE(*root) && !LUBE_OWN_METHODS(OBJ_TYPE(*root)) &&
                             md->fallback.kind == VAR_GLOBAL
                                 ? global_ref(I, &md->fallback, &failed) : NULL;
@@ -2760,6 +2886,37 @@ static Value execute(Interp *I) {
                 obj = POP();
             }
             if (prep_method(I, md, obj, &place, have_place) < 0) goto error;
+            break;
+        }
+        case OP_PUSH_CHECK: {  /* xs.push(v), push(&xs, v): may OP_PUSH_DO append v? Else on to the call, at ip[0] */
+            MethodDesc *md = &code->methods[ARG_OF(in)];
+            const VarRef *rv = &code->places[md->recv_place].var;
+            Value *root = &I->stack[f->base + rv->index], *fn;
+            int failed = 0;
+            if (((IS_LIST(*root) && AS_LIST(*root)->elem == TT_ANY) || IS_BYTES(*root)) && !(rv->watch && rv->watch->n) &&
+                (fn = global_ref(I, &md->fallback, &failed)) != NULL && IS_NATIVE(*fn) && AS_NATIVE(*fn)->changes_first == 2)
+                ip++;
+            else if (failed) goto error;
+            else ip = code->code + (int)ip[0];
+            break;
+        }
+        case OP_PUSH_DO: {  /* ...appended as n_push does it (to a copy, if the List is shared: xs.push(xs)) */
+            Value *root = &I->stack[f->base + ARG_OF(in)], v = POP();
+            if (IS_LIST(*root)) {
+                make_unique(root);
+                list_push(AS_LIST(*root), v);  /* (the List takes it over) */
+            } else {  /* Bytes: a byte, text or Bytes, or an error */
+                Value two[2];
+                two[0] = *root;
+                two[1] = v;
+                r = lube_bytes_push(I, 2, two);
+                *root = two[0];
+                release(v);
+                if (IS_ERR(r)) goto error;
+            }
+            ip = code->code + (int)ip[0];
+            if (OP_OF(*ip) == OP_POP) ip++;  /* (a statement: its nothing would be dropped) */
+            else PUSH(NIL_VAL);
             break;
         }
         case OP_SUPER_PREP: {  /* the parent class's method (or constructor), with the same `this` */
@@ -2860,10 +3017,12 @@ static Value execute(Interp *I) {
                     break;
                 }
             }
-            if (!cd->refs && IS_NATIVE(I->stack[pc->callee]) && (pc->mode == SELF_VALUE || pc->mode == SELF_LEND)) {
-                /* x.f(args), f a built-in (s.ends_with(t), xs.push(v)): called here (see invoke) */
+            if (!cd->refs && IS_NATIVE(I->stack[pc->callee]) && pc->mode != SELF_LOCKED) {
+                /* x.f(args), f a built-in (s.ends_with(t), xs.push(v)), or a package's (math.sqrt(x), with no x
+                 * in front): called here (see invoke) */
                 ObjNative *nf = AS_NATIVE(I->stack[pc->callee]);
-                int ci = pc->callee, argc = 1 + cd->nargs, failed = 0, lend = pc->mode == SELF_LEND;
+                int ci = pc->callee, self = pc->mode != SELF_NONE, argc = self + cd->nargs, failed = 0;
+                int lend = pc->mode == SELF_LEND, first = ci + 1 + (self ? 0 : pc->has_slot);
                 const VarRef *rv = lend ? pc->place.root : NULL;
                 Value *root = !lend ? NULL : pc->place.nkeys || !nf->changes_first || !place_changeable(I, &pc->place) ? NULL
                             : rv->kind == VAR_LOCAL ? (rv->watch && rv->watch->n ? NULL : &SLOT(rv->index))
@@ -2876,7 +3035,7 @@ static Value execute(Interp *I) {
                         I->stack[ci + 1] = *root;
                         *root = rv->kind == VAR_GLOBAL ? LENT_VAL : NIL_VAL;
                     }
-                    r = (I->calling = nf)->fn(I, argc, &I->stack[ci + 1]);
+                    r = (I->calling = nf)->fn(I, argc, &I->stack[first]);
                     if (lend) {
                         root = rv->kind == VAR_LOCAL ? &SLOT(rv->index) : global_ref(I, rv, &failed);
                         *root = I->stack[ci + 1];
@@ -2976,6 +3135,20 @@ static Value execute(Interp *I) {
                 ObjRange *rg = AS_RANGE(I->stack[I->sp - 3]);
                 Value *slot = &I->stack[f->base + (int)ip[0]], old = *slot;
                 *slot = NUM_VAL(rg->start + k * rg->step);
+                release(old);
+                I->stack[I->sp - 1] = NUM_VAL(k + 1);
+                ip += 2;
+                break;
+            }
+            if (IS_LIST(I->stack[I->sp - 3]) && (int)ip[1] < 0) {  /* for x in xs: as common */
+                ObjList *l = AS_LIST(I->stack[I->sp - 3]);
+                double k = I->stack[I->sp - 1].as.number;
+                if (k >= (double)l->count) {
+                    ip = code->code + ARG_OF(in);
+                    break;
+                }
+                Value *slot = &I->stack[f->base + (int)ip[0]], old = *slot;
+                *slot = retain(l->items[(size_t)k]);
                 release(old);
                 I->stack[I->sp - 1] = NUM_VAL(k + 1);
                 ip += 2;
@@ -3274,8 +3447,11 @@ static Value call_value(Interp *I, Value callee, int argc, int base) {
     Value r;
     if (IS_FUNCTION(callee) && AS_FUNCTION(callee)->decl->native && call_native(I, AS_FUNCTION(callee)->decl, base, argc, &r))
         return r;
-    if (IS_FUNCTION(callee)) {
-        Frame *f = enter(I, AS_FUNCTION(callee), base, argc);
+    if (IS_FUNCTION(callee)) {  /* (a plain function needs none of enter()'s checks, as in OP_CALL) */
+        ObjFunction *fn = AS_FUNCTION(callee);
+        FuncDecl *d = fn->decl;
+        Frame *f = d->plain && plain_args(I, d, base, argc, 0)
+                       ? push_frame(I, fn, d->name ? d->name->chars : "<lambda>", base, argc) : enter(I, fn, base, argc);
         if (!f) return ERR_VAL;
         f->entry = 1;
         f->this_locked = I->this_locked_next;  /* lube_call_method: `this` cannot change */
@@ -3837,8 +4013,7 @@ void lube_define(Interp *I, const char *name, Value v) {
 }
 
 Interp *lube_new(char *stack_base) {
-    Interp *I = calloc(1, sizeof(Interp));
-    if (!I) lube_out_of_memory(); /* LCOV_EXCL_LINE: only if the system has no memory left */
+    Interp *I = lube_pages(sizeof(Interp));  /* (zeroed: most of it is the stack, touched only as deep as it goes) */
     I->ret_val = NIL_VAL;
     I->error_val = NIL_VAL;
     I->epoch = 1;  /* (zeroed caches are stale) */
@@ -3849,8 +4024,7 @@ Interp *lube_new(char *stack_base) {
     if (I->rng == 0) I->rng = 1;
     sb_init(&I->trace);
 
-    I->decl = calloc(LUBE_STACK_MAX, sizeof(TypeDesc));
-    if (!I->decl) lube_out_of_memory();
+    I->decl = lube_pages(sizeof(TypeDesc) * LUBE_STACK_MAX);
     I->strings = new_map();
     I->globals = new_map();
     I->constants = new_map();
@@ -3899,7 +4073,7 @@ size_t lube_free(Interp *I) {
     if (I->bundle) release(OBJ_VAL(I->bundle));
     if (I->imports_found) release(OBJ_VAL(I->imports_found));
     free(I->global_types);
-    free(I->decl);
+    lube_pages_free(I->decl, sizeof(TypeDesc) * LUBE_STACK_MAX);
     for (int c = 0; c < 256; c++) release(OBJ_VAL(I->chars[c]));
     for (int t = 0; t < LUBE_TM_TYPES; t++)
         if (I->tmethods[t]) release(OBJ_VAL(I->tmethods[t]));
@@ -3923,6 +4097,6 @@ size_t lube_free(Interp *I) {
     lube_free_program(I);
     for (int i = 0; i < I->nloan_pool; i++) free(I->loan_pool[i]);
     free(I->loan_pool);
-    free(I);
+    lube_pages_free(I, sizeof(Interp));
     return lube_live_objects;
 }

@@ -265,12 +265,13 @@ static void loop_piece(void *ctx, int64_t from, int64_t to) {
 
 static void par_for(int64_t n, int64_t grain, void (*fn)(void *ctx, int64_t from, int64_t to), void *ctx);
 
-/* Every run of the loop; on several threads when there are enough elements. */
-static void loop_go(const Loop *L, RunFn fn, void *ctx) {
-    int64_t runs = loop_runs(L), len = L->shape[L->nd - 1];
+/* Every run of the loop; on several threads when there is enough work: cost is what an element costs, next to
+ * an addition's (exp's is some 30 times as much, and is worth sharing out sooner). */
+static void loop_go(const Loop *L, RunFn fn, void *ctx, int cost) {
+    int64_t runs = loop_runs(L), len = L->shape[L->nd - 1], work = PARALLEL_WORK / (cost > 0 ? cost : 1);
     LoopJob j = {L, fn, ctx};
-    if (runs == 1) par_for(len, PARALLEL_WORK, loop_piece, &j);
-    else par_for(runs, PARALLEL_WORK / (len ? len : 1) + 1, loop_piece, &j);
+    if (runs == 1) par_for(len, work, loop_piece, &j);
+    else par_for(runs, work / (len ? len : 1) + 1, loop_piece, &j);
 }
 
 /* The shape two broadcast to (numpy's rule: from the last axis, equal or 1). 0 if they don't. */
@@ -331,6 +332,28 @@ static void copy_run(void *ctx, int64_t n, unsigned char *const *p, const int64_
         for (int64_t i = 0; i < n; i++) ((float *)d)[i] = (float)((const double *)s)[i];
     } else if (c->to == ARR_F64 && c->from == ARR_F32 && st[0] == 1 && st[1] == 1) {
         for (int64_t i = 0; i < n; i++) ((double *)d)[i] = ((const float *)s)[i];
+    } else if (st[0] == 1 && st[1] == 1 && c->to == ARR_BOOL) {  /* (the common ones, in a row: loops of their own) */
+        switch (c->from) {
+        case ARR_F64: for (int64_t i = 0; i < n; i++) d[i] = ((const double *)s)[i] != 0; break;
+        case ARR_F32: for (int64_t i = 0; i < n; i++) d[i] = ((const float *)s)[i] != 0; break;
+        case ARR_I64: for (int64_t i = 0; i < n; i++) d[i] = ((const int64_t *)s)[i] != 0; break;
+        case ARR_I32: for (int64_t i = 0; i < n; i++) d[i] = ((const int32_t *)s)[i] != 0; break;
+        default: for (int64_t i = 0; i < n; i++) d[i] = s[i] != 0; break;  /* uint8 */
+        }
+    } else if (st[0] == 1 && st[1] == 1 && c->to == ARR_F64 && !IS_FLOAT(c->from)) {
+        switch (c->from) {
+        case ARR_I64: for (int64_t i = 0; i < n; i++) ((double *)d)[i] = (double)((const int64_t *)s)[i]; break;
+        case ARR_I32: for (int64_t i = 0; i < n; i++) ((double *)d)[i] = ((const int32_t *)s)[i]; break;
+        default: for (int64_t i = 0; i < n; i++) ((double *)d)[i] = s[i]; break;  /* uint8, bool */
+        }
+    } else if (st[0] == 1 && st[1] == 1 && c->to == ARR_I64 && c->from == ARR_F64) {  /* (to_i64's, in a loop) */
+        for (int64_t i = 0; i < n; i++) {
+            double x = ((const double *)s)[i];
+            ((int64_t *)d)[i] = x >= -9223372036854775808.0 && x < 9223372036854775808.0 ? (int64_t)x : INT64_MIN;
+        }
+    } else if (st[0] == 1 && st[1] == 1 && c->to == ARR_I64 && !IS_FLOAT(c->from)) {
+        if (c->from == ARR_I32) for (int64_t i = 0; i < n; i++) ((int64_t *)d)[i] = ((const int32_t *)s)[i];
+        else for (int64_t i = 0; i < n; i++) ((int64_t *)d)[i] = s[i];  /* uint8, bool */
     } else if (!IS_FLOAT(c->from) && !IS_FLOAT(c->to)) {  /* integers: exactly */
         for (int64_t i = 0; i < n; i++) store_int(d + i * st[0] * dz, c->to, load_int(s + i * st[1] * sz, c->from));
     } else {
@@ -352,7 +375,7 @@ static void copy_into(Array *dst, const Array *src) {
     Loop L;
     loop_make(&L, &s, 2, base, size);
     CopyCtx c = {src->dtype, dst->dtype};
-    loop_go(&L, copy_run, &c);
+    loop_go(&L, copy_run, &c, 1);
 }
 
 /* A C-contiguous copy of a, of dtype (-1: a's own). */

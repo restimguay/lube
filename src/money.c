@@ -107,8 +107,21 @@ static const int64_t P10[19] = {1, 10, 100, 1000, 10000, 100000, 1000000, 100000
 /* A finite double as digits * 10^exp, with the fewest digits (at most 17) that give it back: the decimal it
  * was written as. */
 static void decimal_of(double x, int64_t *digits, int *exp) {
+    /* The quick way, for most amounts: the fewest decimal places k (up to 8) for which z = x * 10^k rounded
+     * gives x back as z / 10^k. While z stays below 2^53/10, decimals k places apart are much farther apart than
+     * doubles, so no other one of k places gives x back. */
+    int64_t z = 0;
+    int k = short_decimal(x, &z);
+    if (k >= 0) {
+        *digits = z;
+        *exp = -k;
+        return;
+    }
+    /* The rest: 15 significant digits, else 16, else 17. (A decimal of at most 15 digits that gives x back is
+     * what %.14e makes of x, with zeros after it: 15 digits are farther apart than doubles, but for the
+     * subnormals.) */
     char buf[48];
-    for (int p = 1; p <= 17; p++) {
+    for (int p = fabs(x) < 2.2250738585072014e-308 ? 1 : 15; p <= 17; p++) {  /* (subnormals: from 1) */
         snprintf(buf, sizeof buf, "%.*e", p - 1, x);
         if (strtod(buf, NULL) == x) break;
     }
@@ -127,8 +140,13 @@ static void decimal_of(double x, int64_t *digits, int *exp) {
         d = d * 10 + (*s - '0');
         frac += seen_point;
     }
+    int e = (*s == 'e' ? atoi(s + 1) : 0) - frac;
+    while (d && d % 10 == 0) {  /* (15 digits' trailing zeros) */
+        d /= 10;
+        e++;
+    }
     *digits = neg ? -d : d;
-    *exp = (*s == 'e' ? atoi(s + 1) : 0) - frac;
+    *exp = e;
 }
 
 /* An unsigned 128-bit number, for products that don't fit in 64 bits. */
@@ -177,6 +195,15 @@ static U128 divmod(U128 x, U128 d, U128 *rem) {
 
 /* n / d rounded half up (away from zero), as a 64-bit magnitude: 0 if it would not fit (*ok cleared). */
 static uint64_t div_round(U128 n, U128 d, int *ok) {
+    if (!n.hi && !d.hi) {  /* (the usual case: 64 bits, divided at once) */
+        uint64_t q = n.lo / d.lo, r = n.lo % d.lo;
+        if (r >= d.lo - r) q++;  /* (2r >= d) */
+        if (q > (uint64_t)INT64_MAX) {
+            *ok = 0;
+            return 0;
+        }
+        return q;
+    }
     U128 r, twice;
     U128 q = divmod(n, d, &r);
     twice.hi = (r.hi << 1) | (r.lo >> 63);
@@ -250,29 +277,43 @@ Value lube_money_new(int64_t units, int cur) {
 static const char *code_of(int cur) { return currency_at(cur)->code; }
 static int decimals_of(int cur) { return currency_at(cur)->decimals; }
 
-/* "$1,234.50", "-€0.25", "CHF 5.00", "¥1,235"; with options, another way (format()). */
+/* "$1,234.50", "-€0.25", "CHF 5.00", "¥1,235"; with options, another way (format()). (Digits by hand: this is
+ * what str() and print() of an amount do.) */
 static void money_text(StrBuf *sb, const ObjMoney *m, const char *symbol, int code, const char *thousands, const char *point) {
     const Currency *c = currency_at(m->cur);
     uint64_t mag = m->units < 0 ? 0 - (uint64_t)m->units : (uint64_t)m->units;
     uint64_t whole = mag / (uint64_t)P10[c->decimals], frac = mag % (uint64_t)P10[c->decimals];
-    char digits[32], grouped[96];
-    int n = snprintf(digits, sizeof digits, "%llu", (unsigned long long)whole), at = 0;
-    for (int i = 0; i < n; i++) {
-        if (i && (n - i) % 3 == 0) at += snprintf(grouped + at, sizeof grouped - (size_t)at, "%s", thousands);
-        grouped[at++] = digits[i];
-        grouped[at] = '\0';
-    }
+    char digits[24];
+    int n = 0;
+    do {  /* (backwards) */
+        digits[n++] = (char)('0' + whole % 10);
+        whole /= 10;
+    } while (whole);
     if (m->units < 0) sb_putc(sb, '-');
     if (code) {
-        sb_printf(sb, "%s ", c->code);
+        sb_puts(sb, c->code);
+        sb_putc(sb, ' ');
     } else if (*symbol) {  /* a space after one that ends with a letter: "CHF 5.00", "zł 5.00"; not "$5.00" */
-        size_t n = strlen(symbol);
-        unsigned char last = (unsigned char)symbol[n - 1], lead = n > 1 ? (unsigned char)symbol[n - 2] : 0;
+        size_t len = strlen(symbol);
+        unsigned char last = (unsigned char)symbol[len - 1], lead = len > 1 ? (unsigned char)symbol[len - 2] : 0;
         int letter = (last >= 'A' && last <= 'Z') || (last >= 'a' && last <= 'z') || lead == 0xC4 || lead == 0xC5;
-        sb_printf(sb, "%s%s", symbol, letter ? " " : "");
+        sb_puts(sb, symbol);
+        if (letter) sb_putc(sb, ' ');
     }
-    sb_puts(sb, grouped);
-    if (c->decimals) sb_printf(sb, "%s%0*llu", point, c->decimals, (unsigned long long)frac);
+    for (int i = n - 1; i >= 0; i--) {
+        sb_putc(sb, digits[i]);
+        if (i && i % 3 == 0) sb_puts(sb, thousands);
+    }
+    if (c->decimals) {
+        char f[24];
+        for (int i = c->decimals - 1; i >= 0; i--) {
+            f[i] = (char)('0' + frac % 10);
+            frac /= 10;
+        }
+        f[c->decimals] = '\0';
+        sb_puts(sb, point);
+        sb_puts(sb, f);
+    }
 }
 
 void lube_money_describe(StrBuf *sb, Value v) {

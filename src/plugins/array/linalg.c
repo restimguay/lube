@@ -2,8 +2,9 @@
  * array/linalg.c - linear algebra: the matrix product (the system's BLAS
  * when there is one: Accelerate on macOS, OpenBLAS on Linux and Windows;
  * else a blocked kernel of our own, on several threads), and the
- * decompositions (LU, Cholesky, QR, SVD, symmetric eigen) in float64.
- * (Part of array.c.)
+ * decompositions (LU, Cholesky, QR, SVD, symmetric eigen) in float64:
+ * the system's LAPACK when there is one (Accelerate's, OpenBLAS's), else
+ * our own. (Part of array.c.)
  */
 
 /* ======================================================================
@@ -20,18 +21,86 @@ static LubeLock *blas_lock;
 static int blas_tried, blas_off;
 static DgemmFn blas_dgemm;
 static SgemmFn blas_sgemm;
+typedef double (*DdotFn)(int n, const double *x, int incx, const double *y, int incy);
+typedef float (*SdotFn)(int n, const float *x, int incx, const float *y, int incy);
+static DdotFn blas_ddot;  /* (with the products: vector by vector) */
+static SdotFn blas_sdot;
 static const char *blas_name = "none";
+
+/* LAPACK's routines (Fortran's way: every argument by address, integers of 32 bits in each library opened here,
+ * and the lengths of strings after the rest, which those that do not take them ignore) */
+typedef int Lint;
+typedef void (*GesvFn)(const Lint *n, const Lint *nrhs, double *a, const Lint *lda, Lint *ipiv, double *b,
+                       const Lint *ldb, Lint *info);
+typedef void (*GetrfFn)(const Lint *m, const Lint *n, double *a, const Lint *lda, Lint *ipiv, Lint *info);
+typedef void (*PotrfFn)(const char *uplo, const Lint *n, double *a, const Lint *lda, Lint *info, size_t uplo_len);
+typedef void (*GeqrfFn)(const Lint *m, const Lint *n, double *a, const Lint *lda, double *tau, double *work,
+                        const Lint *lwork, Lint *info);
+typedef void (*OrgqrFn)(const Lint *m, const Lint *n, const Lint *k, double *a, const Lint *lda, const double *tau,
+                        double *work, const Lint *lwork, Lint *info);
+typedef void (*GesddFn)(const char *jobz, const Lint *m, const Lint *n, double *a, const Lint *lda, double *s,
+                        double *u, const Lint *ldu, double *vt, const Lint *ldvt, double *work, const Lint *lwork,
+                        Lint *iwork, Lint *info, size_t jobz_len);
+typedef void (*SyevdFn)(const char *jobz, const char *uplo, const Lint *n, double *a, const Lint *lda, double *w,
+                        double *work, const Lint *lwork, Lint *iwork, const Lint *liwork, Lint *info,
+                        size_t jobz_len, size_t uplo_len);
+
+static struct {
+    int ok;  /* (all of them found) */
+    GesvFn gesv;
+    GetrfFn getrf;
+    PotrfFn potrf;
+    GeqrfFn geqrf;
+    OrgqrFn orgqr;
+    GesddFn gesdd;
+    SyevdFn syevd;
+} lapack;
+
+/* LAPACK's routine `name` from library h, into *fn (Accelerate's newer LAPACK first) */
+static void lapack_sym(void *h, const char *name, void *fn) {
+    char sym[48];
+    void *p = NULL;
+#if defined(__APPLE__)
+    snprintf(sym, sizeof sym, "%s$NEWLAPACK", name);  /* (macOS 13.3 and later) */
+    p = dlsym(h, sym);
+#endif
+    if (!p) {  /* LCOV_EXCL_START: (the newer one is there) */
+        snprintf(sym, sizeof sym, "%s_", name);
+#if defined(_WIN32)
+        FARPROC f = GetProcAddress((HMODULE)h, sym);
+        memcpy(&p, &f, sizeof p);
+#else
+        p = dlsym(h, sym);
+#endif
+    }  /* LCOV_EXCL_STOP */
+    memcpy(fn, &p, sizeof p);  /* (an object pointer to a function pointer: copied, not cast) */
+}
+
+static void lapack_open(void *h) {
+    if (lapack.ok || !h) return;  /* LCOV_EXCL_LINE: (Accelerate is always there) */
+    lapack_sym(h, "dgesv", &lapack.gesv);
+    lapack_sym(h, "dgetrf", &lapack.getrf);
+    lapack_sym(h, "dpotrf", &lapack.potrf);
+    lapack_sym(h, "dgeqrf", &lapack.geqrf);
+    lapack_sym(h, "dorgqr", &lapack.orgqr);
+    lapack_sym(h, "dgesdd", &lapack.gesdd);
+    lapack_sym(h, "dsyevd", &lapack.syevd);
+    lapack.ok = lapack.gesv && lapack.getrf && lapack.potrf && lapack.geqrf && lapack.orgqr && lapack.gesdd &&
+                lapack.syevd;
+}
 
 static void blas_open(void) {
     lube->lock_acquire(blas_lock);
     if (!blas_tried) {
-        blas_tried = 1;
 #if defined(__APPLE__)
         void *h = dlopen("/System/Library/Frameworks/Accelerate.framework/Accelerate", RTLD_LAZY | RTLD_LOCAL);
         if (h) {
             *(void **)&blas_dgemm = dlsym(h, "cblas_dgemm");
             *(void **)&blas_sgemm = dlsym(h, "cblas_sgemm");
+            *(void **)&blas_ddot = dlsym(h, "cblas_ddot");
+            *(void **)&blas_sdot = dlsym(h, "cblas_sdot");
             blas_name = "Accelerate";
+            lapack_open(h);
         }
 #elif defined(_WIN32)  /* LCOV_EXCL_START: (other systems': CI builds them) */
         static const char *const names[] = {"libopenblas.dll", "openblas.dll"};
@@ -39,9 +108,13 @@ static void blas_open(void) {
             HMODULE h = LoadLibraryA(names[i]);
             if (!h) continue;
             FARPROC d = GetProcAddress(h, "cblas_dgemm"), s = GetProcAddress(h, "cblas_sgemm");
+            FARPROC dd = GetProcAddress(h, "cblas_ddot"), sd = GetProcAddress(h, "cblas_sdot");
             memcpy(&blas_dgemm, &d, sizeof d);  /* (a function pointer of another type: copied, not cast) */
             memcpy(&blas_sgemm, &s, sizeof s);
+            memcpy(&blas_ddot, &dd, sizeof dd);
+            memcpy(&blas_sdot, &sd, sizeof sd);
             blas_name = "OpenBLAS";
+            lapack_open((void *)h);
         }
 #else
         static const char *const names[] = {"libopenblas.so.0", "libopenblas.so", "libcblas.so.3", "libblas.so.3"};
@@ -50,16 +123,54 @@ static void blas_open(void) {
             if (!h) continue;
             *(void **)&blas_dgemm = dlsym(h, "cblas_dgemm");
             *(void **)&blas_sgemm = dlsym(h, "cblas_sgemm");
+            *(void **)&blas_ddot = dlsym(h, "cblas_ddot");
+            *(void **)&blas_sdot = dlsym(h, "cblas_sdot");
             blas_name = i < 2 ? "OpenBLAS" : "BLAS";
+            lapack_open(h);
         }
+        if (!lapack.ok) lapack_open(dlopen("liblapack.so.3", RTLD_LAZY | RTLD_LOCAL));
 #endif  /* LCOV_EXCL_STOP */
-        if (!blas_dgemm || !blas_sgemm) {  /* LCOV_EXCL_START: (Accelerate is always there) */
+        if (!blas_dgemm || !blas_sgemm || !blas_ddot || !blas_sdot) {  /* LCOV_EXCL_START: (Accelerate is always there) */
             blas_dgemm = NULL;
             blas_sgemm = NULL;
+            blas_ddot = NULL;
+            blas_sdot = NULL;
             blas_name = "none";
         }  /* LCOV_EXCL_STOP */
+        blas_tried = 1;  /* (last: the others read what it found once they see it) */
     }
     lube->lock_release(blas_lock);
+}
+
+/* LAPACK for an m x n matrix: there, not turned off, and the sizes within its integers' reach (larger ones, and
+ * empty ones, go to our own code) */
+#define LAPACK_MAX 16384
+static int lapack_on(int64_t m, int64_t n) {
+    if (!blas_tried) blas_open();
+    return lapack.ok && !blas_off && m > 0 && n > 0 && m <= LAPACK_MAX && n <= LAPACK_MAX;
+}
+
+/* a (m x n, rows n apart) into t transposed (n x m): the same matrix seen by columns, as LAPACK sees it; and, with
+ * m and n swapped, back. In tiles, for the caches. */
+static void transpose_d(const double *a, int64_t m, int64_t n, double *t) {
+    for (int64_t i0 = 0; i0 < m; i0 += 32)
+        for (int64_t j0 = 0; j0 < n; j0 += 32) {
+            int64_t i1 = i0 + 32 < m ? i0 + 32 : m, j1 = j0 + 32 < n ? j0 + 32 : n;
+            for (int64_t i = i0; i < i1; i++)
+                for (int64_t j = j0; j < j1; j++) t[j * m + i] = a[i * n + j];
+        }
+}
+
+static void *alloc_or_die(size_t bytes) {
+    void *p = malloc(bytes ? bytes : 1);
+    if (!p) abort();  /* LCOV_EXCL_LINE: out of memory */
+    return p;
+}
+
+static double *transposed_copy(const double *a, int64_t m, int64_t n) {
+    double *t = (double *)alloc_or_die(sizeof(double) * (size_t)(m * n));
+    transpose_d(a, m, n, t);
+    return t;
 }
 
 /* ======================================================================
@@ -165,9 +276,38 @@ GEMM_PARTS(float, 4, 16, s)
 
 /* C (m x n) = A (m x k) B (k x n), each read through row and column strides (in elements); the system's BLAS
  * when it can take them. */
+/* A vector times a vector (k of each, strides sa and sb): in four sums, which vectorize. */
+#define DOT_OWN(T, NAME)                                                                                       \
+    static T NAME(const T *a, int64_t sa, const T *b, int64_t sb, int64_t k) {                                 \
+        FUSED T s0 = 0, s1 = 0, s2 = 0, s3 = 0;                                                                 \
+        int64_t i = 0;                                                                                         \
+        if (sa == 1 && sb == 1)                                                                                \
+            for (; i + 4 <= k; i += 4) {                                                                       \
+                s0 += a[i] * b[i];                                                                             \
+                s1 += a[i + 1] * b[i + 1];                                                                     \
+                s2 += a[i + 2] * b[i + 2];                                                                     \
+                s3 += a[i + 3] * b[i + 3];                                                                     \
+            }                                                                                                  \
+        for (; i < k; i++) s0 += a[i * sa] * b[i * sb];                                                        \
+        return (s0 + s1) + (s2 + s3);                                                                          \
+    }
+DOT_OWN(double, dot_d)
+DOT_OWN(float, dot_s)
+
 static void gemm(int dtype, int64_t m, int64_t n, int64_t k, const void *a, int64_t ars, int64_t acs, const void *b,
                  int64_t brs, int64_t bcs, void *c, int64_t ldc) {
     if (!blas_tried) blas_open();
+    if (m == 1 && n == 1) {  /* (a vector by a vector: a dot product, BLAS's or ours) */
+        if (blas_ddot && !blas_off && k > 0 && k < INT_MAX && acs > 0 && brs > 0 && acs < INT_MAX && brs < INT_MAX) {  /* (BLAS counts a negative stride from the other end) */
+            if (dtype == ARR_F64) *(double *)c = blas_ddot((int)k, (const double *)a, (int)acs, (const double *)b, (int)brs);
+            else *(float *)c = blas_sdot((int)k, (const float *)a, (int)acs, (const float *)b, (int)brs);
+        } else if (dtype == ARR_F64) {
+            *(double *)c = dot_d((const double *)a, acs, (const double *)b, brs, k);
+        } else {
+            *(float *)c = dot_s((const float *)a, acs, (const float *)b, brs, k);
+        }
+        return;
+    }
     int ok = blas_dgemm && !blas_off && m > 0 && n > 0 && k > 0 && m < INT_MAX && n < INT_MAX && k < INT_MAX;
     int ta = acs != 1, tb = bcs != 1;  /* (a transposed matrix: its columns lie in rows) */
     int64_t lda = ta ? acs : ars, ldb = tb ? bcs : brs;
@@ -431,17 +571,30 @@ static LubeValue solve_or_inv(LubeVM *vm, const char *fname, LubeValue av, const
         r = arr_new(vm, ARR_F64, 2, a->shape, &x, 1);
         for (int64_t i = 0; i < n; i++) ((double *)x->data)[i * n + i] = 1;
     }
-    int64_t *piv = (int64_t *)malloc(sizeof(int64_t) * (size_t)(n ? n : 1));
-    if (!piv) abort();  /* LCOV_EXCL_LINE: out of memory */
-    int sign;
-    if (!lu((double *)a->data, n, piv, &sign)) {
+    int64_t nb = x->ndim == 2 ? x->shape[1] : 1;
+    int ok;
+    if (lapack_on(n, nb)) {  /* (as numpy: dgesv, on the matrices by columns) */
+        double *f = transposed_copy((const double *)a->data, n, n), *fb = transposed_copy((const double *)x->data, n, nb);
+        Lint N = (Lint)n, NB = (Lint)nb, info = 0, *ip = (Lint *)alloc_or_die(sizeof(Lint) * (size_t)n);
+        lapack.gesv(&N, &NB, f, &N, ip, fb, &N, &info);
+        ok = info == 0;  /* (above 0: a pivot was 0) */
+        if (ok) transpose_d(fb, nb, n, (double *)x->data);
+        free(f);
+        free(fb);
+        free(ip);
+    } else {
+        int64_t *piv = (int64_t *)alloc_or_die(sizeof(int64_t) * (size_t)n);
+        int sign;
+        ok = lu((double *)a->data, n, piv, &sign);
+        if (ok) lu_solve((const double *)a->data, n, piv, (double *)x->data, nb);
+        free(piv);
+    }
+    if (!ok) {
         lube->release(r);
         r = lube->error(vm, "%s(): the matrix is singular", fname);
     } else {
-        lu_solve((const double *)a->data, n, piv, (double *)x->data, x->ndim == 2 ? x->shape[1] : 1);
         r = in_dtype(vm, r, was_f32(av) || (bv && was_f32(*bv)));
     }
-    free(piv);
     lube->release(ka);
     return r;
 }
@@ -452,11 +605,25 @@ static LubeValue determinant(LubeVM *vm, const char *fname, LubeValue av, int lo
     Array *a;
     if (!matrix_arg(vm, fname, av, 1, &ka, &a, &err)) return err;
     int64_t n = a->shape[0];
-    int64_t *piv = (int64_t *)malloc(sizeof(int64_t) * (size_t)(n ? n : 1));
-    if (!piv) abort();  /* LCOV_EXCL_LINE: out of memory */
-    int sign;
+    int sign = 1, ok;
     double *d = (double *)a->data, det = 1, logdet = 0;
-    if (!lu(d, n, piv, &sign)) {
+    if (lapack_on(n, n)) {  /* (as numpy: dgetrf, on the matrix by columns; its diagonal is where ours is) */
+        double *f = transposed_copy(d, n, n);
+        Lint N = (Lint)n, info = 0, *ip = (Lint *)alloc_or_die(sizeof(Lint) * (size_t)n);
+        lapack.getrf(&N, &N, f, &N, ip, &info);
+        ok = info == 0;
+        for (int64_t i = 0; i < n; i++) {
+            d[i * n + i] = f[i * n + i];
+            if (ip[i] != i + 1) sign = -sign;
+        }
+        free(f);
+        free(ip);
+    } else {
+        int64_t *piv = (int64_t *)alloc_or_die(sizeof(int64_t) * (size_t)n);
+        ok = lu(d, n, piv, &sign);
+        free(piv);
+    }
+    if (!ok) {
         det = 0;
         sign = 0;
         logdet = -INFINITY;
@@ -468,7 +635,6 @@ static LubeValue determinant(LubeVM *vm, const char *fname, LubeValue av, int lo
             if (d[i * n + i] < 0) sign = -sign;
         }
     }
-    free(piv);
     lube->release(ka);
     if (!logs) return lube->number_value(det);
     LubeValue r = lube->new_list(vm);
@@ -487,6 +653,22 @@ static LubeValue cholesky(LubeVM *vm, LubeValue av) {
     LubeValue r = arr_new(vm, ARR_F64, 2, a->shape, &l, 1);
     const double *A = (const double *)a->data;
     double *L = (double *)l->data;
+    if (lapack_on(n, n)) {  /* (as numpy: dpotrf of the lower triangle, on the matrix by columns) */
+        double *f = transposed_copy(A, n, n);
+        Lint N = (Lint)n, info = 0;
+        lapack.potrf("L", &N, f, &N, &info, 1);
+        if (info == 0)
+            for (int64_t i = 0; i < n; i++)
+                for (int64_t j = 0; j <= i; j++) L[i * n + j] = f[j * n + i];
+        free(f);
+        if (info != 0) {
+            lube->release(r);
+            lube->release(ka);
+            return lube->error(vm, "cholesky(): the matrix is not positive definite");
+        }
+        lube->release(ka);
+        return in_dtype(vm, r, was_f32(av));
+    }
     for (int64_t j = 0; j < n; j++) {
         double s = A[j * n + j];
         for (int64_t k = 0; k < j; k++) s -= L[j * n + k] * L[j * n + k];
@@ -555,16 +737,34 @@ static LubeValue qr(LubeVM *vm, LubeValue av, int complete) {
     Array *a;
     if (!matrix_arg(vm, "qr", av, 0, &ka, &a, &err)) return err;
     int64_t m = a->shape[0], n = a->shape[1], k = m < n ? m : n, qc = complete ? m : k;
-    double *tau = (double *)malloc(sizeof(double) * (size_t)(k ? k : 1));
-    if (!tau) abort();  /* LCOV_EXCL_LINE: out of memory */
+    double *tau = (double *)alloc_or_die(sizeof(double) * (size_t)k);
     double *A = (double *)a->data;
-    householder(A, m, n, tau);
     int64_t qs[2] = {m, qc}, rs[2] = {qc, n};
     Array *q, *rr;
     LubeValue vq = arr_new(vm, ARR_F64, 2, qs, &q, 1), vr = arr_new(vm, ARR_F64, 2, rs, &rr, 1);
-    householder_q(A, m, n, tau, (double *)q->data, qc);
-    for (int64_t i = 0; i < qc; i++)
-        for (int64_t j = i; j < n; j++) ((double *)rr->data)[i * n + j] = i < m ? A[i * n + j] : 0;
+    if (lapack_on(m, n)) {  /* (as numpy: dgeqrf, then dorgqr for Q, on the matrix by columns) */
+        double *f = transposed_copy(A, m, n), *fq = (double *)alloc_or_die(sizeof(double) * (size_t)(m * qc)), size;
+        Lint M = (Lint)m, N = (Lint)n, K = (Lint)k, QC = (Lint)qc, query = -1, info = 0;
+        lapack.geqrf(&M, &N, f, &M, tau, &size, &query, &info);
+        Lint lwork = (Lint)size;
+        lapack.orgqr(&M, &QC, &K, fq, &M, tau, &size, &query, &info);
+        if ((Lint)size > lwork) lwork = (Lint)size;
+        double *work = (double *)alloc_or_die(sizeof(double) * (size_t)lwork);
+        lapack.geqrf(&M, &N, f, &M, tau, work, &lwork, &info);
+        memcpy(fq, f, sizeof(double) * (size_t)(m * k));  /* (the reflectors: the first k columns) */
+        lapack.orgqr(&M, &QC, &K, fq, &M, tau, work, &lwork, &info);
+        transpose_d(fq, qc, m, (double *)q->data);
+        for (int64_t i = 0; i < qc; i++)
+            for (int64_t j = i; j < n; j++) ((double *)rr->data)[i * n + j] = f[j * m + i];
+        free(f);
+        free(fq);
+        free(work);
+    } else {
+        householder(A, m, n, tau);
+        householder_q(A, m, n, tau, (double *)q->data, qc);
+        for (int64_t i = 0; i < qc; i++)
+            for (int64_t j = i; j < n; j++) ((double *)rr->data)[i * n + j] = i < m ? A[i * n + j] : 0;
+    }
     free(tau);
     lube->release(ka);
     int f32 = was_f32(av);
@@ -574,21 +774,21 @@ static LubeValue qr(LubeVM *vm, LubeValue av, int complete) {
     return r;
 }
 
-/* One-sided Jacobi SVD of a (m x n, m >= n, in place): a becomes U's columns times the singular values;
- * v (n x n) the right singular vectors. */
-static void jacobi_svd(double *a, int64_t m, int64_t n, double *v) {
+/* One-sided Jacobi SVD of a matrix of m rows and n columns (m >= n), held by columns (column j in w[j m ..]):
+ * rotated in place until its columns are orthogonal, becoming U's columns times the singular values; vt (n x n)
+ * gathers the same rotations, its rows the right singular vectors. (By columns, every loop runs along memory.) */
+static void jacobi_svd(double *w, int64_t m, int64_t n, double *vt) {
     for (int64_t i = 0; i < n; i++)
-        for (int64_t j = 0; j < n; j++) v[i * n + j] = i == j;
+        for (int64_t j = 0; j < n; j++) vt[i * n + j] = i == j;
     for (int sweep = 0; sweep < 60; sweep++) {
         int rotated = 0;
         for (int64_t p = 0; p < n - 1; p++)
             for (int64_t q = p + 1; q < n; q++) {
-                double alpha = 0, beta = 0, gamma = 0;
+                double *x = w + p * m, *y = w + q * m, alpha = 0, beta = 0, gamma = 0;
                 for (int64_t i = 0; i < m; i++) {
-                    double x = a[i * n + p], y = a[i * n + q];
-                    alpha += x * x;
-                    beta += y * y;
-                    gamma += x * y;
+                    alpha += x[i] * x[i];
+                    beta += y[i] * y[i];
+                    gamma += x[i] * y[i];
                 }
                 if (fabs(gamma) <= 1e-15 * sqrt(alpha * beta) || gamma == 0) continue;
                 rotated = 1;
@@ -596,14 +796,15 @@ static void jacobi_svd(double *a, int64_t m, int64_t n, double *v) {
                 double t = (zeta >= 0 ? 1 : -1) / (fabs(zeta) + sqrt(1 + zeta * zeta));
                 double c = 1 / sqrt(1 + t * t), s = c * t;
                 for (int64_t i = 0; i < m; i++) {
-                    double x = a[i * n + p], y = a[i * n + q];
-                    a[i * n + p] = c * x - s * y;
-                    a[i * n + q] = s * x + c * y;
+                    double xi = x[i], yi = y[i];
+                    x[i] = c * xi - s * yi;
+                    y[i] = s * xi + c * yi;
                 }
+                double *vp = vt + p * n, *vq = vt + q * n;
                 for (int64_t i = 0; i < n; i++) {
-                    double x = v[i * n + p], y = v[i * n + q];
-                    v[i * n + p] = c * x - s * y;
-                    v[i * n + q] = s * x + c * y;
+                    double xi = vp[i], yi = vq[i];
+                    vp[i] = c * xi - s * yi;
+                    vq[i] = s * xi + c * yi;
                 }
             }
         if (!rotated) break;
@@ -635,10 +836,10 @@ static void complete_basis(double *q, int64_t m, int64_t cols, int64_t from) {
     }
 }
 
-/* The SVD of a matrix (m x n) in float64: u (m x ucols), s (k, descending), vt (k x n), k = min(m, n);
- * ucols is m when full, else k. */
+/* The SVD of a matrix (m x n) in float64: u (m x ucols), s (k, descending), vt (vrows x n), k = min(m, n);
+ * ucols is m and vrows n when full, else both are k. Without uv, u and vt may be NULL. */
 typedef struct {
-    int64_t m, n, k, ucols;
+    int64_t m, n, k, ucols, vrows;
     double *u, *s, *vt;
 } Svd;
 
@@ -648,21 +849,61 @@ static void svd_free(Svd *d) {
     free(d->vt);
 }
 
-static void svd_of(const double *a, int64_t m, int64_t n, int full, Svd *out) {
+/* By LAPACK (dgesdd, as numpy, on the matrix by columns): 0 if it did not converge. */
+static int svd_lapack(const double *a, int64_t m, int64_t n, int full, int uv, Svd *out) {
+    int64_t k = m < n ? m : n, ucols = full ? m : k, vrows = full ? n : k;
+    double *f = transposed_copy(a, m, n), *s = (double *)alloc_or_die(sizeof(double) * (size_t)k);
+    double *u = uv ? (double *)alloc_or_die(sizeof(double) * (size_t)(m * ucols)) : NULL;
+    double *vt = uv ? (double *)alloc_or_die(sizeof(double) * (size_t)(vrows * n)) : NULL, size, none = 0;
+    Lint M = (Lint)m, N = (Lint)n, LDVT = (Lint)vrows, query = -1, info = 0;
+    Lint *iwork = (Lint *)alloc_or_die(sizeof(Lint) * (size_t)(8 * k));
+    const char *jobz = !uv ? "N" : full ? "A" : "S";
+    lapack.gesdd(jobz, &M, &N, f, &M, s, u ? u : &none, &M, vt ? vt : &none, &LDVT, &size, &query, iwork, &info, 1);
+    Lint lwork = (Lint)size;
+    double *work = (double *)alloc_or_die(sizeof(double) * (size_t)lwork);
+    lapack.gesdd(jobz, &M, &N, f, &M, s, u ? u : &none, &M, vt ? vt : &none, &LDVT, work, &lwork, iwork, &info, 1);
+    free(f);
+    free(work);
+    free(iwork);
+    if (info != 0) {  /* LCOV_EXCL_START: (it converges but for matrices of NaN and the like) */
+        free(s);
+        free(u);
+        free(vt);
+        return 0;
+    }  /* LCOV_EXCL_STOP */
+    out->m = m;
+    out->n = n;
+    out->k = k;
+    out->ucols = ucols;
+    out->vrows = vrows;
+    out->s = s;
+    out->u = out->vt = NULL;
+    if (uv) {  /* (back to rows) */
+        out->u = (double *)alloc_or_die(sizeof(double) * (size_t)(m * ucols));
+        out->vt = (double *)alloc_or_die(sizeof(double) * (size_t)(vrows * n));
+        transpose_d(u, ucols, m, out->u);
+        transpose_d(vt, n, vrows, out->vt);
+    }
+    free(u);
+    free(vt);
+    return 1;
+}
+
+/* The SVD of a (m x n); u and vt too when uv. */
+static void svd_of(const double *a, int64_t m, int64_t n, int full, int uv, Svd *out) {
+    if (lapack_on(m, n) && svd_lapack(a, m, n, full, uv, out)) return;
     int tall = m >= n;
     int64_t rows = tall ? m : n, cols = tall ? n : m, k = cols;  /* (work on a or its transpose: rows >= cols) */
-    double *w = (double *)malloc(sizeof(double) * (size_t)(rows * cols + 1));
-    double *v = (double *)malloc(sizeof(double) * (size_t)(cols * cols + 1));
-    if (!w || !v) abort();  /* LCOV_EXCL_LINE: out of memory */
-    for (int64_t i = 0; i < rows; i++)
-        for (int64_t j = 0; j < cols; j++) w[i * cols + j] = tall ? a[i * n + j] : a[j * n + i];
+    double *w = (double *)alloc_or_die(sizeof(double) * (size_t)(rows * cols));
+    double *v = (double *)alloc_or_die(sizeof(double) * (size_t)(cols * cols));  /* (V transposed: by rows) */
+    if (tall) transpose_d(a, m, n, w);  /* (by columns) */
+    else if (m > 0 && n > 0) memcpy(w, a, sizeof(double) * (size_t)(m * n));  /* (a's transpose, by columns: a itself) */
     jacobi_svd(w, rows, cols, v);
-    double *s = (double *)malloc(sizeof(double) * (size_t)(k + 1));
-    int64_t *order = (int64_t *)malloc(sizeof(int64_t) * (size_t)(k + 1));
-    if (!s || !order) abort();  /* LCOV_EXCL_LINE: out of memory */
+    double *s = (double *)alloc_or_die(sizeof(double) * (size_t)k);
+    int64_t *order = (int64_t *)alloc_or_die(sizeof(int64_t) * (size_t)k);
     for (int64_t j = 0; j < k; j++) {
         double norm = 0;
-        for (int64_t i = 0; i < rows; i++) norm += w[i * cols + j] * w[i * cols + j];
+        for (int64_t i = 0; i < rows; i++) norm += w[j * rows + i] * w[j * rows + i];
         s[j] = sqrt(norm);
         order[j] = j;
     }
@@ -683,9 +924,9 @@ static void svd_of(const double *a, int64_t m, int64_t n, int full, Svd *out) {
     for (int64_t j = 0; j < k; j++) {
         int64_t o = order[j];
         sv[j] = s[o];
-        for (int64_t i = 0; i < cols; i++) right[j * cols + i] = v[i * cols + o];
+        for (int64_t i = 0; i < cols; i++) right[j * cols + i] = v[o * cols + i];
         if (s[o] > smax * 1e-15 && s[o] > 0) {
-            for (int64_t i = 0; i < rows; i++) left[i * lc + j] = w[i * cols + o] / s[o];
+            for (int64_t i = 0; i < rows; i++) left[i * lc + j] = w[o * rows + i] / s[o];
             good = j + 1;
         }
     }
@@ -715,6 +956,20 @@ static void svd_of(const double *a, int64_t m, int64_t n, int full, Svd *out) {
         free(left);
         free(right);
     }
+    out->vrows = k;
+    if (full && n > k) {  /* Vh complete: n x n */
+        double *col = (double *)calloc((size_t)(n * n), sizeof(double));  /* (V, by columns) */
+        double *vt = (double *)alloc_or_die(sizeof(double) * (size_t)(n * n));
+        if (!col) abort();  /* LCOV_EXCL_LINE: out of memory */
+        for (int64_t j = 0; j < k; j++)
+            for (int64_t i = 0; i < n; i++) col[i * n + j] = out->vt[j * n + i];
+        complete_basis(col, n, n, k);
+        transpose_d(col, n, n, vt);
+        free(col);
+        free(out->vt);
+        out->vt = vt;
+        out->vrows = n;
+    }
 }
 
 static LubeValue f64_array(LubeVM *vm, int nd, const int64_t *shape, const double *data) {
@@ -730,103 +985,218 @@ static LubeValue svd(LubeVM *vm, LubeValue av, int full, int values_only) {
     Array *a;
     if (!matrix_arg(vm, "svd", av, 0, &ka, &a, &err)) return err;
     Svd d;
-    svd_of((const double *)a->data, a->shape[0], a->shape[1], full, &d);
+    svd_of((const double *)a->data, a->shape[0], a->shape[1], full, !values_only, &d);
     lube->release(ka);
     int f32 = was_f32(av);
-    int64_t us[2] = {d.m, d.ucols}, vs[2] = {full ? d.n : d.k, d.n};
+    int64_t us[2] = {d.m, d.ucols}, vs[2] = {d.vrows, d.n};
     LubeValue s = in_dtype(vm, f64_array(vm, 1, &d.k, d.s), f32);
     if (values_only) {
         svd_free(&d);
         return s;
     }
-    double *vt = d.vt;
-    if (full && d.n > d.k) {  /* Vh complete: n x n */
-        vt = (double *)calloc((size_t)(d.n * d.n), sizeof(double));
-        if (!vt) abort();  /* LCOV_EXCL_LINE: out of memory */
-        double *col = (double *)calloc((size_t)(d.n * d.n), sizeof(double));  /* (V, columns) */
-        if (!col) abort();  /* LCOV_EXCL_LINE: out of memory */
-        for (int64_t j = 0; j < d.k; j++)
-            for (int64_t i = 0; i < d.n; i++) col[i * d.n + j] = d.vt[j * d.n + i];
-        complete_basis(col, d.n, d.n, d.k);
-        for (int64_t j = 0; j < d.n; j++)
-            for (int64_t i = 0; i < d.n; i++) vt[j * d.n + i] = col[i * d.n + j];
-        free(col);
-    }
     LubeValue r = lube->new_list(vm);
     lube->list_push(r, in_dtype(vm, f64_array(vm, 2, us, d.u), f32));
     lube->list_push(r, s);
-    lube->list_push(r, in_dtype(vm, f64_array(vm, 2, vs, vt), f32));
-    if (vt != d.vt) free(vt);
+    lube->list_push(r, in_dtype(vm, f64_array(vm, 2, vs, d.vt), f32));
     svd_free(&d);
     return r;
 }
 
-/* eigh(a): [w, v], the eigenvalues of a symmetric matrix (ascending) and its eigenvectors (columns), by
- * Jacobi rotations; only the lower triangle is read, as numpy's does. */
+/* The eigenvalues (ascending, into w) and, when asked, the eigenvectors of the symmetric n x n matrix z, by
+ * Householder reduction to tridiagonal form and the implicit QL method (EISPACK's tred2 and tql2, as JAMA has
+ * them). z is read by columns (entry (i, j) at z[j n + i]), so that every inner loop runs along memory; it leaves
+ * eigenvector j in z[j n ..]. */
+static void tridiagonal_eigen(double *z, int64_t n, double *w, int vectors) {
+    if (n == 0) return;
+    double *e = (double *)alloc_or_die(sizeof(double) * (size_t)n);
+#define V(i, j) z[(j) * n + (i)]
+    for (int64_t j = 0; j < n; j++) w[j] = V(n - 1, j);
+    for (int64_t i = n - 1; i > 0; i--) {  /* tred2 */
+        double scale = 0, h = 0;
+        for (int64_t k = 0; k < i; k++) scale += fabs(w[k]);
+        if (scale == 0) {
+            e[i] = w[i - 1];
+            for (int64_t j = 0; j < i; j++) {
+                w[j] = V(i - 1, j);
+                V(i, j) = 0;
+                V(j, i) = 0;
+            }
+        } else {
+            for (int64_t k = 0; k < i; k++) {
+                w[k] /= scale;
+                h += w[k] * w[k];
+            }
+            double f = w[i - 1], g = sqrt(h);
+            if (f > 0) g = -g;
+            e[i] = scale * g;
+            h -= f * g;
+            w[i - 1] = f - g;
+            for (int64_t j = 0; j < i; j++) e[j] = 0;
+            for (int64_t j = 0; j < i; j++) {
+                f = w[j];
+                V(j, i) = f;
+                g = e[j] + V(j, j) * f;
+                for (int64_t k = j + 1; k <= i - 1; k++) {
+                    g += V(k, j) * w[k];
+                    e[k] += V(k, j) * f;
+                }
+                e[j] = g;
+            }
+            f = 0;
+            for (int64_t j = 0; j < i; j++) {
+                e[j] /= h;
+                f += e[j] * w[j];
+            }
+            double hh = f / (h + h);
+            for (int64_t j = 0; j < i; j++) e[j] -= hh * w[j];
+            for (int64_t j = 0; j < i; j++) {
+                f = w[j];
+                g = e[j];
+                for (int64_t k = j; k <= i - 1; k++) V(k, j) -= (f * e[k] + g * w[k]);
+                w[j] = V(i - 1, j);
+                V(i, j) = 0;
+            }
+        }
+        w[i] = h;
+    }
+    for (int64_t i = 0; i < n - 1; i++) {  /* (the transformations, gathered: only the vectors need them) */
+        V(n - 1, i) = V(i, i);
+        V(i, i) = 1;
+        double h = w[i + 1];
+        if (vectors && h != 0) {
+            for (int64_t k = 0; k <= i; k++) w[k] = V(k, i + 1) / h;
+            for (int64_t j = 0; j <= i; j++) {
+                double g = 0;
+                for (int64_t k = 0; k <= i; k++) g += V(k, i + 1) * V(k, j);
+                for (int64_t k = 0; k <= i; k++) V(k, j) -= g * w[k];
+            }
+        }
+        for (int64_t k = 0; k <= i; k++) V(k, i + 1) = 0;
+    }
+    for (int64_t j = 0; j < n; j++) {
+        w[j] = V(n - 1, j);
+        V(n - 1, j) = 0;
+    }
+    V(n - 1, n - 1) = 1;
+    e[0] = 0;
+    for (int64_t i = 1; i < n; i++) e[i - 1] = e[i];  /* tql2 */
+    e[n - 1] = 0;
+    double f = 0, tst1 = 0, eps = DBL_EPSILON;
+    for (int64_t l = 0; l < n; l++) {
+        tst1 = fmax(tst1, fabs(w[l]) + fabs(e[l]));
+        int64_t m = l;
+        while (m < n - 1 && fabs(e[m]) > eps * tst1) m++;
+        if (m > l) {
+            for (int iter = 0; iter < 100; iter++) {
+                double g = w[l], p = (w[l + 1] - g) / (2 * e[l]), r = hypot(p, 1);
+                if (p < 0) r = -r;
+                w[l] = e[l] / (p + r);
+                w[l + 1] = e[l] * (p + r);
+                double dl1 = w[l + 1], h = g - w[l];
+                for (int64_t i = l + 2; i < n; i++) w[i] -= h;
+                f += h;
+                p = w[m];
+                double c = 1, c2 = 1, c3 = 1, el1 = e[l + 1], s = 0, s2 = 0;
+                for (int64_t i = m - 1; i >= l; i--) {
+                    c3 = c2;
+                    c2 = c;
+                    s2 = s;
+                    g = c * e[i];
+                    h = c * p;
+                    r = hypot(p, e[i]);
+                    e[i + 1] = s * r;
+                    s = e[i] / r;
+                    c = p / r;
+                    p = c * w[i] - s * g;
+                    w[i + 1] = h + s * (c * g + s * w[i]);
+                    if (!vectors) continue;
+                    double *zi = &V(0, i), *zj = &V(0, i + 1);
+                    for (int64_t k = 0; k < n; k++) {
+                        h = zj[k];
+                        zj[k] = s * zi[k] + c * h;
+                        zi[k] = c * zi[k] - s * h;
+                    }
+                }
+                p = -s * s2 * c3 * el1 * e[l] / dl1;
+                e[l] = s * p;
+                w[l] = c * p;
+                if (!(fabs(e[l]) > eps * tst1)) break;
+            }
+        }
+        w[l] += f;
+        e[l] = 0;
+    }
+    for (int64_t i = 0; i < n - 1; i++) {  /* ascending */
+        int64_t k = i;
+        double p = w[i];
+        for (int64_t j = i + 1; j < n; j++)
+            if (w[j] < p) {
+                k = j;
+                p = w[j];
+            }
+        if (k != i) {
+            w[k] = w[i];
+            w[i] = p;
+            if (vectors)
+                for (int64_t j = 0; j < n; j++) {
+                    p = V(j, i);
+                    V(j, i) = V(j, k);
+                    V(j, k) = p;
+                }
+        }
+    }
+#undef V
+    free(e);
+}
+
+/* By LAPACK (dsyevd, as numpy): z as tridiagonal_eigen() takes and leaves it; 0 if it did not converge. */
+static int eigh_lapack(double *z, int64_t n, double *w, int vectors) {
+    Lint N = (Lint)n, query = -1, iquery = 0, info = 0;
+    double size;
+    const char *jobz = vectors ? "V" : "N";
+    lapack.syevd(jobz, "L", &N, z, &N, w, &size, &query, &iquery, &query, &info, 1, 1);
+    Lint lwork = (Lint)size, liwork = iquery;
+    double *work = (double *)alloc_or_die(sizeof(double) * (size_t)lwork);
+    Lint *iwork = (Lint *)alloc_or_die(sizeof(Lint) * (size_t)liwork);
+    lapack.syevd(jobz, "L", &N, z, &N, w, work, &lwork, iwork, &liwork, &info, 1, 1);
+    free(work);
+    free(iwork);
+    return info == 0;
+}
+
+/* eigh(a): [w, v], the eigenvalues of a symmetric matrix (ascending) and its eigenvectors (columns); only the
+ * lower triangle is read, as numpy's does. */
 static LubeValue eigh(LubeVM *vm, LubeValue av, int values_only) {
     LubeValue ka, err;
     Array *a;
     if (!matrix_arg(vm, values_only ? "eigvalsh" : "eigh", av, 1, &ka, &a, &err)) return err;
-    int64_t n = a->shape[0];
+    int64_t n = a->shape[0], sq[2] = {n, n};
     double *A = (double *)a->data;
     for (int64_t i = 0; i < n; i++)
-        for (int64_t j = i + 1; j < n; j++) A[i * n + j] = A[j * n + i];
-    double *V = (double *)malloc(sizeof(double) * (size_t)(n * n + 1));
-    if (!V) abort();  /* LCOV_EXCL_LINE: out of memory */
-    for (int64_t i = 0; i < n; i++)
-        for (int64_t j = 0; j < n; j++) V[i * n + j] = i == j;
-    for (int sweep = 0; sweep < 100; sweep++) {
-        double off = 0;
-        for (int64_t i = 0; i < n; i++)
-            for (int64_t j = i + 1; j < n; j++) off += A[i * n + j] * A[i * n + j];
-        if (off < 1e-300) break;
-        for (int64_t p = 0; p < n - 1; p++)
-            for (int64_t q = p + 1; q < n; q++) {
-                double apq = A[p * n + q];
-                if (fabs(apq) < 1e-300) continue;
-                double theta = (A[q * n + q] - A[p * n + p]) / (2 * apq);
-                double t = (theta >= 0 ? 1 : -1) / (fabs(theta) + sqrt(theta * theta + 1));
-                double c = 1 / sqrt(t * t + 1), s = t * c, tau = s / (1 + c);
-                for (int64_t k = 0; k < n; k++) {  /* (the classic update: the pair's own entries set directly) */
-                    if (k == p || k == q) continue;
-                    double akp = A[k * n + p], akq = A[k * n + q];
-                    A[k * n + p] = A[p * n + k] = akp - s * (akq + tau * akp);
-                    A[k * n + q] = A[q * n + k] = akq + s * (akp - tau * akq);
-                }
-                A[p * n + p] -= t * apq;
-                A[q * n + q] += t * apq;
-                A[p * n + q] = A[q * n + p] = 0;
-                for (int64_t k = 0; k < n; k++) {
-                    double x = V[k * n + p], y = V[k * n + q];
-                    V[k * n + p] = x - s * (y + tau * x);
-                    V[k * n + q] = y + s * (x - tau * y);
-                }
-            }
-    }
-    int64_t *order = (int64_t *)malloc(sizeof(int64_t) * (size_t)(n + 1));
-    if (!order) abort();  /* LCOV_EXCL_LINE: out of memory */
-    for (int64_t i = 0; i < n; i++) order[i] = i;
-    for (int64_t i = 1; i < n; i++)
-        for (int64_t j = i; j > 0 && A[order[j] * n + order[j]] < A[order[j - 1] * n + order[j - 1]]; j--) {
-            int64_t t = order[j];
-            order[j] = order[j - 1];
-            order[j - 1] = t;
-        }
+        for (int64_t j = i + 1; j < n; j++) A[i * n + j] = A[j * n + i];  /* (symmetric: by rows or columns) */
     Array *w, *vec;
-    int64_t sq[2] = {n, n};
-    LubeValue vw = arr_new(vm, ARR_F64, 1, &n, &w, 0), vv = arr_new(vm, ARR_F64, 2, sq, &vec, 0);
-    for (int64_t j = 0; j < n; j++) {
-        ((double *)w->data)[j] = A[order[j] * n + order[j]];
-        for (int64_t i = 0; i < n; i++) ((double *)vec->data)[i * n + j] = V[i * n + order[j]];
+    LubeValue vw = arr_new(vm, ARR_F64, 1, &n, &w, 0);
+    double *W = (double *)w->data;
+    double *z = NULL;  /* (LAPACK's, on a copy: our own goes on from A if it fails) */
+    if (lapack_on(n, n)) {
+        z = (double *)alloc_or_die(sizeof(double) * (size_t)(n * n));
+        memcpy(z, A, sizeof(double) * (size_t)(n * n));
+        if (!eigh_lapack(z, n, W, !values_only)) {  /* LCOV_EXCL_START: (it converges but for NaN and the like) */
+            free(z);
+            z = NULL;
+        }  /* LCOV_EXCL_STOP */
     }
-    free(V);
-    free(order);
-    lube->release(ka);
+    if (!z) tridiagonal_eigen(A, n, W, !values_only);
     int f32 = was_f32(av);
     if (values_only) {
-        lube->release(vv);
+        free(z);
+        lube->release(ka);
         return in_dtype(vm, vw, f32);
     }
+    LubeValue vv = arr_new(vm, ARR_F64, 2, sq, &vec, 0);
+    transpose_d(z ? z : A, n, n, (double *)vec->data);  /* (eigenvector j, in row j, into column j) */
+    free(z);
+    lube->release(ka);
     LubeValue r = lube->new_list(vm);
     lube->list_push(r, in_dtype(vm, vw, f32));
     lube->list_push(r, in_dtype(vm, vv, f32));
@@ -861,20 +1231,23 @@ static LubeValue pinv_or_lstsq(LubeVM *vm, LubeValue av, const LubeValue *bv, do
         lube->release(made);
     }
     Svd d;
-    svd_of((const double *)a->data, m, n, 0, &d);
+    svd_of((const double *)a->data, m, n, 0, 1, &d);
     double cutoff = (rcond < 0 ? (double)(m > n ? m : n) * 2.220446049250313e-16 : rcond) * (d.k ? d.s[0] : 0);
     int64_t rank = 0;
     for (int64_t j = 0; j < d.k; j++) rank += d.s[j] > cutoff;
-    /* pinv = V diag(1/s) U^T: n x m */
+    /* pinv = V diag(1/s) U^T: n x m, as one product: (Vh's first rank rows, each over its s)^T times U's first rank
+     * columns^T */
     int64_t ps[2] = {n, m};
     Array *p;
     LubeValue vp = arr_new(vm, ARR_F64, 2, ps, &p, 1);
     double *P = (double *)p->data;
-    for (int64_t j = 0; j < rank; j++)
-        for (int64_t i = 0; i < n; i++) {
-            double f = d.vt[j * n + i] / d.s[j];
-            for (int64_t r = 0; r < m; r++) P[i * m + r] += f * d.u[r * d.ucols + j];
-        }
+    if (rank > 0) {
+        double *w = (double *)alloc_or_die(sizeof(double) * (size_t)(rank * n));
+        for (int64_t j = 0; j < rank; j++)
+            for (int64_t i = 0; i < n; i++) w[j * n + i] = d.vt[j * n + i] / d.s[j];
+        gemm(ARR_F64, n, m, rank, w, 1, n, d.u, 1, d.ucols, P, m);  /* (both read transposed, by their strides) */
+        free(w);
+    }
     int f32 = was_f32(av);
     LubeValue result;
     if (!bv) {
@@ -886,20 +1259,22 @@ static LubeValue pinv_or_lstsq(LubeVM *vm, LubeValue av, const LubeValue *bv, do
         LubeValue vx = arr_new(vm, ARR_F64, b->ndim, xs, &x, 1);
         const double *B = (const double *)b->data;
         double *X = (double *)x->data;
-        for (int64_t i = 0; i < n; i++)
-            for (int64_t r = 0; r < m; r++)
-                for (int64_t j = 0; j < nb; j++) X[i * nb + j] += P[i * m + r] * B[r * nb + j];
+        if (m && n && nb) gemm(ARR_F64, n, nb, m, P, m, 1, B, nb, 1, X, nb);  /* x = pinv b */
         int64_t nres = rank == n && m > n ? nb : 0;  /* (numpy gives residuals only then) */
         Array *res;
         LubeValue vres = arr_new(vm, ARR_F64, 1, &nres, &res, 1);
-        for (int64_t j = 0; j < nres; j++) {
-            double ss = 0;
-            for (int64_t r = 0; r < m; r++) {
-                double e = B[r * nb + j];
-                for (int64_t i = 0; i < n; i++) e -= ((const double *)a->data)[r * n + i] * X[i * nb + j];
-                ss += e * e;
+        if (nres) {  /* |b - a x|^2 for each column, a x as one product */
+            double *ax = (double *)alloc_or_die(sizeof(double) * (size_t)(m * nb));
+            gemm(ARR_F64, m, nb, n, (const double *)a->data, n, 1, X, nb, 1, ax, nb);
+            for (int64_t j = 0; j < nres; j++) {
+                double ss = 0;
+                for (int64_t r = 0; r < m; r++) {
+                    double e = B[r * nb + j] - ax[r * nb + j];
+                    ss += e * e;
+                }
+                ((double *)res->data)[j] = ss;
             }
-            ((double *)res->data)[j] = ss;
+            free(ax);
         }
         result = lube->new_list(vm);
         lube->list_push(result, in_dtype(vm, vx, f32));

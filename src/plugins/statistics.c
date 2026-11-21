@@ -760,17 +760,6 @@ static int item_cmp(const Item *a, const Item *b) {
     return by_value(&a->num, &b->num);
 }
 
-static int by_item(const void *pa, const void *pb) {
-    const Item *a = (const Item *)pa, *b = (const Item *)pb;
-    int c = item_cmp(a, b);
-    return c ? c : (a->at > b->at) - (a->at < b->at);
-}
-
-static int by_place(const void *pa, const void *pb) {
-    const Item *a = (const Item *)pa, *b = (const Item *)pb;
-    return (a->at > b->at) - (a->at < b->at);
-}
-
 /* The most common items, in the order they first come: all of them (multi), or the first. */
 static LubeValue modes_of(LubeVM *vm, const LubeValue *argv, int multi) {
     const char *fn = multi ? "multimode" : "mode";
@@ -792,18 +781,45 @@ static LubeValue modes_of(LubeVM *vm, const LubeValue *argv, int multi) {
             return lube->error(vm, "%s() counts Numbers, text and Bools, but item %lu is %s", fn, (unsigned long)i, lube->a_type(v));
         }
     }
-    qsort(items, n, sizeof(Item), by_item);
-    size_t best = 0;  /* each group's first item (the first in the data) becomes items[group], with its count in len */
-    for (size_t i = 0; i < n;) {
-        size_t j = i + 1;
-        while (j < n && !item_cmp(&items[i], &items[j])) j++;
-        items[groups] = items[i];
-        items[groups].len = j - i;
-        if (j - i > best) best = j - i;
-        groups++;
-        i = j;
+    /* Counted in a hash table (open addressing; equal by item_cmp: -0 is 0, a NaN any NaN), each group
+     * recorded where it first comes, so that the groups are in the data's order without sorting. */
+    size_t cap = 16;
+    while (cap < 2 * n) cap *= 2;
+    size_t *slot = (size_t *)malloc(sizeof(size_t) * cap), *order = (size_t *)malloc(sizeof(size_t) * (n + 1));
+    size_t *count = (size_t *)calloc(n + 1, sizeof(size_t));  /* (by each group's first item) */
+    if (!slot || !order || !count) abort();  /* LCOV_EXCL_LINE: out of memory */
+    for (size_t i = 0; i < cap; i++) slot[i] = (size_t)-1;
+    size_t best = 0;
+    for (size_t i = 0; i < n; i++) {
+        Item *it = &items[i];
+        uint64_t h = (uint64_t)it->kind * 0x9E3779B97F4A7C15ull;
+        if (it->kind == LUBE_STR) {
+            for (size_t b = 0; b < it->len; b++) h = (h ^ (unsigned char)it->s[b]) * 0x100000001B3ull;
+        } else {
+            double x = it->num == 0 ? 0.0 : it->num != it->num ? NAN : it->num;  /* (-0 as 0, every NaN as one) */
+            uint64_t bits;
+            memcpy(&bits, &x, sizeof bits);
+            h ^= bits;
+        }
+        h ^= h >> 31;
+        h *= 0xBF58476D1CE4E5B9ull;
+        h ^= h >> 29;
+        size_t at = (size_t)h & (cap - 1);
+        while (slot[at] != (size_t)-1 && item_cmp(&items[slot[at]], it)) at = (at + 1) & (cap - 1);
+        if (slot[at] == (size_t)-1) {  /* (a new group: this item first) */
+            slot[at] = i;
+            order[groups++] = i;
+        }
+        size_t c = ++count[slot[at]];
+        if (c > best) best = c;
     }
-    qsort(items, groups, sizeof(Item), by_place);
+    for (size_t g = 0; g < groups; g++) {  /* (in place: order[g] >= g) */
+        items[g] = items[order[g]];
+        items[g].len = count[order[g]];  /* (from here on, len is the group's count) */
+    }
+    free(slot);
+    free(order);
+    free(count);
     LubeValue out = multi ? lube->new_list(vm) : lube->nothing();
     for (size_t g = 0; g < groups; g++) {
         if (items[g].len != best) continue;

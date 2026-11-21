@@ -83,6 +83,14 @@ LayerNorm(4) [1, 1, 1, 1] [0, 0, 0, 0] [[-1.606876, -0.073481, 0.821477, 0.85887
  [1.307815, 0.503629, -0.461145, -1.350299]]
 Dropout(0.25) true false [1, 1, 1] true [4] false
 ReLU()   [[0.29552, 0.932039], [0.863209, 0.14112]]  | Sigmoid()   [[0.573347, 0.717489], [0.703331, 0.535222]]  | Tanh()   [[0.287208, 0.731543], [0.697908, 0.140191]]  | GELU()   [[0.1821, 0.768319], [0.695737, 0.078479]]  | SiLU()   [[0.169436, 0.668728], [0.607122, 0.07553]]  | LeakyReLU(0.01)   [[0.29552, 0.932039], [0.863209, 0.14112]]  | LeakyReLU(0.3)   [[0.29552, 0.932039], [0.863209, 0.14112]]  | Softmax(-1)   [[0.346034, 0.653966], [0.673067, 0.326933]]  | Softmax(0)   [[0.36177, 0.688029], [0.63823, 0.311971]]  | LogSoftmax(-1)   [[-1.061219, -0.4247], [-0.39591, -1.118]]  | Flatten()   [[0.29552, 0.932039], [0.863209, 0.14112]]  | 
+sigmoid float32 true true true [1, 0]
+tanh float32 true true true [1, -1]
+gelu float32 true true true [inf, 0]
+silu float32 true true true [inf, nan]
+relu float32 true true false [inf, 0]
+leaky_relu float32 true true true [inf, -inf]
+true true true [-1.59325, -1.303568, -1.013886] float32
+float64 [-1, 0.5, 1] [0, 1, 0]
 MaxPool2d(2, stride 2) [1, 1, 2, 2] [[[[1, 1],
    [1, 1]]]]
 MSELoss()   0.145  | L1Loss()   0.7  | CrossEntropyLoss()   0.313262  | BCELoss()   1.039721  | BCEWithLogitsLoss()   [0.313262, 1.313262]  | 

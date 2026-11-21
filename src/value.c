@@ -74,6 +74,12 @@ ObjString *string_append(ObjString *s, const char *chars, size_t n) {
     return s;
 }
 
+/* A map's index is searched from slot hash & mask, then along this: 5 i + 1 comes to every slot of a table
+ * whose size is a power of two, and the hash's higher bits (perturb, shifted in 5 at a time until none is
+ * left) join it first, so that keys alike in their lower bits part ways (as Python's dict). Whole numbers
+ * hash to themselves: keys 0, 1, 2... fill the index in order, with no collisions and no cache misses. */
+#define PROBE_NEXT(i, perturb, mask) ((perturb) >>= 5, (i) = ((i) * 5 + (perturb) + 1) & (mask))
+
 /* Returns the shared copy of a string. The table owns it; the caller gets a
  * borrowed pointer that stays valid until the interpreter shuts down. */
 ObjString *lube_intern(Interp *I, const char *chars, size_t length) {
@@ -81,6 +87,7 @@ ObjString *lube_intern(Interp *I, const char *chars, size_t length) {
     ObjMap *m = I->strings;
     if (m->index_cap) {
         size_t mask = m->index_cap - 1, i = h & mask;
+        uint32_t perturb = h;
         for (;;) {
             int32_t e = m->index[i];
             if (e == -1) break;
@@ -88,7 +95,7 @@ ObjString *lube_intern(Interp *I, const char *chars, size_t length) {
                 ObjString *s = AS_STRING(m->entries[e].key);
                 if (s->length == length && memcmp(s->chars, chars, length) == 0) return s;
             }
-            i = (i + 1) & mask;
+            PROBE_NEXT(i, perturb, mask);
         }
     }
     ObjString *s = new_string(chars, length);
@@ -175,6 +182,10 @@ static uint32_t mix64(uint64_t bits) {
 
 static uint32_t hash_double(double d) {
     if (d == 0) d = 0;  /* -0 and 0 are the same key */
+    if (d >= -9007199254740992.0 && d <= 9007199254740992.0 && d == (double)(int64_t)d) {
+        uint64_t u = (uint64_t)(int64_t)d;  /* a whole number: itself (see PROBE_NEXT), its upper half mixed in */
+        return (uint32_t)u + (uint32_t)(u >> 32) * 0x9e3779b9u;
+    }
     uint64_t bits;
     memcpy(&bits, &d, sizeof bits);
     return mix64(bits);
@@ -243,11 +254,12 @@ ObjMap *new_map(void) {
 static long map_probe(ObjMap *m, Value key, uint32_t h) {
     if (m->index_cap == 0) return -1;
     size_t mask = m->index_cap - 1, i = h & mask;
+    uint32_t perturb = h;
     for (;;) {
         int32_t e = m->index[i];
         if (e == SLOT_EMPTY) return -1;
         if (e >= 0 && m->entries[e].hash == h && keys_equal(m->entries[e].key, key)) return (long)i;
-        i = (i + 1) & mask;
+        PROBE_NEXT(i, perturb, mask);
     }
 }
 
@@ -264,20 +276,47 @@ static void map_resize(ObjMap *m, size_t want) {
 
     /* index entries are 32-bit, and sizes must not overflow (the limit is on items, not on room) */
     if (want > ((size_t)1 << 30) || (m->count >= LUBE_MAX_ITEMS && !m->internal)) lube_out_of_memory();
-    size_t cap = 8;
+    size_t cap = 4;  /* (small ones, and their index, come from memory.c's free lists) */
     while (cap < want) cap *= 2;
-    m->entries = xrealloc(m->entries, cap * sizeof(MapEntry));
+    m->entries = lube_block_realloc(m->entries, m->entry_cap * sizeof(MapEntry), cap * sizeof(MapEntry));
     m->entry_cap = cap;
     size_t icap = cap * 2;
-    m->index = xrealloc(m->index, icap * sizeof(int32_t));
+    lube_block_free(m->index, m->index_cap * sizeof(int32_t));
+    m->index = lube_block_alloc(icap * sizeof(int32_t));
     m->index_cap = icap;
     for (size_t i = 0; i < icap; i++) m->index[i] = SLOT_EMPTY;
     size_t mask = icap - 1;
     for (size_t e = 0; e < m->used; e++) {
-        size_t i = m->entries[e].hash & mask;
-        while (m->index[i] != SLOT_EMPTY) i = (i + 1) & mask;
+        uint32_t perturb = m->entries[e].hash;
+        size_t i = perturb & mask;
+        while (m->index[i] != SLOT_EMPTY) PROBE_NEXT(i, perturb, mask);
         m->index[i] = (int32_t)e;
     }
+}
+
+/* Room for n entries in all, made at once (an instance's fields, an object written out). */
+void map_reserve(ObjMap *m, size_t n) {
+    if (n > m->entry_cap) map_resize(m, n);
+}
+
+/* A new map's first n entries: keys[i] (strs, no two alike: a class's field names) with values[i], both
+ * retained. No key is looked for, and each hash is its str's own. */
+void map_fill(ObjMap *m, ObjString **keys, const Value *values, size_t n) {
+    if (!n) return;
+    map_reserve(m, n);
+    size_t mask = m->index_cap - 1;
+    for (size_t e = 0; e < n; e++) {
+        uint32_t h = string_hash(keys[e]);
+        uint32_t perturb = h;
+        size_t i = h & mask;
+        while (m->index[i] != SLOT_EMPTY) PROBE_NEXT(i, perturb, mask);
+        m->index[i] = (int32_t)e;
+        m->entries[e].key = retain(OBJ_VAL(keys[e]));
+        m->entries[e].value = retain(values[e]);
+        m->entries[e].hash = h;
+        m->entries[e].live = 1;
+    }
+    m->used = m->count = n;
 }
 
 Value *map_find(ObjMap *m, Value key) {
@@ -290,6 +329,35 @@ int map_get(ObjMap *m, Value key, Value *out) {
     if (!v) return 0;
     if (out) *out = *v;
     return 1;
+}
+
+/* The slot of key's value, added (holding nothing, the key retained) when it is not there: one hash and one
+ * probe for both. */
+Value *map_slot(ObjMap *m, Value key) {
+    uint32_t h = hash_value(key);
+    if (m->index_cap) {
+        size_t mask = m->index_cap - 1, i = h & mask;
+        uint32_t perturb = h;
+        for (;;) {
+            int32_t e = m->index[i];
+            if (e == SLOT_EMPTY) {
+                if (m->used >= m->entry_cap) break;  /* (no room: map_set makes it) */
+                MapEntry *n = &m->entries[m->used];
+                n->key = retain(key);
+                n->value = NIL_VAL;
+                n->hash = h;
+                n->live = 1;
+                m->index[i] = (int32_t)m->used;
+                m->used++;
+                m->count++;
+                return &n->value;
+            }
+            if (e >= 0 && m->entries[e].hash == h && keys_equal(m->entries[e].key, key)) return &m->entries[e].value;
+            PROBE_NEXT(i, perturb, mask);
+        }
+    }
+    map_set(m, retain(key), NIL_VAL);  /* (not there, so added: the last entry) */
+    return &m->entries[m->used - 1].value;
 }
 
 void map_set(ObjMap *m, Value key, Value value) {
@@ -305,7 +373,8 @@ void map_set(ObjMap *m, Value key, Value value) {
     }
     if (m->used >= m->entry_cap) map_resize(m, m->count + 1 + m->count / 2);
     size_t mask = m->index_cap - 1, i = h & mask;
-    while (m->index[i] >= 0) i = (i + 1) & mask;  /* first empty or deleted slot */
+    uint32_t perturb = h;
+    while (m->index[i] >= 0) PROBE_NEXT(i, perturb, mask);  /* first empty or deleted slot */
     MapEntry *e = &m->entries[m->used];
     e->key = key;
     e->value = value;
@@ -722,6 +791,25 @@ void format_number(char *buf, size_t size, double n) {
         while (len > 0 && i + 1 < size) buf[i++] = digits[--len];
         buf[i] = '\0';
     } else {
+        int64_t z = 0;
+        int k = fabs(n) >= 1e-4 ? short_decimal(n, &z) : -1;
+        if (k > 0 && size >= 24) {  /* (what %.15g shows for it, without it: the digits of z, a point k from the end) */
+            char digits[24];
+            int len = 0;
+            uint64_t u = z < 0 ? 0 - (uint64_t)z : (uint64_t)z;
+            do {
+                digits[len++] = (char)('0' + u % 10);
+                u /= 10;
+            } while (u || len <= k);  /* (a 0 before the point, at least) */
+            size_t i = 0;
+            if (z < 0) buf[i++] = '-';
+            while (len > 0) {
+                buf[i++] = digits[--len];
+                if (len == k) buf[i++] = '.';
+            }
+            buf[i] = '\0';
+            return;
+        }
         for (int prec = 15; prec <= 17; prec++) {
             snprintf(buf, size, "%.*g", prec, n);
             if (strtod(buf, NULL) == n) break;
@@ -880,8 +968,13 @@ void append_value(StrBuf *sb, Value v, int quote) { append_inner(sb, v, quote, 0
 /* The string form of v, as str() returns it (a new reference). */
 ObjString *value_to_string(Value v) {
     if (IS_TEXT(v)) return (ObjString *)retain(OBJ_VAL(text_of(v))).as.obj;
+    char small[128];
+    if (v.type == VAL_NUM) {  /* (Numbers, the most common: no buffer at all) */
+        format_number(small, sizeof small, v.as.number);
+        return new_string(small, strlen(small));
+    }
     StrBuf sb;
-    sb_init(&sb);
+    sb_init_on(&sb, small, sizeof small);
     append_value(&sb, v, 0);
     ObjString *s = new_string(sb.data, sb.len);
     sb_free(&sb);
@@ -890,8 +983,9 @@ ObjString *value_to_string(Value v) {
 
 /* The quoted form of v, as the REPL shows it (a new reference). */
 ObjString *value_repr(Value v) {
+    char small[128];
     StrBuf sb;
-    sb_init(&sb);
+    sb_init_on(&sb, small, sizeof small);
     append_value(&sb, v, 1);
     ObjString *s = new_string(sb.data, sb.len);
     sb_free(&sb);

@@ -32,6 +32,12 @@ error: max() cannot order nan
 error: sort() cannot order nan
 error: sort() comparator must return a Number or a Bool, not a str
 ab xy ["a", "ab", "b"] [3, 2, 1]
+["ed", "fi", "di", "al", "bo", "cy"] ["al", "bo", "cy", "di", "ed", "fi"] ["", "a", "bb", "ccc"] [$1.00, $2.00] []
+["prefix", "prefix-same-1", "prefix-same-1", "prefix-same-10", "prefix-same-2"] ["prefix", "prefix-same-1", "prefix-same-1", "prefix-same-10", "prefix-same-2"] [2, 3, 1] ["a", "b"]
+error: sort() cannot compare a List with a List
+error: sort() cannot order nan
+error: a Number has no field 'nope'
+error: sort() cannot compare a str with a Number
 9007199254740991 4503599627370497 0 -2 3
 true 308 -1e+300 -300 2.275 1e+300 [-inf, inf, -inf, inf]
 error: sort() cannot order nan
