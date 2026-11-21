@@ -11,6 +11,7 @@ false true true true Total: $10.25 $10.25 due
 $1,000,000,000,000,000.00 $0.00 $0.01 -$0.01 $0.00 $276,701,161,105,643.31
 $1.75
 $2.00 [$3.00] Money[] $3.50 $3.00 $3.00 $1.00 [$1.00, $2.00, $3.00]
+$5.00 $10.00 $3.50 $6.00
 $2.00 $2.00 2.5 -3 $9.00 $9.00 $9.00
 1234.5 123450 USD $ 2 AED 7
 [$33.34, $33.33, $33.33] [-$33.34, -$33.33, -$33.33] [$0.03, $0.02] [$1.00] [$33.33, $66.67] [$3.00, $7.00] [$0.02, $0.02, $0.01]
@@ -58,6 +59,8 @@ error: the result is too much money
 error: the result is too much money
 error: Money has no field 'nope' (it has amount, units, currency, symbol and decimals)
 error: cannot compare €1.00 and $1.00: they are different currencies (convert one with .to(code, rate))
+error: cannot add $3.00 and €1.00: they are different currencies (convert one with .to(code, rate))
+error: sum() can only add numbers, found a str
 error: allocate() takes a list of ratios (Numbers)
 error: allocate(): ratios are Numbers, 0 or more
 error: allocate(): the ratios must add up to more than 0

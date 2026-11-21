@@ -26,6 +26,7 @@ make test       # runs the test suite
 make check      # runs it again with memory sanitizers and a leak check
 make coverage   # measures test coverage (needs clang's llvm-cov); fails below 100%
 make tsan       # runs the suite with ThreadSanitizer (data races between isolates)
+tests/soak/run.sh   # runs everything for an hour, watching memory and speed (see Testing)
 make install    # copies lube to /usr/local/bin and its plugins to /usr/local/lib/lube (PREFIX=...)
 ```
 
@@ -147,7 +148,7 @@ What follows from that:
 
 Lube programs can't corrupt memory: there are no pointers, every index is bounds-checked, integer arithmetic is overflow-checked, and nothing is ever freed by hand. Extreme input gets a clear error instead of a crash. That covers numbers like `1e300` or NaN used as sizes, code nested thousands of levels deep, and runaway recursion. A string can hold at most 1 GB and a list, object or map at most 268 million items, so one expression can't claim all of the machine's memory. To run untrusted scripts with less, set `LUBE_MAX_BYTES` (the longest string, and the largest source file) and `LUBE_MAX_ITEMS` (the most items in one list, object or map). They can lower the limits but never raise them. A program that goes over a limit stops with `lube: out of memory`.
 
-The interpreter itself is written in C, so its safety rests on testing. `make check` runs the whole suite under AddressSanitizer and UndefinedBehaviorSanitizer and verifies at exit that every object was freed. `make coverage` checks that the suite runs every line and every function of the interpreter. The interpreter has also been fuzzed with tens of thousands of malformed and adversarial programs.
+The interpreter itself is written in C, so its safety rests on testing. `make check` runs the whole suite under AddressSanitizer and UndefinedBehaviorSanitizer and verifies at exit that every object was freed. `make coverage` checks that the suite runs every line and every function of the interpreter. The interpreter has also been fuzzed with tens of thousands of malformed and adversarial programs, and a soak test runs every part of Lube for an hour while watching its memory (see Testing).
 
 ## Language tour
 
@@ -1430,10 +1431,86 @@ Programs are compiled to bytecode every time they run, in memory: there is no bu
 | `src/thread.c` | The operating system's threads (POSIX threads, or Win32): starting one, and a lock to wait on. |
 | `src/main.c` | Command line and REPL. |
 
-Testing:
+## Testing
 
-- `make test` runs `tests/*.lube` and compares the output with the `.out` files next to them.
-- `make check` runs the same suite on a build with AddressSanitizer and UndefinedBehaviorSanitizer. That build also fails if any object is still alive at exit, in the main program or in any isolate.
-- `make tsan` runs it with ThreadSanitizer, which reports any data race between isolates.
-- `tests/cli.sh` covers the command line, the REPL, exit codes, tracebacks, the `LUBE_MAX_*` limits, and the programs in `tests/cli/stops.txt` that each stop with an error.
-- `make coverage` builds with clang's source-based coverage, runs the suite, and fails unless every line and every function of the interpreter ran. The few defensive lines that no program can reach are marked `LCOV_EXCL_LINE` (or sit between `LCOV_EXCL_START` and `LCOV_EXCL_STOP`), and the report counts them.
+Lube is written in C, and its plugins read files from anywhere (models, arrays, safetensors), so what keeps it safe is testing: the same tests, with the same expected output, on every system.
+
+- **The suite.** `make test` runs `tests/*.lube` and compares the output with the `.out` files next to them. `tests/cli.sh` covers the command line, the REPL, exit codes, tracebacks, the `LUBE_MAX_*` limits, and the programs in `tests/cli/stops.txt` that each stop with an error.
+- **Checked against Python.** The plugins' expected outputs were checked against the Python libraries they match:
+  - NumPy;
+  - PyTorch, with every gradient also checked against finite differences;
+  - scikit-learn;
+  - Python's `math`, `cmath`, `statistics` and `random`, with the same random numbers digit for digit;
+  - for `llm`, a NumPy model that computes the way llama.cpp does. `tests/models/make_models.py` makes the tiny GGUF models the tests load and prints what that model gives.
+- **The same output everywhere.** Results that depend on the C library (`exp`, `sin`, float32's functions...) print rounded. The plugins are compiled without fused multiply-adds, so a sum comes out the same on ARM and x86, with either compiler.
+- **Memory.** `make check` runs the suite on a build with AddressSanitizer and UndefinedBehaviorSanitizer. That build also fails if any object is still alive at exit, in the main program or in any isolate.
+- **Threads.** `make tsan` runs it with ThreadSanitizer, which reports any data race: between isolates, and in the thread pool that `array`, `nn`, `learn` and `llm` share.
+- **Coverage.** `make coverage` builds with clang's source-based coverage, runs the suite, and fails unless every line and every function of the interpreter and its plugins ran. The few defensive lines that no program can reach are marked `LCOV_EXCL_LINE` (or sit between `LCOV_EXCL_START` and `LCOV_EXCL_STOP`), and the report counts them.
+- **Fuzzing.** The interpreter has been fuzzed with tens of thousands of malformed and adversarial programs.
+
+### On every pull request
+
+GitHub Actions (`.github/workflows/ci.yml`) runs:
+
+| job | what it runs |
+|---|---|
+| Linux, with gcc and with clang | the build with every warning an error, `make test`, `make check`, `make tsan`, a real window (X11 under Xvfb), a static binary |
+| macOS | `make test`, `make check`, `make coverage`, a real Cocoa window, a universal binary |
+| Windows (MSYS2, gcc) | `make test`, a real Win32 window, the release zip |
+| Android | the template in `mobile/android`, built with Gradle, and its native part again with every warning an error |
+| iOS | the template in `mobile/ios`, built for the simulator with warnings as errors |
+
+Two compilers catch what one misses. gcc warns about values that might be used before they are set, where clang doesn't. The two also evaluate a call's arguments in opposite orders, which once hid a bug on macOS that Linux showed at once. Changes to the phone templates are also run by hand on the Android emulator and the iOS simulator.
+
+### The soak: everything, for an hour
+
+`tests/soak/run.sh` runs `tests/soak/soak.lube` for an hour (`run.sh SECONDS` for another length) and watches it. Each round runs ten workloads and times each one:
+
+- the core language (recursion, text, lists, maps, classes, caught errors), Money, `math`, `cmath`, `statistics` and `random`;
+- `array`: products, sorting, broadcasting, indexing, linear algebra, `.npy` and safetensors files;
+- `nn`: training an MLP and a CNN, saving and loading the weights;
+- `learn`: a forest, k-means, logistic regression, nearest neighbors, PCA, cross-validation;
+- `llm`: loading a model, generating, tokenizing;
+- isolates and channels, each isolate loading the plugins;
+- 3,400 errors raised inside the plugins, where leaks like to hide;
+- a thousand of the smallest operations, so that a leak of a few bytes each grows big enough to see.
+
+Every round is seeded the same way, so its checksums must never change: one that does means memory went wrong somewhere.
+
+- **What it records,** into `build/soak`:
+  - every 5 seconds: resident memory, the load and the free disk;
+  - on macOS, every minute: the physical footprint;
+  - on macOS, every 10 minutes: `leaks` against the live process, which finds memory that nothing points to any more.
+- **The summary.** `python3 tests/soak/analyze.py build/soak` reports the rounds, the checksums, each workload's speed at the start and at the end, and memory's trend.
+- **Real models.** `llm` loads one of the tiny test models unless given real ones: `run.sh 3600 model.gguf [second.gguf]`.
+- **A leak check of everything at once.** `LUBE=./lube-check tests/soak/run.sh 60` runs the soak on the sanitizer build. It found `sum()` leaking a total of Money per addition, which is now fixed and tested.
+- **Against Python.** `tests/soak/soak.py` is the same workload in Python, with NumPy, PyTorch, scikit-learn and llama-cpp-python, for comparing speed: `python3 tests/soak/soak.py model.gguf 60 build/soak/tmp`.
+
+**An hour on an M5** (10 cores, 16 GB), loading stories15M and SmolLM2-135M:
+
+- **Rounds:** 7,019, and every checksum was the same.
+- **Memory:** flat. Resident memory had a median of 372–378 MB in every 10 minutes, and the physical footprint peaked at 374 MB, trending slightly down. Most of it is the isolates' (alone, that workload peaks at 207 MB, every other one under 25 MB): each interpreter reserves a 16 MB stack and a 16 MB type table, and memory reused from one isolate for the next is resident.
+- **Leaks:** `leaks` found nothing at any of its six checks.
+- **Speed:** a round took 445–456 ms (the median of each 10 minutes) for 50 minutes. The last 10 were slower only because the machine got busier: a fresh process started then was just as slow.
+
+The same workload in Python, run back to back with Lube on the same machine (the median of each, in ms):
+
+| workload | Lube | Python | |
+|---|---|---|---|
+| core language | 8.3 | 9.2 | Lube 1.1× faster |
+| Money (Python: `decimal`) | 28.0 | 13.8 | Python 2.0× faster |
+| `math`, `cmath`, `statistics`, `random` | 10.0 | 9.0 | Python 1.1× faster |
+| `array` (NumPy) | 241.1 | 30.4 | Python 7.9× faster |
+| `nn` (PyTorch) | 59.3 | 53.5 | Python 1.1× faster |
+| `learn` (scikit-learn, the forest on all cores) | 12.6 | 139.2 | Lube 11× faster |
+| `llm` (llama-cpp-python), loading included | 93.3 | 428.7 | Lube 4.6× faster |
+| isolates (Python: a process pool and threads) | 10.2 | 1,514.9 | Lube 149× faster |
+| 3,400 errors | 2.0 | 58.8 | Lube 29× faster |
+| tiny operations | 1.1 | 4.6 | Lube 4.2× faster |
+| **a whole round** | **482** | **2,347** | **Lube 4.9× faster** (1.6× without the isolates) |
+
+Where Python wins, the cause is known:
+
+- **`array`:** almost all of it is `eigh`. It uses Jacobi's method and takes 202 ms on a 300×300 matrix, where LAPACK takes 3.4 ms. Behind it are `median` (it sorts everything: 11× slower), and `solve` and `svd` (4.5–6× slower, unblocked where NumPy calls LAPACK). Lube wins on `sort` and `argsort` (2× and 4.7×) and on reading and writing files (2–3×), and matrix products are even.
+- **`nn`:** GELU computes `erf` one element at a time, 11× slower than PyTorch's. The linear layers and convolutions are as fast as PyTorch's or faster.
+- **Money** gets the same amounts as `decimal`, to the cent, but takes twice as long.

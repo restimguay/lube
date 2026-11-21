@@ -890,10 +890,13 @@ NATIVE(n_sum) {
         Value item = src->items[i];
         if (!IS_NUMERIC(item) && !IS_MONEY(item)) {
             Value e = lube_error(I, "sum() can only add numbers, found %s", a_type(item));
+            release(total);
             release(OBJ_VAL(src));
             return e;
         }
-        total = i == 0 ? item : lube_arith(I, T_PLUS, total, item);
+        Value next = i == 0 ? retain(item) : lube_arith(I, T_PLUS, total, item);
+        release(total);  /* (Money is an object: each total but the last goes) */
+        total = next;
         if (IS_ERR(total)) break;
     }
     release(OBJ_VAL(src));

@@ -1,0 +1,323 @@
+// soak.lube MODEL SECONDS TMPDIR [MODEL2] [ONLY]: every part of Lube, round after round, until SECONDS have
+// passed (tests/soak/run.sh runs it and watches its memory). Each round is seeded the same way, so its checksums
+// must be the same every time; a line per round:  R <round> <elapsed s> <ms of each workload...> chk=<checksums>
+import array as np
+import nn
+import learn
+import llm
+import math
+import cmath
+import random
+import statistics
+
+let MODEL = args[0]
+let SECONDS = Number(args[1])
+let TMP = args[2]
+var MODEL2 = ""
+if len(args) > 3 { MODEL2 = args[3] }
+var ONLY = ""  // (args[4]: the one workload to run, for finding a leak)
+if len(args) > 4 { ONLY = args[4] }
+
+fn fib(n) {
+  if n < 2 { return n }
+  return fib(n - 1) + fib(n - 2)
+}
+
+class Account {
+  var owner = ""
+  var balance = m(0)
+  var history = []
+  fn deposit(x) {
+    this.balance += x
+    this.history.push(x)
+  }
+}
+
+fn w_core() {
+  var acc = fib(23)
+  var words = []
+  for i in 0..20000 { words.push("w{i % 97}-{i % 13}") }
+  let sorted = sort(words)
+  var counts = {}
+  for w in words { counts[w] = get(counts, w, 0) + 1 }
+  acc += len(keys(counts)) + len(sorted[0])
+  var seen = Map
+  for i in 0..5000 { seen[[i % 50, i % 7]] = i }
+  acc += len(keys(seen))
+  var parts = []
+  for i in 0..5000 { parts.push(str(i)) }
+  let text = join(parts, ",")
+  acc += len(split(text, ",")) + len(upper(text)) + len(replace(text, "1", "one"))
+  let squares = map(list(0..20000), fn(x) => x * x)
+  acc += reduce(filter(squares, fn(x) => x % 3 == 0), fn(a, b) => a + b, 0) % 1000003
+  var accts = []
+  for i in 0..300 {
+    var a = Account()
+    a.owner = "o{i}"
+    a.deposit(m(i))
+    a.deposit(m(0.25))
+    accts.push(a)
+  }
+  acc += len(accts) + accts[299].balance.units
+  var errors = 0
+  for i in 0..2000 {
+    try {
+      let xs = [1, 2]
+      let x = xs[i + 5]
+    } catch e {
+      errors += 1
+    }
+  }
+  acc += errors
+  var b = Bytes()
+  for i in 0..2000 { push(&b, i % 256) }
+  acc += len(b) + len(b.hex())
+  return acc
+}
+
+fn w_money() {
+  var total = m(0)
+  for i in 0..20000 { total += m(i * 0.01 + 0.005) }
+  var shares = m(1000).split(7)
+  var alloc = m(999.99).allocate([1, 2, 3, 5, 8])
+  var text = ""
+  for i in 0..2000 { text = m(i * 1.37, "EUR").format({thousands: ".", decimal: ","}) }
+  var yen = m(0, "JPY")
+  for i in 0..2000 { yen += m(i, "USD").to("JPY", 151.234) }
+  var taxes = m(0)
+  for i in 0..10000 { taxes += m(19.99) * 0.0725 }
+  return total.units + len(shares) + alloc[4].units + len(text) + yen.units + taxes.units
+}
+
+fn w_numbers() {
+  random.seed(12345)
+  var acc = 0
+  for i in 0..20000 { acc += math.sin(i) * math.exp(-i / 20000) + math.hypot(i, 3) / 1e6 + math.lgamma(1 + i % 50) / 1e3 }
+  acc += math.fsum(map(list(0..10000), fn(i) => 1 / (i + 1)))
+  acc += math.comb(60, 30) % 1000 + math.factorial(20) % 997 + math.gcd(123456, 7890)
+  var z = cmath.Complex(0.5, 0.25)
+  for i in 0..5000 { z = cmath.exp(cmath.log(z + 1) / 2) }
+  acc += z.real + cmath.phase(z)
+  let data = map(list(0..5000), fn(i) => random.gauss(10, 3))
+  acc += statistics.mean(data) + statistics.stdev(data) + statistics.median(data)
+  acc += sum(statistics.quantiles(data, {n: 10}))
+  acc += statistics.correlation(data, map(data, fn(x) => x * 2 + random.random()))
+  acc += statistics.linear_regression(list(0..1000), map(list(0..1000), fn(x) => 3 * x + 1)).slope
+  let nd = statistics.NormalDist(100, 15)
+  acc += nd.cdf(130) + nd.inv_cdf(0.9) + (nd + 5).mean
+  acc += len(random.sample(list(0..1000), 100)) + len(random.shuffle(list(0..1000))) + random.randint(1, 100)
+  acc += sum(random.choices([1, 2, 3], {weights: [1, 2, 3], k: 100}))
+  return round(acc, 6)
+}
+
+fn w_array() {
+  np.seed(7)
+  var acc = 0
+  let a = np.rand(300, 300)
+  let b = np.rand(300, 300)
+  acc += (a @ b).sum()
+  let f = a.astype("float32")
+  acc += Number((f @ f.T).sum())
+  let big = np.randn(200000)
+  acc += np.sort(big)[1000] + np.argsort(big)[5] + np.median(big)
+  acc += (big[big > 0] * 2).sum() + np.exp(big[..1000]).sum() + np.sqrt(np.abs(big)).mean()
+  let m2 = big.reshape(400, 500)
+  acc += m2.sum(0).sum() + m2.T.mean(1).max() + m2[10..20, ..].std() + m2[[1, 5, 9]].sum()
+  acc += (m2 - m2.mean(0)).sum() + np.where(m2 > 1, m2, 0).sum()
+  let u = np.unique(np.randint(0, 100, [5000]))
+  acc += len(u)
+  let s = np.solve(a + np.eye(300) * 10, np.ones(300))
+  acc += s.sum() + np.det(np.eye(5) * 2) + np.norm(a)
+  let e = np.eigh(a + a.T)
+  acc += e[0].max()
+  let sv = np.svd(a[..50, ..50])
+  acc += sv[1].sum()
+  let st = np.concatenate([a[..5], b[..5]]).sum() + np.stack([a[0], b[0]]).sum()
+  acc += st
+  var c = np.zeros(1000)
+  for i in 0..1000 { c[i] = i }
+  c += 1
+  c *= 0.5
+  acc += c.sum()
+  np.save(TMP + "/a.npy", a)
+  acc += np.load(TMP + "/a.npy").sum()
+  np.save_safetensors(TMP + "/a.safetensors", {a: a, b: f})
+  acc += np.load_safetensors(TMP + "/a.safetensors").a.sum()
+  return round(acc, 4)
+}
+
+fn w_nn() {
+  nn.manual_seed(3)
+  np.seed(3)
+  let X = nn.randn([256, 32])
+  let Y = nn.tensor(np.randint(0, 4, [256]))
+  let model = nn.Sequential([nn.Linear(32, 64), nn.ReLU(), nn.Linear(64, 64), nn.GELU(), nn.Linear(64, 4)])
+  let opt = nn.Adam(model.parameters(), {lr: 0.01})
+  var loss = 0
+  for step in 0..150 {
+    opt.zero_grad()
+    let l = nn.cross_entropy(model.forward(X), Y)
+    l.backward()
+    opt.step()
+    loss = l.item()
+  }
+  let conv = nn.Sequential([nn.Conv2d(1, 4, 3, {padding: 1}), nn.ReLU()])
+  let sgd = nn.SGD(conv.parameters(), {lr: 0.01, momentum: 0.9})
+  let img = nn.randn([8, 1, 16, 16])
+  for step in 0..10 {
+    sgd.zero_grad()
+    let out = nn.max_pool2d(conv.forward(img), 2)
+    let l = out.mean()
+    l.backward()
+    sgd.step()
+  }
+  let x = nn.tensor([1, 2, 3], {requires_grad: true})
+  let y = (nn.softmax(x * x, 0) * nn.tensor([1, 0, 0])).sum()
+  y.backward()
+  let emb = nn.Embedding(50, 8)
+  let ln = nn.LayerNorm(8)
+  let z = ln.forward(emb.forward(nn.tensor([1, 2, 3], {dtype: "int64"}))).sum()
+  nn.save(TMP + "/model.safetensors", model.state_dict())
+  let back = nn.load(TMP + "/model.safetensors")
+  model.load_state_dict(back)
+  let pred = nn.no_grad(fn() => model.forward(X).argmax(1))
+  return round(loss, 4) + round(Number(x.grad.sum()), 6) + round(z.item(), 4) + Number(pred.sum())
+}
+
+fn w_learn() {
+  np.seed(11)
+  let data = learn.make_classification({n_samples: 2000, n_features: 12, n_informative: 6, n_classes: 3, random_state: 1})
+  let X = data[0]
+  let y = data[1]
+  let sp = learn.train_test_split(X, y, {test_size: 0.25, random_state: 0})
+  var acc = 0
+  let forest = learn.RandomForestClassifier({n_estimators: 40, random_state: 0}).fit(sp[0], sp[2])
+  acc += forest.score(sp[1], sp[3]) + forest.feature_importances_.sum()
+  let scaler = learn.StandardScaler().fit(sp[0])
+  let logit = learn.LogisticRegression({max_iter: 200}).fit(scaler.transform(sp[0]), sp[2])
+  acc += logit.score(scaler.transform(sp[1]), sp[3])
+  acc += learn.KNeighborsClassifier(5).fit(sp[0], sp[2]).score(sp[1], sp[3])
+  let km = learn.KMeans({n_clusters: 3, random_state: 0}).fit(X)
+  acc += round(km.inertia_, 2)
+  acc += learn.PCA(3).fit(X).explained_variance_ratio_.sum()
+  acc += learn.DecisionTreeRegressor({max_depth: 6}).fit(X, y).score(X, y)
+  acc += learn.Ridge(0.5).fit(X, y).score(X, y) + learn.Lasso({alpha: 0.01}).fit(X, y).score(X, y)
+  acc += learn.GaussianNB().fit(X, y).score(X, y)
+  acc += learn.cross_val_score(learn.GaussianNB(), X, y).sum()
+  acc += learn.f1_score(sp[3], forest.predict(sp[1]), {average: "macro"})
+  acc += len(learn.classification_report(sp[3], forest.predict(sp[1])))
+  acc += learn.confusion_matrix(sp[3], logit.predict(scaler.transform(sp[1]))).sum()
+  let blobs = learn.make_blobs({n_samples: 500, random_state: 2})
+  acc += learn.DBSCAN({eps: 0.8}).fit_predict(blobs[0]).sum()
+  acc += learn.silhouette_score(blobs[0], blobs[1])
+  return round(acc, 4)
+}
+
+fn w_llm() {
+  let model = llm.load(MODEL)
+  let text = model.generate("Once upon a time", {max_tokens: 48, temperature: 0})
+  let ids = model.tokenize(text)
+  let back = model.detokenize(ids)
+  let logits = model.forward(model.tokenize("The cat sat"))
+  let sampled = model.generate("The little dog", {max_tokens: 24, temperature: 0.8, seed: 42})
+  model.reset()
+  var acc = len(text) + len(ids) + len(back) + logits.argmax() + len(sampled)
+  if MODEL2 != "" {
+    let m2 = llm.load(MODEL2)
+    acc += len(m2.generate("The capital of France is", {max_tokens: 12, temperature: 0}))
+  }
+  return acc
+}
+
+fn iso_work(n) {
+  let a = np.arange(n).reshape(10, n / 10)
+  let t = nn.tensor([1, 2, 3], {requires_grad: true})
+  let l = (t * t).sum()
+  l.backward()
+  return a.sum(0).sum() + Number(m(n) * 1.5) + Number(t.grad.sum()) + statistics.mean([1, 2, n])
+}
+
+fn iso_chan(jobs, results) {
+  for x in jobs { results.send(x * 2) }
+}
+
+fn w_isolates() {
+  var acc = 0
+  var pool = []
+  for i in 0..8 { pool.push(spawn(iso_work, 1000 + i * 10)) }
+  for p in pool { acc += p.join() }
+  let jobs = channel()
+  let results = channel()
+  let workers = [spawn(iso_chan, jobs, results), spawn(iso_chan, jobs, results)]
+  for i in 0..2000 { jobs.send(m(i)) }
+  jobs.close()
+  for w in workers { w.join() }
+  acc += sum(results.take(2000)).units
+  acc += sum(parallel_map(map(list(0..40), fn(i) => 15 + i % 6), fib))
+  return acc
+}
+
+fn fails(f) {
+  try {
+    f()
+    return 0
+  } catch e {
+    return 1
+  }
+}
+
+fn w_errors() {
+  var n = 0
+  let a = np.zeros(2, 3)
+  let net = nn.Linear(3, 2)
+  for i in 0..200 {
+    n += fails(fn() => a @ a)
+    n += fails(fn() => a.reshape(4, 4))
+    n += fails(fn() => a[5, 0])
+    n += fails(fn() => np.array([[1, 2], [3]]))
+    n += fails(fn() => np.inv(np.zeros(3, 3)))
+    n += fails(fn() => learn.Ridge().predict(a))
+    n += fails(fn() => learn.Ridge({alfa: 1}))
+    n += fails(fn() => learn.KMeans(3).fit(np.zeros(2, 2)))
+    n += fails(fn() => net.forward(nn.zeros([2, 5])))
+    n += fails(fn() => nn.cross_entropy(nn.zeros([2, 3]), nn.tensor([5, 0])))
+    n += fails(fn() => llm.load(TMP + "/missing.gguf"))
+    n += fails(fn() => m(1) + m(1, "EUR"))
+    n += fails(fn() => m("abc"))
+    n += fails(fn() => statistics.variance([1]))
+    n += fails(fn() => random.choice([]))
+    n += fails(fn() => math.sqrt(-1))
+    n += fails(fn() => cmath.Complex("x"))
+  }
+  return n
+}
+
+fn w_tiny() {
+  // a thousand of the smallest operations: a leak of a few bytes each shows up in an hour
+  var acc = 0
+  let small = np.array([1, 2, 3])
+  for i in 0..1000 {
+    acc += (small + i)[0] + small.sum() + nn.tensor([i]).item() + m(i).units
+    acc += statistics.mean([i, 1]) + math.floor(i / 3) + cmath.Complex(i, 1).imag
+  }
+  return acc
+}
+
+let NAMES = ["core", "money", "numbers", "array", "nn", "learn", "llm", "isolates", "errors", "tiny"]
+let WORK = [w_core, w_money, w_numbers, w_array, w_nn, w_learn, w_llm, w_isolates, w_errors, w_tiny]
+print("H round elapsed " + join(NAMES, " "))
+let start = now()
+var round_no = 0
+while round_no == 0 || now() - start < SECONDS {
+  round_no += 1
+  var times = []
+  var sums = []
+  for i in 0..len(WORK) {
+    if ONLY != "" && ONLY != NAMES[i] { continue }
+    let t0 = now()
+    let r = WORK[i]()
+    times.push(fixed((now() - t0) * 1000, 1))
+    sums.push(str(r))
+  }
+  print("R {round_no} {fixed(now() - start, 1)} " + join(times, " ") + " chk=" + join(sums, "|"))
+}
