@@ -897,7 +897,7 @@ static void svd_of(const double *a, int64_t m, int64_t n, int full, int uv, Svd 
     double *w = (double *)alloc_or_die(sizeof(double) * (size_t)(rows * cols));
     double *v = (double *)alloc_or_die(sizeof(double) * (size_t)(cols * cols));  /* (V transposed: by rows) */
     if (tall) transpose_d(a, m, n, w);  /* (by columns) */
-    else if (m * n) memcpy(w, a, sizeof(double) * (size_t)(m * n));  /* (a's transpose, by columns: a itself) */
+    else if (m > 0 && n > 0) memcpy(w, a, sizeof(double) * (size_t)(m * n));  /* (a's transpose, by columns: a itself) */
     jacobi_svd(w, rows, cols, v);
     double *s = (double *)alloc_or_die(sizeof(double) * (size_t)k);
     int64_t *order = (int64_t *)alloc_or_die(sizeof(int64_t) * (size_t)k);

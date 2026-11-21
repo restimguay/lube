@@ -1906,9 +1906,8 @@ FN(f_unique) {
         want_counts = opt_bool(vm, opts, "return_counts", 0);
     int64_t n = a->size;
     int z = ITEMSIZE[a->dtype];
-    Array *flat;  /* (C-contiguous: read without working out each position) */
+    Array *flat = a;  /* (C-contiguous: read without working out each position) */
     LubeValue kflat = is_contiguous(a) ? lube->retain(keep) : arr_copy(vm, a, -1, &flat);
-    if (is_contiguous(a)) flat = a;
     uint64_t *key = (uint64_t *)malloc(sizeof(uint64_t) * (size_t)(2 * n + 1));
     int64_t *idx = (int64_t *)malloc(sizeof(int64_t) * (size_t)(2 * n + 1)), *tmp = idx + n;
     if (!key || !idx) abort();  /* LCOV_EXCL_LINE: out of memory */
