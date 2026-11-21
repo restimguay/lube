@@ -20,13 +20,14 @@ size_t lube_max_bytes = LUBE_DEFAULT_MAX_BYTES;
 
 /* Small objects (up to POOL_CLASSES * 16 bytes) come from free lists of
  * this thread, one per size in steps of 16 bytes, and go back to them:
- * quicker than malloc and free, for the many small lists and strings
- * programs make. (Built with LUBE_CHECK_LEAKS, every object has a malloc
+ * quicker than malloc and free, for the many small lists, strings and
+ * objects programs make (an object of up to 8 fields has its entries and
+ * their index here). (Built with LUBE_CHECK_LEAKS, every object has a malloc
  * of its own instead, for AddressSanitizer to watch.) */
 #ifdef LUBE_CHECK_LEAKS
 #define POOL_CLASSES 0
 #else
-#define POOL_CLASSES 8
+#define POOL_CLASSES 20
 #endif
 static LUBE_THREAD_LOCAL void *pool[POOL_CLASSES + 1];  /* each free block holds the next */
 static LUBE_THREAD_LOCAL void *slabs;  /* the memory they come from, 32 KB at a time (each holds the next first) */
@@ -164,8 +165,8 @@ void obj_destroy(Obj *first) {
                 drop(&fl, m->entries[i].key);
                 drop(&fl, m->entries[i].value);
             }
-            free(m->entries);
-            free(m->index);
+            lube_block_free(m->entries, m->entry_cap * sizeof(MapEntry));
+            lube_block_free(m->index, m->index_cap * sizeof(int32_t));
         } else if (o->type == OBJ_FUNCTION) {
             ObjFunction *f = (ObjFunction *)o;
             for (int i = 0; i < f->ncaptures; i++) drop(&fl, f->captures[i]);

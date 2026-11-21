@@ -1449,10 +1449,17 @@ FN(m_cumprod) { return cum_call(vm, "cumprod", 1, argv[0], argc, argv); }
 FN(f_count_nonzero) {
     ARRAY_ARG(a, keep, 0);
     if (argc < 2 && is_contiguous(a)) {  /* (of everything, in a row: counted where it is) */
-        int64_t c = 0, n = a->size;
+        int64_t c = 0, n = a->size, i = 0;
+        if (ITEMSIZE[a->dtype] == 1) {  /* (bytes: 240 at a time, counted in a byte, sixteen or more side by side) */
+            for (; i + 240 <= n; i += 240) {
+                unsigned char k = 0;
+                for (int j = 0; j < 240; j++) k += a->data[i + j] != 0;
+                c += k;
+            }
+        }
         BY_ANY(a->dtype, {
             const T *x = (const T *)a->data;
-            for (int64_t i = 0; i < n; i++) c += x[i] != 0;
+            for (; i < n; i++) c += x[i] != 0;
         });
         lube->release(keep);
         return lube->number_value((double)c);

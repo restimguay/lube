@@ -318,7 +318,7 @@ typedef struct {
 static void sums_start(Sums *s, int B) {
     s->B = B;
     s->one[0] = s->one[1] = vdupq_n_f32(0);
-    for (int b = 0; b < B; b++) s->many[b][0] = s->many[b][1] = vdupq_n_f32(0);
+    for (int b = 0; B > 1 && b < B; b++) s->many[b][0] = s->many[b][1] = vdupq_n_f32(0);  /* (one alone is in `one`) */
 }
 
 static void sums_end(const Sums *s, float *out) {
@@ -335,26 +335,30 @@ typedef struct {
 } Group32;
 
 static void group32(int t, const unsigned char *row, int64_t g, int64_t nb, Group32 *G) {
-    unsigned char pad[4 * 34];
-    int size = TYPES[t].size;
+    int size = TYPES[t].size, has_min = t == T_Q4_1 || t == T_Q5_1;
     const unsigned char *p = row + g * size;
-    if (g + 4 > nb) {  /* (the end: padded with blocks of zeros, which the vector's zeros multiply) */
-        memset(pad, 0, sizeof pad);
-        memcpy(pad, p, (size_t)((nb - g) * size));
-        p = pad;
-    }
     uint16x4_t dh = vdup_n_u16(0), mh = vdup_n_u16(0);
-    for (int k = 0; k < 4; k++) unpack32(t, p + k * size, &G->w[2 * k], &G->w[2 * k + 1]);
-    dh = vld1_lane_u16((const uint16_t *)(const void *)p, dh, 0);
-    dh = vld1_lane_u16((const uint16_t *)(const void *)(p + size), dh, 1);
-    dh = vld1_lane_u16((const uint16_t *)(const void *)(p + 2 * size), dh, 2);
-    dh = vld1_lane_u16((const uint16_t *)(const void *)(p + 3 * size), dh, 3);
-    if (t == T_Q4_1 || t == T_Q5_1) {
-        mh = vld1_lane_u16((const uint16_t *)(const void *)(p + 2), mh, 0);
-        mh = vld1_lane_u16((const uint16_t *)(const void *)(p + size + 2), mh, 1);
-        mh = vld1_lane_u16((const uint16_t *)(const void *)(p + 2 * size + 2), mh, 2);
-        mh = vld1_lane_u16((const uint16_t *)(const void *)(p + 3 * size + 2), mh, 3);
+    /* block k of the four: its numbers, its scale and its min (a lane each) */
+#define BLOCK(k)                                                                                               \
+    do {                                                                                                       \
+        unpack32(t, p + (k) * size, &G->w[2 * (k)], &G->w[2 * (k) + 1]);                                       \
+        dh = vld1_lane_u16((const uint16_t *)(const void *)(p + (k) * size), dh, k);                           \
+        if (has_min) mh = vld1_lane_u16((const uint16_t *)(const void *)(p + (k) * size + 2), mh, k);          \
+    } while (0)
+    BLOCK(0);
+    if (g + 4 <= nb) {
+        BLOCK(1);
+        BLOCK(2);
+        BLOCK(3);
+    } else {  /* (the row's end: the blocks that are not there are zeros, numbers and scales, as the vector's
+                 are; read where they are, the last ones are not copied to a padded place first) */
+        if (g + 1 < nb) BLOCK(1);
+        else G->w[2] = G->w[3] = vdupq_n_s8(0);
+        if (g + 2 < nb) BLOCK(2);
+        else G->w[4] = G->w[5] = vdupq_n_s8(0);
+        G->w[6] = G->w[7] = vdupq_n_s8(0);
     }
+#undef BLOCK
     G->d = vcvt_f32_f16(vreinterpret_f16_u16(dh));
     G->m = vcvt_f32_f16(vreinterpret_f16_u16(mh));
 }
@@ -612,21 +616,24 @@ static void unpack32(int t, const unsigned char *p, __m128i *lo, __m128i *hi) {
 
 static void dot_q32(int t, const unsigned char *row, int64_t nb, Act a, int64_t qs, int64_t ds, int B, float *out) {
     __m128 acc[MAX_BATCH][2];
-    unsigned char pad[4 * 34];
     int size = TYPES[t].size, has_min = t == T_Q4_1 || t == T_Q5_1;
     for (int b = 0; b < B; b++) acc[b][0] = acc[b][1] = _mm_setzero_ps();
     for (int64_t g = 0; g < nb; g += 4) {
         const unsigned char *p = row + g * size;
-        int par = (int)(g >> 2) & 1;
-        if (g + 4 > nb) {  /* (the end: padded with blocks of zeros, which the vector's zeros multiply) */
-            memset(pad, 0, sizeof pad);
-            memcpy(pad, p, (size_t)((nb - g) * size));
-            p = pad;
-        }
+        int par = (int)(g >> 2) & 1, have = nb - g < 4 ? (int)(nb - g) : 4;
         __m128i w[8];
-        for (int k = 0; k < 4; k++) unpack32(t, p + k * size, &w[2 * k], &w[2 * k + 1]);
-        __m128 dv = _mm_set_ps(half(p + 3 * size), half(p + 2 * size), half(p + size), half(p));
-        __m128 mv = has_min ? _mm_set_ps(half(p + 3 * size + 2), half(p + 2 * size + 2), half(p + size + 2), half(p + 2)) : dv;
+        float d4[4] = {0, 0, 0, 0}, m4[4] = {0, 0, 0, 0};
+        /* (the row's end: the blocks that are not there are zeros, numbers and scales, as the vector's are) */
+        for (int k = 0; k < 4; k++) {
+            if (k < have) {
+                unpack32(t, p + k * size, &w[2 * k], &w[2 * k + 1]);
+                d4[k] = half(p + k * size);
+                if (has_min) m4[k] = half(p + k * size + 2);
+            } else {
+                w[2 * k] = w[2 * k + 1] = _mm_setzero_si128();
+            }
+        }
+        __m128 dv = _mm_loadu_ps(d4), mv = _mm_loadu_ps(m4);
         for (int b = 0; b < B; b++) {
             const int8_t *q = a.q + b * qs + 32 * g;
             __m128i is = sum4(dot32(w[0], w[1], q), dot32(w[2], w[3], q + 32), dot32(w[4], w[5], q + 64), dot32(w[6], w[7], q + 96));

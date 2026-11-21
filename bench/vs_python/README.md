@@ -56,4 +56,7 @@ Things to know when reading it:
 - Python is written as Python is written: comprehensions for `map` and
   `filter`, `key=` for sorting.
 - The machine should be quiet: other programs make both sides slower, and
-  multithreaded code (llama.cpp's above all) much slower.
+  multithreaded code (llama.cpp's above all) much slower. When it cannot be,
+  count instructions instead of time for single-threaded code:
+  `/usr/bin/time -l ./lube x.lube` (macOS) or `perf stat -e instructions`
+  (Linux) gives the same number however busy the machine is.

@@ -80,3 +80,18 @@ var keyed = Map[Object, String]
 try { keyed[keyed] = "plain" } catch e { print(e) }
 keyed[keyed] = String("y")
 print(keyed)
+
+// nan is not a key: it is not equal to itself
+let not_a_number = INF - INF
+var by_number = Map()
+try { by_number[not_a_number] = 1 } catch e { print(e) }
+var plain_object = {}
+try { plain_object[not_a_number] = 1 } catch e { print(e) }
+try { plain_object[not_a_number] += 1 } catch e { print(e) }
+by_number[1] = "one"
+by_number[-0.0] = "zero"
+by_number[0] = "the same zero"
+by_number[int32(1)] = "the same one"
+by_number[1e300] = "big"
+by_number[-7.25] = "a fraction"
+print(by_number, plain_object, len(by_number), by_number[1.0], by_number[uint8(0)], get(by_number, 2, "none"))

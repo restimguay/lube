@@ -27,6 +27,7 @@ make check      # runs it again with memory sanitizers and a leak check
 make coverage   # measures test coverage (needs clang's llvm-cov); fails below 100%
 make tsan       # runs the suite with ThreadSanitizer (data races between isolates)
 tests/soak/run.sh   # runs everything for an hour, watching memory and speed (see Testing)
+make pgo        # builds lube twice, the second time laid out by how the first one ran (needs clang): 5-15% faster
 make install    # copies lube to /usr/local/bin and its plugins to /usr/local/lib/lube (PREFIX=...)
 ```
 
@@ -468,7 +469,7 @@ print(user.name, user["email"], get(user, "phone", "none"))   # user.phone alone
 
 Objects remember insertion order. Keys can be `str`, numbers or booleans. Reading a key that isn't there is an error, so use `has(obj, key)` or `get(obj, key, default)` when it might be missing.
 
-A **map** is like an object, but its keys can be any value, including lists and objects, compared by contents. `Map[K, V]` makes one that checks its key and value types:
+A **map** is like an object, but its keys can be any value, including lists and objects, compared by contents (all but `nan`, which is not equal to itself: storing under it is an error). `Map[K, V]` makes one that checks its key and value types:
 
 ```lube
 var scores = Map[str, Number]
@@ -1412,7 +1413,7 @@ lube_gfx_post(&pad);
 source ──► lexer ──► tokens ──► parser ──► AST ──► resolver ──► compiler ──► bytecode ──► VM
 ```
 
-Programs are compiled to bytecode every time they run, in memory: there is no build step. The VM runs a call to a Lube function in the same loop as its caller, with a frame of its own, so recursion doesn't use the C stack at all: a program can recurse 100,000 calls deep on a phone's small thread stack, and runaway recursion is a clean error. Next to the tree-walking interpreter it replaced, it runs function calls about 1.8× faster and loops about 5× faster.
+Programs are compiled to bytecode every time they run, in memory: there is no build step. The VM runs a call to a Lube function in the same loop as its caller, with a frame of its own, so recursion doesn't use the C stack at all: a program can recurse 100,000 calls deep on a phone's small thread stack, and runaway recursion is a clean error. Next to the tree-walking interpreter it replaced, it runs function calls about 1.8× faster and loops about 5× faster. The commonest operations have shortcuts that do what the general way does: `xs.push(v)` appends with no call when `v` runs none of the program's code, a store into an object or a map finds its key in one look, `==` on two strs compares them where they are, a package's function is called straight from the VM's loop, and a constructor or a callback with plain parameters starts without the checks it doesn't need. `tests/shortcuts.lube` prints the same with and without them.
 
 | file | role |
 |---|---|
@@ -1421,7 +1422,7 @@ Programs are compiled to bytecode every time they run, in memory: there is no bu
 | `src/resolver.c` | Runs before execution. Gives every local a slot in its function's frame and works out what each closure must copy. Enforces `let`/`var` and the closure rules, and catches misplaced `return` or `break`. |
 | `src/compile.c` | Turns the resolved tree into bytecode: 32-bit instruction words, a source line for each, constants, and descriptors for calls, places, classes and `try` blocks. |
 | `src/interp.c` | The VM and the runtime around it. Errors are ordinary return values, so every path releases what it owns. Also handles copy-on-write updates, lending with `&`, `on` blocks, imports and hot reload. |
-| `src/value.c` | Text, lists (including typed lists), objects and maps (insertion-ordered hash maps), class instances, ranges, type names, equality and printing. |
+| `src/value.c` | Text, lists (including typed lists), objects and maps (insertion-ordered hash maps, probed as Python's dicts are: whole-number keys hash to themselves, so keys 0, 1, 2... sit in a row), class instances, ranges, type names, equality and printing. |
 | `src/integer.c` | Sized integers: conversions, overflow-checked arithmetic, exact comparisons across number types. |
 | `src/memory.c` | Owner counts and freeing. Freeing never recurses, so even a list nested 100,000 levels deep is freed safely. |
 | `src/builtins.c` | The standard library. |
@@ -1513,28 +1514,54 @@ Before that work, Python won three of these: `array` (7.9× faster than Lube, al
 
 ### Against Python, case by case
 
-`bench/vs_python` (see `bench/README.md`) times 1,100 cases in each language, every function at several sizes: the language, Money, `math`, `cmath`, `statistics` and `random`, and the plugins against NumPy, `numpy.linalg`, PyTorch, scikit-learn and llama-cpp-python. Python/Lube for each area, as the geometric mean of its cases (above 1, Lube is faster), on the M5 under the same load, before and after the speed work:
+`bench/vs_python` (see `bench/README.md`) times 1,100 cases in each language, every function at several sizes: the language, Money, `math`, `cmath`, `statistics` and `random`, and the plugins against NumPy, `numpy.linalg`, PyTorch, scikit-learn and llama-cpp-python. Python/Lube for each area, as the geometric mean of its cases (above 1, Lube is faster), on the M5: before the speed work, after its first pass (the libraries' kernels), and after its second (the interpreter, and what was left around the kernels):
 
-| area | cases | before | after | where Python is still faster |
-|---|---|---|---|---|
-| core language | 114 | 1.10 | 1.07 | 64 |
-| Money | 40 | 0.90 | 2.98 | 0 |
-| `math`, `cmath`, `statistics`, `random` | 139 | 1.16 | 1.72 | 67 |
-| `array` | 550 | 0.95 | 1.52 | 148 |
-| linear algebra | 76 (68 before: 8 took too long) | 0.39 | 1.63 | 7 |
-| `nn` | 54 | 0.54 | 0.99 | 31 |
-| `learn` | 90 | 5.27 | 6.51 | 6 |
-| `llm` | 17 | 3.12 | 4.58 | 2 |
-| isolates | 20 | 3.20 | 5.26 | 4 |
-| **all** | **1,100** | **1.09** | **1.76** | **329 (from 514)** |
+| area | cases | before | first pass | second pass | where Python is still faster |
+|---|---|---|---|---|---|
+| core language | 114 | 1.10 | 1.07 | 1.52 | 37 |
+| Money | 40 | 0.90 | 2.98 | 2.73 | 0 |
+| `math`, `cmath`, `statistics`, `random` | 139 | 1.16 | 1.72 | 2.37 | 52 |
+| `array` | 550 | 0.95 | 1.52 | 1.90 | 71 |
+| linear algebra | 76 (68 before: 8 took too long) | 0.39 | 1.63 | (not measured again) | 7 |
+| `nn` | 54 | 0.54 | 0.99 | 1.14 | 25 |
+| `learn` | 90 | 5.27 | 6.51 | (not measured again) | 6 |
+| `llm` | 17 | 3.12 | 4.58 | (not measured again) | 2 |
+| isolates | 20 | 3.20 | 5.26 | (not measured again) | 4 |
+| **all** | **1,100** | **1.09** | **1.76** | **2.13** | **204 (from 514, then 329)** |
 
-What changed: the decompositions call the system's LAPACK (as NumPy does), with a faster method of Lube's own where there is none; `median` and the percentiles select instead of sorting; masks, `unique`, reductions along an axis, `where`, `roll`, `repeat`, `nonzero` and indexing by positions got loops of their own; float32's activations and softmax in `nn` vectorize; Money converts a Number to cents without formatting it as text; the threads that `array`, `nn`, `learn` and `llm` share no longer wait for each other; and a package's function is found once per call site, not by name at each call.
+(The second pass changed nothing in linear algebra, `learn` or isolates, and the machine was too busy with other work to time their threads again: their first-pass numbers stand, in the total too. In `llm` it changed generating, timed apart below.)
+
+What the first pass changed: the decompositions call the system's LAPACK (as NumPy does), with a faster method of Lube's own where there is none; `median` and the percentiles select instead of sorting; masks, `unique`, reductions along an axis, `where`, `roll`, `repeat`, `nonzero` and indexing by positions got loops of their own; float32's activations and softmax in `nn` vectorize; Money converts a Number to cents without formatting it as text; the threads that `array`, `nn`, `learn` and `llm` share no longer wait for each other; and a package's function is found once per call site, not by name at each call.
+
+What the second pass changed, each measured in instructions per operation (which other work on the machine does not change) against CPython 3.15's:
+
+| operation | before | now | CPython |
+|---|---|---|---|
+| `xs.push(i)` | 642 | 279 | 445 |
+| `m[i] = i`, 1,000 whole-number keys | 1,125 | 446 | 384 |
+| `for w in words { if w == "..." { ... } }` | 419 | 195 | 161 |
+| `Point(i, 2)` | 2,932 | 1,866 | 1,898 |
+| `{a: i, b: 2}` | 2,030 | 1,264 | 1,673 |
+| `math.sqrt(i)` | 959 | 652 | 838 |
+| an index error, caught | 2,579 | 1,686 | 2,089 |
+
+- `xs.push(v)` and `push(&xs, v)` append with no call when `v` runs none of the program's code (two instructions of the VM, with the call as before behind them for everything else).
+- A store into an object or a map looks its key up once, not three times; maps are probed as Python's dicts are, with whole numbers hashing to themselves, so keys 0, 1, 2... fill the table in order; and the entries of small objects come from the interpreter's own free lists, not `malloc`.
+- `==` on two strs compares them where they are, and a str written out is read where it is, as a Number is; `for x in xs` over a List has a path of its own.
+- A package's function is called from the VM's loop; a constructor, and a function given to `map`, `filter` or `sort`, starts without the checks its plain parameters don't need.
+- An error's message is put together without `printf`, which cost more than the rest of raising it.
+- In `array`: `count_nonzero` and `all` of a mask go through 240 and 256 bytes at a time (`count_nonzero` 14 times as fast, 3 times NumPy's; `all` twice as fast), `x[positions]` uses an int64 Array of positions as it is (1.8 times as fast), and `max` and `min` along an axis compare twice an element, not three times (1.5 times). In `nn`: softmax's `exp` loop vectorizes (its rows 2.8 times as fast). None of these is written with intrinsics: where a loop already vectorized, writing it by hand gained 7% at most.
+- In `llm`: a row's last blocks are read where they are (SmolLM2's matrices are 576 wide, so every row has some), and one vector's sums are no longer cleared a batch at a time: SmolLM2-135M generates 326 tokens a second on one thread, from 250 (llama.cpp: 369), and 357 on all of them, from 267 (llama.cpp: 357).
+- `make pgo` builds `lube` with clang's profile-guided optimization: another 5–15% fewer instructions.
+
+`tests/shortcuts.lube` holds each of the interpreter's shortcuts to what the general way gives: its expected output was printed by the interpreter before them.
 
 Where Python is still faster, the cause is known:
 
-- **The interpreter's own work.** Inserting into maps, appending to lists, comparing strings and making objects take 1.5–3 times as long as in CPython 3.15, whose interpreter specializes each operation as it runs. A `sort` with a comparator calls it for every pair it compares: a key function (`sort(xs, fn(x) => x.age)`) is called once per item, and is 10 times as fast.
-- **Calls that make an object each time:** `math.isclose(a, b, {rel_tol: ...})` builds its options, and each `cmath` result is a new Complex (0.3–0.6×).
-- **`nn` on small batches:** softmax and GELU on a 64×1024 batch (0.1–0.4×), where the threads' start-up costs more than the work; on big ones Lube is as fast or faster. Loading a big state dict (0.2×): PyTorch's safetensors maps the file, where Lube reads it.
-- **`llm`:** reading a prompt is 0.35–0.8× llama.cpp's, generating 0.55–0.7×, because Lube promises the same logits on every system and for a prompt read at once or a token at a time, which rules out llama.cpp's reordered matrix kernels for batches.
+- **`map` and `filter` with a function** (0.6–0.8×): each call of it enters the VM anew, where a Python comprehension runs in place. A loop that pushes is as fast as Python's.
+- **Methods that change `this`, and text** (`split`, `in`): 0.6–0.9×.
+- **Calls that make an object each time:** `math.isclose(a, b, {rel_tol: ...})` builds its options, and each `cmath` result is a new Complex (0.4–0.65×). `math.comb` of large numbers and `math.dist` of long lists (0.3–0.6×) read their arguments one by one.
+- **`nn` on small batches:** GELU on a 64×1024 batch (0.4×: its float32 kernel does without fused multiply-adds, so that every system gives the same bits) and softmax (0.6×, from 0.1×); on big ones Lube is as fast or faster. Loading a big state dict (0.2×): PyTorch's safetensors maps the file, where Lube reads it.
+- **`llm`:** reading a prompt (0.55× llama.cpp's for 128 tokens through SmolLM2, timed one after the other: the table's cases were timed while llama.cpp's threads had other work to wait for), because Lube promises the same logits on every system and for a prompt read at once or a token at a time, which rules out llama.cpp's reordered matrix kernels for batches.
 - **Starting an isolate** (0.2× a Python thread): each one is a fresh interpreter that runs the program's declarations again; a pool of them (`parallel_map`) is 3–5 times as fast as Python's.
 - **`from_bytes`:** NumPy's `frombuffer` does not copy, and Lube's Array owns its memory.

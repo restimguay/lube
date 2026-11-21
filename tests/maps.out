@@ -30,3 +30,7 @@ this Map[str, String] can only hold String values, not a str
 {} 0
 this Map[Object, String] can only hold String values, not a str
 {{}: String("y")}
+nan cannot be a key: it is not equal to itself, so it would never be found again
+nan cannot be a key: it is not equal to itself, so it would never be found again
+nan cannot be a key: it is not equal to itself, so it would never be found again
+{1: "the same one", 0: "the same zero", 1e+300: "big", -7.25: "a fraction"} {} 4 the same one the same zero none

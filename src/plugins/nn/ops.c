@@ -464,16 +464,11 @@ static void softmax_rows_f32(void *ctx, int64_t from, int64_t to) {
         for (int k = 0; k < 8; k++) m = mk[k] > m ? mk[k] : m;
         for (; i < n; i++) m = row[i] > m ? row[i] : m;
         double sk[8] = {0}, sum = 0;
+        for (i = 0; i < n; i++) orow[i] = vm_exp(row[i] - m);  /* (alone: with the sums of doubles below in its
+                                                                  loop, it would not vectorize) */
         for (i = 0; i + 8 <= n; i += 8)
-            for (int k = 0; k < 8; k++) {
-                float e = vm_exp(row[i + k] - m);
-                orow[i + k] = e;
-                sk[k] += e;
-            }
-        for (; i < n; i++) {
-            orow[i] = vm_exp(row[i] - m);
-            sum += orow[i];
-        }
+            for (int k = 0; k < 8; k++) sk[k] += orow[i + k];
+        for (; i < n; i++) sum += orow[i];
         sum += ((sk[0] + sk[1]) + (sk[2] + sk[3])) + ((sk[4] + sk[5]) + (sk[6] + sk[7]));
         if (j->logs) {
             double lse = m + log(sum);

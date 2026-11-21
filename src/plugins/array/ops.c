@@ -822,12 +822,19 @@ static void reduce_one(int op, const unsigned char *p, int dtype, int64_t n, int
     }
     default: {  /* any, all: in blocks, stopping at the first that settles it */
         int any = op == ARR_ANY, r = !any;
-        if (z == 1) {  /* (bytes: all is no 0 among them, any a word of them that is not 0) */
+        if (z == 1) {  /* (bytes: all is no 0 among them, 256 looked at together; any a word of them that is not 0) */
+            int64_t i = 0;
             if (!any) {
-                *out = memchr(p, 0, (size_t)n) == NULL;
+                int zero = 0;
+                for (; i + 256 <= n && !zero; i += 256) {
+                    unsigned char some = 0;
+                    for (int k = 0; k < 256; k++) some |= p[i + k] == 0;
+                    zero = some;
+                }
+                for (; i < n && !zero; i++) zero = p[i] == 0;
+                *out = !zero;
                 break;
             }
-            int64_t i = 0;
             uint64_t w = 0;
             for (; i + 8 <= n && !w; i += 8) {
                 uint64_t v;
@@ -966,8 +973,9 @@ static void reduce_cols(void *ctx, int64_t from, int64_t to) {
                     const double *xr = x;  /* (float64: straight from the row) */
                     if (dt == ARR_F64) xr = (const double *)(base + k * rowstep);
                     else load_row(x, base + k * rowstep, dt, m);
-                    if (want_max) RC_PICK((acc[i] == acc[i]) & ((xr[i] != xr[i]) | (xr[i] > acc[i])), acc, xr)
-                    else RC_PICK((acc[i] == acc[i]) & ((xr[i] != xr[i]) | (xr[i] < acc[i])), acc, xr)
+                    /* (x replaces a when a is not NaN and x is NaN or beyond it: "not (x <= a)" says both) */
+                    if (want_max) RC_PICK((acc[i] == acc[i]) & !(xr[i] <= acc[i]), acc, xr)
+                    else RC_PICK((acc[i] == acc[i]) & !(xr[i] >= acc[i]), acc, xr)
                 }
             } else {
                 int64_t *b = (int64_t *)ua;

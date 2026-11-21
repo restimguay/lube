@@ -69,8 +69,10 @@ static int64_t position(LubeVM *vm, double d, int64_t n, int axis, LubeValue *er
     return (int64_t)k;
 }
 
-/* Reads the indexes (argv[1..argc-1]) against a. 0 after an error (in *err). */
-static int index_parse(LubeVM *vm, const Array *a, int argc, const LubeValue *argv, Index *ix, LubeValue *err) {
+/* Reads the indexes (argv[1..argc-1]) against a. 0 after an error (in *err). borrow: an Array of positions
+ * that needs no change (int64, in a row, none negative or past the end) is used as it is, not copied: for
+ * reading only, since a[a] = v would change the positions it goes by. */
+static int index_parse(LubeVM *vm, const Array *a, int argc, const LubeValue *argv, Index *ix, LubeValue *err, int borrow) {
     ix->n = 0;
     ix->arrays = 0;
     int axis = 0;
@@ -140,10 +142,24 @@ static int index_parse(LubeVM *vm, const Array *a, int argc, const LubeValue *ar
         it->axis = axis;
         if (ia) {  /* positions */
             it->kind = IX_ARRAY;
+            int64_t len = a->shape[axis];
+            int fine = ia->dtype == ARR_I64 && is_contiguous(ia);
+            if (fine && borrow) {
+                const int64_t *in = (const int64_t *)ia->data;
+                int outside = 0;
+                for (int64_t i = 0; i < ia->size; i++) outside |= (uint64_t)in[i] >= (uint64_t)len;
+                if (!outside) {
+                    it->idx = ia;
+                    it->keep = lube->kind(made) == LUBE_NOTHING ? lube->retain(v) : made;
+                    ix->n++;
+                    ix->arrays++;
+                    axis++;
+                    continue;
+                }
+            }
             it->keep = arr_new(vm, ARR_I64, ia->ndim, ia->shape, &it->idx, 0);
             ix->n++;
-            int64_t len = a->shape[axis], *out = (int64_t *)it->idx->data;
-            int fine = ia->dtype == ARR_I64 && is_contiguous(ia);
+            int64_t *out = (int64_t *)it->idx->data;
             if (fine) {  /* (whole numbers in a row: counted from the end when negative, checked all at once) */
                 const int64_t *in = (const int64_t *)ia->data;
                 for (int64_t i = 0; i < ia->size; i++) {
@@ -410,7 +426,7 @@ static LubeValue index_get(LubeVM *vm, int argc, const LubeValue *argv) {
     if (element_at(a, argc - 1, argv + 1, &off)) return elem_value(a->data + off * ITEMSIZE[a->dtype], a->dtype);
     Array *mask = argc == 2 ? whole_mask(a, argv[1]) : NULL;
     if (mask) return masked(vm, a, mask);
-    if (!index_parse(vm, a, argc, argv, &ix, &err)) return err;
+    if (!index_parse(vm, a, argc, argv, &ix, &err, 1)) return err;
     LubeValue r;
     if (!ix.arrays) {
         Array v;
@@ -521,7 +537,7 @@ static LubeValue index_set(LubeVM *vm, int argc, const LubeValue *argv) {
         }
         goto out;
     }
-    if (!index_parse(vm, a, argc - 1, argv, &ix, &err)) {
+    if (!index_parse(vm, a, argc - 1, argv, &ix, &err, 0)) {
         r = err;
         goto out;
     }

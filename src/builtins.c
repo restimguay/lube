@@ -1643,7 +1643,7 @@ static const struct {
     LUBE_BUILTIN(uint32, n_uint32, 0, 1, 0)
     LUBE_BUILTIN(uint64, n_uint64, 0, 1, 0)
     /* changing collections in place (first argument taken with &) */
-    LUBE_BUILTIN(push, n_push, 2, -1, 1)
+    LUBE_BUILTIN(push, n_push, 2, -1, 2)  /* (2: the VM appends one value to a local List itself, as n_push does) */
     LUBE_BUILTIN(pop, n_pop, 1, 1, 1)
     LUBE_BUILTIN(insert, n_insert, 3, 3, 1)
     LUBE_BUILTIN(remove, n_remove, 2, 2, 1)

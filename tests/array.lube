@@ -688,3 +688,44 @@ tries(fn() => np.choice(2, {p: [0.5]}))
 tries(fn() => np.choice(2, {p: "x"}))
 tries(fn() => np.choice(2, -1))
 tries(fn() => np.sum(a, 0, 1))
+
+// ---------- the kernels that go many elements at a time give what one at a time gives ----------
+fn kernels() {
+  // bytes counted and looked through many at a time
+  let big = np.arange(1000) % 7
+  let bm = big > 2
+  let ones = np.ones(777, "bool")
+  var holed = np.ones(777, "bool")
+  holed[300] = false
+  var late = np.ones(777, "bool")
+  late[776] = false
+  var early = np.ones(300, "bool")
+  early[0] = false
+  print(np.count_nonzero(bm), np.count_nonzero(big.astype("uint8")), np.count_nonzero(bm[0..239]), np.count_nonzero(bm[0..240]), np.count_nonzero(bm[0..241]), np.count_nonzero(np.zeros(500, "bool")), np.count_nonzero(big), np.count_nonzero(big.astype("float32")))
+  print(ones.all(), holed.all(), late.all(), early.all(), np.ones(255, "bool").all(), np.ones(256, "bool").all(), np.ones(257, "bool").all(), bm.all(), np.zeros(0, "bool").all(), holed.any(), np.zeros(600, "bool").any())
+  print(bm.reshape(10, 100).all(1), holed[0..700].reshape(7, 100).all(1), np.count_nonzero(bm.reshape(10, 100), 1))
+  // positions that need no change are used as they are
+  let x = np.arange(10) * 1.5
+  let idx = np.array([3, 0, 9, 3], "int64")
+  let neg = np.array([-1, 0, -10], "int64")
+  print(x[idx], x[neg], x[[2, 4]], x[np.array([1, 2], "int32")], x[idx.reshape(2, 2)], x[idx[0..0]])
+  let self = np.array([2, 0, 1, 3], "int64")
+  print(self[self], self[self[self]], x.reshape(2, 5)[np.array([1, 0, 1], "int64")], x.reshape(2, 5)[0..2, np.array([4, 0], "int64")])
+  try { print(x[np.array([3, 10], "int64")]) } catch e { print("error:", e) }
+  try { print(x[np.array([-11], "int64")]) } catch e { print("error:", e) }
+  try { print(x[np.array([1.5])]) } catch e { print("error:", e) }
+  var y = np.arange(6)
+  y[y] = y[np.array([5, 4, 3, 2, 1, 0], "int64")]
+  print(y)
+  var z = np.arange(5)
+  z[np.array([4, 0], "int64")] = np.array([40, 10])
+  print(z, idx)
+  // the largest and smallest along the first axis, with NaN and zeros of both signs
+  let nan = INF - INF
+  let m = np.array([[1, nan, -0.0, 5, -INF, 2], [3, 1, 0.0, nan, 2, 2], [2, 7, -0.0, 9, INF, nan]])
+  print(m.max(0), m.min(0), m.argmax(0), m.argmin(0))
+  print(m.astype("float32").max(0), m.astype("float32").min(0), np.arange(600).reshape(2, 300).max(0).sum(), np.arange(600).reshape(2, 300).min(0).sum())
+  let wide = np.arange(3000).reshape(3, 1000) % 17
+  print(wide.max(0).sum(), wide.min(0).sum(), wide.astype("float64").max(0).sum(), wide.astype("float64").argmax(0).sum(), wide.mean(0).sum())
+}
+kernels()

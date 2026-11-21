@@ -68,9 +68,11 @@ extern size_t lube_max_items, lube_max_bytes;  /* set once, before any isolate s
 #if defined(__GNUC__) || defined(__clang__)
 #define LUBE_COLD __attribute__((noinline, cold))
 #define LUBE_NOINLINE __attribute__((noinline))
+#define LUBE_INLINE static inline __attribute__((always_inline))
 #else
 #define LUBE_COLD
 #define LUBE_NOINLINE
+#define LUBE_INLINE static inline
 #endif
 
 typedef struct Interp Interp;
@@ -260,7 +262,7 @@ struct ObjNative {
     const char *name;
     NativeFn fn;
     int min_args, max_args; /* max_args < 0 means "any number" */
-    int changes_first;      /* takes its first argument with & (push, pop, ...) */
+    int changes_first;      /* takes its first argument with & (push, pop, ...); 2: it is push itself */
     const void *plugin_fn;  /* a plugin's function (fn is plugin.c's, which calls it), or NULL */
 };
 
@@ -636,11 +638,12 @@ typedef enum {
     OP_ASSIGN_DROP, OP_BINARY2, OP_CMP_JUMP, OP_SET_LOCAL, OP_CALL_FN, OP_INDEX2, OP_FIELD_LOCAL, OP_ARG_DEFAULT, OP_DEF_PARAM, OP_PRINT_REPL,
     OP_HOT_KEEP, OP_IF_GLOBAL, OP_FAIL, OP_LAZY_GLOBAL, OP_IMPORT_PACKAGE,
     OP_NATIVE_LOOP,  /* a top-level loop's machine code (lube --build --native): skips its bytecode when it ran */
+    OP_PUSH_CHECK, OP_PUSH_DO,  /* xs.push(v), xs a local List: appended without a call (see compile_method) */
     OP_COUNT
 } OpCode;
 
 /* Where an operand of OP_BINARY2 or OP_CMP_JUMP comes from: a local's slot
- * or a Number constant, read in place, or else the stack. */
+ * or a Number or str constant, read in place, or else the stack. */
 enum { OPND_STACK, OPND_LOCAL, OPND_CONST };
 
 typedef struct {            /* x, x.a or x[i][j]: a variable, then keys taken from the stack */
@@ -803,6 +806,7 @@ struct FuncDecl {
     unsigned char plain;         /* (compile.c) no & or var parameter, none with a default, each untyped or a
                                     Number, not a constructor: OP_CALL starts it without enter() */
     unsigned char plain_method;  /* a method whose other parameters are like that: OP_INVOKE's fast path */
+    unsigned char plain_ctor;    /* a constructor whose parameters are like that: started without enter() too */
     const LubeNative *native;    /* compiled to machine code (lube --build --native), or NULL */
     Code code;              /* its bytecode (compile.c) */
 };
@@ -1060,6 +1064,9 @@ ObjMap *new_map(void);
 Value *map_find(ObjMap *m, Value key);
 int map_get(ObjMap *m, Value key, Value *out);
 void map_set(ObjMap *m, Value key, Value value);
+Value *map_slot(ObjMap *m, Value key);
+void map_reserve(ObjMap *m, size_t n);
+void map_fill(ObjMap *m, ObjString **keys, const Value *values, size_t n);
 int map_delete(ObjMap *m, Value key, Value *removed);
 ObjMap *map_copy(ObjMap *m);
 int is_key(Value v);

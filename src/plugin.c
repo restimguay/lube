@@ -127,7 +127,7 @@ static Value plugin_call(Interp *I, int argc, Value *argv) {
     const Fn *f = (const Fn *)I->calling->plugin_fn;
     LubeValue small[8] = {{{0}}};  /* (zeroed: gcc would rather it were, with no arguments) */
     LubeValue *args = argc <= 8 ? small : (LubeValue *)xmalloc(sizeof(LubeValue) * (size_t)argc);
-    if (argc) memcpy(args, argv, sizeof(LubeValue) * (size_t)argc);
+    for (int i = 0; i < argc; i++) args[i] = L(argv[i]);  /* (a few: not worth memcpy's call) */
     LubeValue r = f->fn((LubeVM *)I, argc, args);
     if (args != small) free(args);
     Value v = V(r);

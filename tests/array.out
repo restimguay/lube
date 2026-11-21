@@ -665,3 +665,20 @@ error: choice(): p must be 2 probabilities that add up to 1
 error: choice() expects an Array (or a list or Number) as argument 2, got a str
 error: choice(): a shape is whole numbers, 0 or more (or a list of them)
 error: sum(): expected an axis and then options (an object), got a Number
+571 857 136 136 136 0 857 857
+true false false false true true true false true true false
+[false, false, false, false, false, false, false, false, false, false] [true, true, true, false, true, true, true] [56, 57, 58, 57, 56, 58, 58, 56, 57, 58]
+[4.5, 0, 13.5, 4.5] [13.5, 0, 0] [3, 6] [1.5, 3] [[4.5, 0],
+ [13.5, 4.5]] []
+[1, 2, 0, 3] [0, 1, 2, 3] [[7.5, 9, 10.5, 12, 13.5],
+ [0, 1.5, 3, 4.5, 6],
+ [7.5, 9, 10.5, 12, 13.5]] [[6, 0],
+ [13.5, 7.5]]
+error: index 10 is out of range for axis 0 (length 10)
+error: index -11 is out of range for axis 0 (length 10)
+error: an Array index must be a whole number, not 1.5
+[5, 4, 3, 2, 1, 0]
+[10, 1, 2, 3, 40] [3, 0, 9, 3]
+[3, nan, 0, nan, inf, nan] [1, nan, 0, nan, -inf, nan] [1, 0, 0, 1, 2, 2] [0, 0, 0, 1, 0, 2]
+[3, nan, 0, nan, inf, nan] [1, nan, 0, nan, -inf, nan] 134850 44850
+12404 3572 12404 531 7988

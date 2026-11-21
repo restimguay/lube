@@ -246,9 +246,9 @@ for n in [1000, 100000] {
   let strs = map(ints, fn(i) => "s{i}")
   bench_chk("sort_ints", n, fn() => sort(ints), weighted)
   bench_chk("sort_strings", n, fn() => sort(strs), weighted_len)
-  bench_chk("sort_custom_order", n, fn() => sort(nums, fn(a, b) => a > b), weighted)
+  bench_chk("sort_custom_order", n, fn() => sort(nums, fn(x) => -x), weighted)
   let people = map(list(0..n), fn(i) => {name: strs[i], age: ints[i] % 100})
-  bench_chk("sort_objects_by_field", n, fn() => sort(people, fn(a, b) => a.age < b.age), fn(r) => weighted(map(r, fn(p) => p.age)))
+  bench_chk("sort_objects_by_field", n, fn() => sort(people, fn(p) => p.age), fn(r) => weighted(map(r, fn(p) => p.age)))
 }
 
 // ---------- classes and methods ----------

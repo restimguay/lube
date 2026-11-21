@@ -1,0 +1,568 @@
+// The VM's shortcuts (a List's push, a store into an Object or Map, == on text, a package's function,
+// a plain constructor, error messages) give what the general way gives: this file's output is the same
+// with and without them.
+import math
+
+fn show(f) {
+  try { print(f()) } catch e { print("error:", e) }
+}
+
+// ---------- xs.push(v) ----------
+var G = 5
+fn two() => 2
+class Stack {
+  var items = []
+  fn push(x) {
+    this.items = this.items + [x * 2]
+    return len(this.items)
+  }
+}
+fn pushes() {
+  var xs = []
+  for i in 0..4 { xs.push(i) }
+  let k = 7
+  xs.push(xs[0] + 10)
+  xs.push([k, -k])
+  xs.push("s")
+  xs.push(k > 3 and k < 9)
+  xs.push(not (k > 3) or k == 7)
+  xs.push({a: 1}.a)
+  xs.push(G)          // a global: the call
+  xs.push(two())      // a call: the call
+  xs.push(len(xs))
+  xs.push(1, 2, 3)    // several: the call
+  return xs
+}
+print(pushes())
+fn shared() {
+  var a = [1]
+  let b = a
+  a.push(2)
+  return [a, b]
+}
+print(shared())
+fn itself() {
+  var a = [1]
+  a.push(a)
+  a.push(a[1])
+  return a
+}
+print(itself())
+fn typed() {
+  var s = str["a"]
+  s.push("b")
+  var n = Number[1]
+  n.push(2)
+  return [s, n]
+}
+print(typed())
+show(fn() {
+  var s = str["a"]
+  s.push(1)
+  return s
+})
+show(fn() {
+  var a = []
+  let y = a.push(1)
+  return y
+})
+show(fn() {
+  var a = []
+  return a.push(1)
+})
+fn looped() {
+  var a = [1, 2]
+  for x in a { a.push(x * 10) }
+  return a
+}
+print(looped())
+show(fn() {
+  let a = []
+  a.push(1)
+  return a
+})
+fn into_bytes() {
+  var b = Bytes([1])
+  b.push(65)
+  return b
+}
+print(into_bytes())
+fn stacked() {
+  var s = Stack()
+  let n = s.push(1)
+  s.push(n)
+  return s.items
+}
+print(stacked())
+fn by_param(var xs) {
+  xs.push(1)
+  return xs
+}
+fn by_ref(&xs) { xs.push(2) }
+fn params() {
+  var a = [0]
+  let b = by_param(a)
+  by_ref(&a)
+  return [a, b]
+}
+print(params())
+show(fn() {
+  var n = 5
+  n.push(1)
+  return n
+})
+show(fn() {
+  var s = "text"
+  s.push("x")
+  return s
+})
+fn watched() {
+  var xs = []
+  var seen = []
+  on xs (old, new) { seen.push(len(new)) }
+  xs.push(1)
+  xs.push(2)
+  return [xs, seen]
+}
+print(watched())
+fn in_closure() {
+  var xs = [1]
+  let add = fn(v) {
+    var mine = xs
+    mine.push(v)
+    return mine
+  }
+  return [add(2), xs]
+}
+print(in_closure())
+show(fn() {
+  var xs = [1]
+  let add = fn(v) { xs.push(v) }
+  add(2)
+  return xs
+})
+var top = []
+top.push(1)
+top.push(top[0] + 1)
+print(top)
+fn many() {
+  var xs = []
+  for i in 0..1000 { xs.push(i) }
+  var s = 0
+  for x in xs { s += x }
+  return [len(xs), s]
+}
+print(many())
+
+// ---------- push(&xs, v), and Bytes ----------
+fn pushed_by_name() {
+  var xs = []
+  for i in 0..3 { push(&xs, i * i) }
+  push(&xs, xs[1] + 10)
+  push(&xs, two())    // a call: the call
+  push(&xs, G)
+  push(&xs, 7, 8)
+  var o = {list: []}
+  push(&o.list, 1)    // a field: the call
+  var b = Bytes()
+  push(&b, 65)
+  b.push(66)
+  push(&b, "cd")
+  b.push(Bytes([1, 2]))
+  let c = b
+  push(&b, b[0])
+  b.push(b)
+  var t = str["a"]
+  push(&t, "b")
+  var shared = [1]
+  let before = shared
+  push(&shared, shared)
+  return [xs, o, b, c, t, shared, before]
+}
+print(pushed_by_name())
+show(fn() {
+  var b = Bytes()
+  push(&b, 300)
+  return b
+})
+show(fn() {
+  var b = Bytes()
+  b.push(-1)
+  return b
+})
+show(fn() {
+  var b = Bytes()
+  b.push([1])
+  return b
+})
+show(fn() {
+  var xs = []
+  let y = push(&xs, 1)
+  return y
+})
+show(fn() {
+  var t = str["a"]
+  push(&t, 5)
+  return t
+})
+show(fn() {
+  var n = 5
+  push(&n, 1)
+  return n
+})
+fn watched_by_name() {
+  var xs = []
+  var seen = []
+  on xs (old, new) { push(&seen, len(new)) }
+  push(&xs, 1)
+  push(&xs, 2)
+  return [xs, seen]
+}
+print(watched_by_name())
+fn pushed_in_loop() {
+  var b = Bytes()
+  var xs = []
+  for i in 0..600 {
+    push(&b, i % 256)
+    push(&xs, i)
+  }
+  return [len(b), b[599], len(xs), xs[599]]
+}
+print(pushed_in_loop())
+push(&top, 3)
+print(top)
+
+// ---------- stores into Objects and Maps ----------
+class P {
+  var x = 0
+  var name = "p"
+}
+fn stores() {
+  var o = {}
+  o.a = 1
+  o["b"] = 2
+  o[3] = "three"
+  o[1.5] = "half"
+  o[-0.0] = "zero"
+  o[0] = "zero again"
+  o.a += 5
+  o["b"] -= 1
+  o.list = [1]
+  o.list = o.list + [2]
+  o.text = "t"
+  o.text += "u"
+  return o
+}
+print(stores())
+fn counts() {
+  var c = {}
+  for w in ["x", "y", "x", "z", "x"] { c[w] = get(c, w, 0) + 1 }
+  var byn = {}
+  for i in 0..20 { byn[i % 3] = get(byn, i % 3, 0) + i }
+  return [c, byn]
+}
+print(counts())
+fn nested() {
+  var o = {in: {deep: 1, list: [1, 2]}}
+  o.in.deep = 2
+  o.in.new = 3
+  o.in.deep += 1
+  o.in.list[0] = 9
+  o["in"]["more"] = {x: 1}
+  o.in.more.x += 1
+  return o
+}
+print(nested())
+fn in_maps() {
+  var m = Map()
+  m[1] = "one"
+  m[[1, 2]] = "a list"
+  m[true] = "yes"
+  m["s"] = 1
+  m["s"] += 1
+  var t = Map[str, Number]
+  t["a"] = 1
+  t["a"] += 1
+  t["b"] = 5
+  return [m, t, len(keys(m))]
+}
+print(in_maps())
+show(fn() {
+  var t = Map[str, Number]
+  t["a"] = "x"
+  return t
+})
+show(fn() {
+  var t = Map[str, Number]
+  t[1] = 2
+  return t
+})
+show(fn() {
+  var t = Map[str, str]
+  t["a"] = "x"
+  t["a"] += "y"
+  t["a"] = 5
+  return t
+})
+fn shared_object() {
+  var a = {x: 1}
+  let b = a
+  a.x = 2
+  a.y = 3
+  var c = {in: {v: 1}}
+  let d = c.in
+  c.in.v = 2
+  return [a, b, c, d]
+}
+print(shared_object())
+show(fn() {
+  var o = {}
+  o.zz += 1
+  return o
+})
+show(fn() {
+  var o = {}
+  o.no.x = 1
+  return o
+})
+show(fn() {
+  var o = {}
+  o[[1]] = 1
+  return o
+})
+fn fields() {
+  var p = P()
+  p.x = 5
+  p.x += 1
+  p.name = "q"
+  p.name += "r"
+  return p
+}
+print(fields())
+show(fn() {
+  var p = P()
+  p.y = 1
+  return p
+})
+show(fn() {
+  var p = P()
+  p.x = "text"
+  return p
+})
+var gobj = {}
+gobj.a = 1
+gobj["b"] = gobj.a + 1
+gobj.a += 10
+print(gobj)
+fn keys_of_all_kinds() {
+  var m = {}
+  for i in 0..300 { m[i * 1024] = i }
+  for i in 0..300 { m[-i] = i }
+  for i in 0..300 { m[i + 0.5] = i }
+  for i in 0..300 { m["k{i}"] = i }
+  var s = 0
+  for i in 0..300 { s += m[i * 1024] + m[-i] + m[i + 0.5] + m["k{i}"] }
+  var d = Map()
+  for i in 0..2000 { d[i] = i }
+  for i in 0..1000 { delete(&d, i * 2) }
+  for i in 0..500 { d[i * 4] = -i }
+  var t = 0
+  for k, v in d { t += k + v }
+  return [len(keys(m)), s, len(keys(d)), t, d[4], d[3], get(d, 2, "gone"), m[0], d[int32(8)], d[uint8(7)]]
+}
+print(keys_of_all_kinds())
+print({a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9, j: 10}, {}, {a: {}})
+
+// ---------- == and != on text ----------
+fn texts() {
+  let a = "ab"
+  let b = "a" + "b"
+  let c = "abc"
+  var out = [a == b, a != b, a == "ab", "ab" == a, a != c, a == c, a == "ax", "" == "", a == 5, a != 5, 5 == a]
+  out.push(a + "" == b + "")
+  out.push(a + "" != c + "")
+  out.push(String("ab") == a)
+  out.push(a == String("ab"))
+  out.push(a != String("ab"))
+  if a == b { out.push("same") }
+  if a != b { out.push("never") }
+  if a + "c" == c { out.push("joined") }
+  var n = 0
+  while c != "abcddd" and n < 5 {
+    n += 1
+  }
+  out.push(n)
+  let words = ["w1", "w2", "w1"]
+  var hits = 0
+  for w in words {
+    if w == "w1" { hits += 1 }
+  }
+  out.push(hits)
+  return out
+}
+print(texts())
+
+// ---------- a package's function ----------
+fn packaged() {
+  var out = []
+  for i in 0..3 { out.push(math.sqrt(i * i)) }
+  let m = math
+  out.push(m.floor(2.5))
+  out.push(math.hypot(3, 4))
+  out.push(math.pi > 3)
+  return out
+}
+print(packaged())
+show(fn() => math.sqrt())
+show(fn() => math.sqrt(1, 2))
+show(fn() => math.sqrt("x"))
+show(fn() => math.nope(1))
+show(fn() => math.pi(1))
+fn twice() {
+  var out = []
+  for i in 0..2 {
+    try { out.push(math.sqrt(-1)) } catch e { out.push(str(e)) }
+  }
+  return out
+}
+print(twice())
+
+// ---------- constructors ----------
+class Pt {
+  var x = 0
+  var y = 0
+  constructor(x, y) {
+    this.x = x
+    this.y = y
+  }
+}
+class Typed {
+  var n = 0
+  constructor(n: Number) { this.n = n }
+}
+class Defaults {
+  var a = 0
+  var b = 0
+  constructor(a, b = 2) {
+    this.a = a
+    this.b = b
+  }
+}
+class Bare { var a = 1 }
+class Empty { constructor() {} }
+class Wide {
+  var a = 1
+  var b = 2
+  var c = 3
+  var d = 4
+  var e = 5
+  var f = 6
+  var g = 7
+  var h = 8
+  var i = 9
+  var j = 10
+}
+class Pt3 extends Pt {
+  var z = 0
+  constructor(x, y, z) {
+    super(x, y)
+    this.z = z
+  }
+}
+class Deep {
+  var n = 0
+  constructor(n) {
+    this.n = n
+    if n > 0 { Deep(n - 1) }
+  }
+}
+class Fails {
+  constructor(v) { throw "no {v}" }
+}
+print(Pt(1, 2), Typed(3), Defaults(1), Defaults(1, 5), Bare(), Empty(), Wide(), Pt3(1, 2, 3))
+show(fn() => Pt(1))
+show(fn() => Pt(1, 2, 3))
+show(fn() => Typed("x"))
+show(fn() => Fails(7))
+show(fn() => Deep(50).n)
+show(fn() => Deep(1000000).n)
+fn built() {
+  var s = 0
+  for i in 0..100 {
+    let p = Pt(i, 2)
+    s += p.x + p.y
+  }
+  let w = Wide()
+  return [s, w.j, w.a]
+}
+print(built())
+
+// ---------- error messages ----------
+show(fn() => [1][5])
+show(fn() => [1][-7])
+show(fn() => "abc"[10])
+show(fn() => Bytes([1])[3])
+show(fn() => undefined_thing)
+show(fn() => 5 + "x")
+show(fn() => {}.nothing)
+show(fn() => Pt(1, 2).nope())
+show(fn() => len())
+show(fn() => len(1, 2))
+show(fn() => fixed(1, 30))
+show(fn() => (0..3)[9])
+let long_name = "x" * 1100
+fn catch_long() {
+  try {
+    var o = {}
+    o[long_name] += 1
+  } catch e {
+    return e
+  }
+  return ""
+}
+show(fn() => len(str(catch_long())))
+show(fn() => slice(str(catch_long()), 0, 30))
+show(fn() => Bytes([1, 2, 300]))
+show(fn() => fixed(1.5, -1))
+show(fn() => "%d and 100%")
+
+// ---------- for x in a List, and strs written out as operands ----------
+fn loops() {
+  let words = ["w1", "w2", "w1", "", "w10"]
+  var out = []
+  var hits = 0
+  for w in words {
+    if w == "w1" { hits += 1 }
+    if "w1" != w { out.push(w + "!") }
+    if w < "w2" { out.push("<" + w) }
+  }
+  for i, w in words {
+    if w == "w2" { out.push(i) }
+  }
+  var grown = [1, 2]
+  for x in grown {
+    grown.push(x * 10)
+    out.push(x)
+  }
+  for x in [] { out.push("never") }
+  let o = {key: 1, "two words": 2}
+  out.push(o["key"] + o["two words"])
+  out.push("ab" + "cd" == "abcd")
+  out.push(words[0] + "x")
+  var nested = []
+  for a in [[1, 2], [3]] {
+    for b in a { nested.push(b) }
+  }
+  for w in words {
+    if w == "w2" { break }
+    if w == "" { continue }
+    nested.push(w)
+  }
+  return [hits, out, grown, nested]
+}
+print(loops())
+show(fn() => "a" < 1)
+show(fn() {
+  for x in [1, 2] { let y = x + "s" }
+  return 0
+})
