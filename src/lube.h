@@ -662,6 +662,9 @@ typedef struct {            /* x.name(args) */
     ObjClass *cache_class;  /* (run time) the method last found here, for instances of this class */
     Value cache_method;     /* (borrowed: classes and their methods live until shutdown) */
     unsigned cache_epoch;   /* ...as of this I->epoch */
+    ObjString *cache_pkg;   /* (run time) pkg.name(args): the package last called here, */
+    ObjString *cache_key;   /* its global's key ("pkg::name", interned: it lives until shutdown), */
+    int cache_gslot;        /* and where that global was in I->globals (+1; checked before use) */
 } MethodDesc;
 
 typedef struct {            /* super.name(args), or super(args) when name is NULL */
@@ -854,7 +857,7 @@ struct Node {
  * Interpreter state
  * ==================================================================== */
 
-typedef struct { char *data; size_t len, cap; } StrBuf;
+typedef struct { char *data; size_t len, cap; char *stack; } StrBuf;  /* (stack: memory of the caller's, see sb_init_on) */
 
 /* A top-level `on` block: runs fn when one of the global vars it watches changes. */
 typedef struct Watcher {
@@ -967,6 +970,7 @@ struct Interp {
     long hot_last;                  /* clock() when the files were last looked at */
     ObjList *imports_found;         /* while building: the import paths the resolver sees */
     ObjString *chars[256];          /* cached one-byte strings */
+    struct { const char *at; ObjString *s; } key_cache[64];  /* (plugins' keys, by their address: object_get's) */
 
     Value ret_val;                  /* value carried by a `return` */
     Value error_val;                /* value carried by a raised error */
@@ -1012,6 +1016,9 @@ void *arena_alloc(Arena *a, size_t n);
 void *arena_grow(Arena *a, void *old, size_t old_size, size_t new_size);
 void arena_free(Arena *a);
 void sb_init(StrBuf *sb);
+/* A StrBuf that starts in the caller's buf (size bytes), and moves to the heap only if it outgrows it: for text
+ * that is copied out and let go of at once (never one whose data is kept: that one must be sb_init's). */
+void sb_init_on(StrBuf *sb, char *buf, size_t size);
 void sb_putc(StrBuf *sb, char c);
 void sb_puts(StrBuf *sb, const char *s);
 void sb_putn(StrBuf *sb, const char *s, size_t n);
@@ -1078,6 +1085,9 @@ int is_truthy(Value v);
 int values_equal(Value a, Value b);
 const char *type_name(Value v);
 void format_number(char *buf, size_t size, double n);
+/* The fewest decimal places (0..8) that give x back as z / 10^places, with z (below 2^53 / 10) in *z; -1 if it
+ * takes more (or x is too large for them). */
+int short_decimal(double x, int64_t *z);
 void append_value(StrBuf *sb, Value v, int quote);
 ObjString *value_to_string(Value v);
 ObjString *value_repr(Value v);
@@ -1157,6 +1167,8 @@ void lube_define(Interp *I, const char *name, Value v);
 int lube_contains(Interp *I, Value container, Value item);
 Value lube_arith(Interp *I, TokenType op, Value a, Value b);
 Value lube_check_elem(Interp *I, const char *holder, int tag, Value v);
+/* The same, the holder's name worked out only when there is something to check (a list of anything takes v) */
+#define CHECK_ELEM(I, holder, tag, v) ((tag) == TT_ANY ? retain(v) : lube_check_elem((I), (holder), (tag), (v)))
 Value lube_string_property(Interp *I, Value s, ObjString *name);
 int lube_stack_ok(Interp *I);
 
@@ -1175,6 +1187,11 @@ void lock_wait(LubeLock *l);        /* releases the lock while waiting for lock_
 void lock_notify(LubeLock *l);      /* wakes every waiter */
 int thread_start(void (*fn)(void *), void *arg, size_t stack_size);
 int lube_cores(void);
+/* Zeroed memory straight from the system, for an interpreter's big arrays: its pages become memory only once
+ * touched, and go back to the system when let go of. (malloc keeps the big blocks it frees, and calloc must then
+ * clear all of one it hands out again: tens of megabytes for each isolate.) */
+void *lube_pages(size_t n);
+void lube_pages_free(void *p, size_t n);
 char **os_files(const char *dir, const char *ext, int *n);  /* sorted; free each and the array */
 #define os_lube_files(dir, n) os_files(dir, ".lube", n)
 

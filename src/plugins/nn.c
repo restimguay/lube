@@ -29,6 +29,7 @@
 #ifdef __clang__  /* (no fused multiply-adds: the same results on every system) */
 #pragma STDC FP_CONTRACT OFF
 #endif
+#include "vecmath.h"
 
 #define FN(name) static LubeValue name(LubeVM *vm, int argc, const LubeValue *argv)
 #define FNAME (__func__ + 2)  /* "f_tensor" -> "tensor" */

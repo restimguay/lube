@@ -503,7 +503,7 @@ static Value binary_op(Interp *I, TokenType op, Value a, Value b) {
             list_reserve(out, x->count + y->count);
             for (size_t i = 0; i < x->count; i++) out->items[out->count++] = retain(x->items[i]);
             for (size_t i = 0; i < y->count; i++) {
-                Value v = lube_check_elem(I, type_name(a), out->elem, y->items[i]);
+                Value v = CHECK_ELEM(I, type_name(a), out->elem, y->items[i]);
                 if (IS_ERR(v)) {
                     release(OBJ_VAL(out));
                     return v;
@@ -1419,7 +1419,7 @@ LUBE_NOINLINE static Value do_assign(Interp *I, TokenType op, Place *place, Valu
 
     if (op == T_ASSIGN) {
         if (elem != TT_ANY) {  /* into a typed list or map */
-            Value c = lube_check_elem(I, type_name(*holder), elem, rhs);
+            Value c = CHECK_ELEM(I, type_name(*holder), elem, rhs);
             release(rhs);
             rhs = c;
         }
@@ -1479,7 +1479,7 @@ LUBE_NOINLINE static Value do_assign(Interp *I, TokenType op, Place *place, Valu
     else if (!IS_NUM(*slot) || !IS_NUM(rhs) || !num_op(bin, slot->as.number, rhs.as.number, &r)) r = binary_op(I, bin, *slot, rhs);
     release(rhs);
     if (!IS_ERR(r) && elem != TT_ANY) {
-        Value c = lube_check_elem(I, type_name(*holder), elem, r);
+        Value c = CHECK_ELEM(I, type_name(*holder), elem, r);
         release(r);
         r = c;
     }
@@ -1937,10 +1937,32 @@ static int push_call(Interp *I, Value callee, int mode, Value self, Place *place
     return 0;
 }
 
+/* A package's member called at md: found through md's cache when it still holds (the entry at the slot it
+ * remembers must still be that global's), else as package_member finds it, and remembered. */
+static Value package_callee(Interp *I, Value pkgv, MethodDesc *md) {
+    ObjString *pkg = AS_PACKAGE(pkgv)->name;
+    ObjMap *g = I->globals;
+    int at = md->cache_gslot - 1;
+    if (md->cache_pkg == pkg && at >= 0 && (size_t)at < g->used && g->entries[at].live &&
+        g->entries[at].key.as.obj == (Obj *)md->cache_key)
+        return retain(g->entries[at].value);
+    Value v = package_member(I, pkgv, md->name);
+    if (IS_ERR(v)) return v;
+    ObjString *key = lube_global_key(I, pkg, md->name);
+    Value *slot = map_find(g, OBJ_VAL(key));
+    if (slot) {
+        MapEntry *e = (MapEntry *)(void *)((char *)slot - offsetof(MapEntry, value));
+        md->cache_pkg = pkg;
+        md->cache_key = key;
+        md->cache_gslot = (int)(e - g->entries) + 1;
+    }
+    return v;
+}
+
 LUBE_NOINLINE static int prep_method(Interp *I, MethodDesc *md, Value obj, Place *place, int have_place) {
     ObjString *name = md->name;
     if (IS_PACKAGE(obj)) {  /* geometry.area(s): a package's function */
-        Value callee = package_member(I, obj, name);
+        Value callee = package_callee(I, obj, md);
         release(obj);
         if (have_place) place_free(place);
         if (IS_ERR(callee)) return -1;
@@ -3837,8 +3859,7 @@ void lube_define(Interp *I, const char *name, Value v) {
 }
 
 Interp *lube_new(char *stack_base) {
-    Interp *I = calloc(1, sizeof(Interp));
-    if (!I) lube_out_of_memory(); /* LCOV_EXCL_LINE: only if the system has no memory left */
+    Interp *I = lube_pages(sizeof(Interp));  /* (zeroed: most of it is the stack, touched only as deep as it goes) */
     I->ret_val = NIL_VAL;
     I->error_val = NIL_VAL;
     I->epoch = 1;  /* (zeroed caches are stale) */
@@ -3849,8 +3870,7 @@ Interp *lube_new(char *stack_base) {
     if (I->rng == 0) I->rng = 1;
     sb_init(&I->trace);
 
-    I->decl = calloc(LUBE_STACK_MAX, sizeof(TypeDesc));
-    if (!I->decl) lube_out_of_memory();
+    I->decl = lube_pages(sizeof(TypeDesc) * LUBE_STACK_MAX);
     I->strings = new_map();
     I->globals = new_map();
     I->constants = new_map();
@@ -3899,7 +3919,7 @@ size_t lube_free(Interp *I) {
     if (I->bundle) release(OBJ_VAL(I->bundle));
     if (I->imports_found) release(OBJ_VAL(I->imports_found));
     free(I->global_types);
-    free(I->decl);
+    lube_pages_free(I->decl, sizeof(TypeDesc) * LUBE_STACK_MAX);
     for (int c = 0; c < 256; c++) release(OBJ_VAL(I->chars[c]));
     for (int t = 0; t < LUBE_TM_TYPES; t++)
         if (I->tmethods[t]) release(OBJ_VAL(I->tmethods[t]));
@@ -3923,6 +3943,6 @@ size_t lube_free(Interp *I) {
     lube_free_program(I);
     for (int i = 0; i < I->nloan_pool; i++) free(I->loan_pool[i]);
     free(I->loan_pool);
-    free(I);
+    lube_pages_free(I, sizeof(Interp));
     return lube_live_objects;
 }

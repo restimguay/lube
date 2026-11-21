@@ -190,6 +190,18 @@ static Pair two_prod(double a, double b) {
     return r;
 }
 
+/* two_prod for numbers of at most 1 (norm's, scaled): by a fused multiply-add where the machine has one (it rounds
+ * once, so its low part is the same exact error Dekker's split gives, for numbers that small), else as above. */
+static Pair two_prod_small(double a, double b) {
+#if defined(__FP_FAST_FMA) || defined(__aarch64__)
+    double x = a * b;
+    Pair r = {x, fma(a, b, -x)};
+    return r;
+#else
+    return two_prod(a, b);  /* LCOV_EXCL_LINE: (machines without one) */
+#endif
+}
+
 /* Shewchuk's partials, as Python's fsum keeps them: non-overlapping, smallest first, adding up to the
  * exact sum. Adds x to p[0..n): returns how many partials are left, with what remains to add in *x. */
 static int partials_add(double *p, int n, double *x) {
@@ -924,14 +936,14 @@ static double norm(const Coords *c, size_t n) {
     Pair pr, sm;
     for (size_t i = 0; i < n; i++) {
         x = coord(c, i) * pre * scale;  /* (exact: the largest is from 0.5 up to 1) */
-        pr = two_prod(x, x);
+        pr = two_prod_small(x, x);
         sm = fast_two_sum(csum, pr.hi);
         csum = sm.hi;
         frac1 += pr.lo;
         frac2 += sm.lo;
     }
     h = sqrt(csum - 1.0 + (frac1 + frac2));
-    pr = two_prod(-h, h);
+    pr = two_prod_small(-h, h);
     sm = fast_two_sum(csum, pr.hi);
     csum = sm.hi;
     frac1 += pr.lo;
@@ -1169,12 +1181,14 @@ static int count_arg(LubeVM *vm, const char *fn, const LubeValue *argv, int i, c
 }
 
 /* factorial(n): n! */
+static double factorials[171];  /* (0! to 170!, as perm_of works them out: filled when the plugin loads) */
+
 FN(m_factorial) {
     double n;
     LubeValue err;
     if (!count_arg(vm, "factorial", argv, 0, "n", &n, &err)) return err;
     if (n > 170) return too_large(vm, "factorial", &n, 1);  /* (171! is past 2^1024) */
-    return lube->number_value(n <= 1 ? 1 : perm_of(n, n));
+    return lube->number_value(factorials[(int)n]);
 }
 
 /* perm(n, k): the ways to pick k of n in order, n! / (n-k)!; perm(n) is n! */
@@ -1250,6 +1264,7 @@ LUBE_PLUGIN(math) {
         {"trunc", m_trunc, 1, 1},         {"ulp", m_ulp, 1, 1},
     };
     for (size_t i = 0; i < sizeof fns / sizeof fns[0]; i++) api->function(plugin, fns[i].name, fns[i].fn, fns[i].min, fns[i].max);
+    for (int k = 0; k <= 170; k++) factorials[k] = k <= 1 ? 1 : perm_of(k, k);
     api->constant(plugin, "pi", PI);
     api->constant(plugin, "e", 2.718281828459045235360287471352662498);
     api->constant(plugin, "tau", 6.283185307179586476925286766559005768);

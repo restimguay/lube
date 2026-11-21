@@ -149,7 +149,10 @@ static void bin_run(void *ctx, int64_t n, unsigned char *const *p, const int64_t
         case ARR_MUL: BLOOP(double, double, x * y); break;
         case ARR_DIV: BLOOP(double, double, x / y); break;
         case ARR_MOD: BLOOP(double, double, py_mod(x, y)); break;
-        case ARR_POW: BLOOP(double, double, pow(x, y)); break;
+        case ARR_POW:
+            if (st[2] == 0 && *(const double *)p[2] == 2) BLOOP(double, double, ((void)y, x * x));  /* (x ** 2: the square, as numpy) */
+            else BLOOP(double, double, pow(x, y));
+            break;
         case ARR_MAXIMUM: BLOOP(double, double, FMAX(x, y)); break;
         case ARR_MINIMUM: BLOOP(double, double, FMIN(x, y)); break;
         case ARR_ATAN2: BLOOP(double, double, atan2(x, y)); break;
@@ -171,7 +174,10 @@ static void bin_run(void *ctx, int64_t n, unsigned char *const *p, const int64_t
         case ARR_MUL: BLOOP(float, float, x * y); break;
         case ARR_DIV: BLOOP(float, float, x / y); break;
         case ARR_MOD: BLOOP(float, float, py_mod(x, y)); break;
-        case ARR_POW: BLOOP(float, float, powf(x, y)); break;
+        case ARR_POW:
+            if (st[2] == 0 && *(const float *)p[2] == 2) BLOOP(float, float, ((void)y, x * x));
+            else BLOOP(float, float, powf(x, y));
+            break;
         case ARR_MAXIMUM: BLOOP(float, float, FMAX(x, y)); break;
         case ARR_MINIMUM: BLOOP(float, float, FMIN(x, y)); break;
         case ARR_ATAN2: BLOOP(float, float, atan2f(x, y)); break;
@@ -254,7 +260,9 @@ static void bin_into(Array *dst, int op, int kind, const Array *x, const Array *
     Loop L;
     loop_make(&L, &s, 3, base, size);
     OpCtx c = {op, kind};
-    loop_go(&L, bin_run, &c);
+    int heavy = op == ARR_POW || op == ARR_ATAN2 || op == ARR_HYPOT || op == ARR_FMOD || op == ARR_MOD ||
+                op == ARR_FLOOR_DIVIDE;
+    loop_go(&L, bin_run, &c, heavy && IS_FLOAT(kind) ? 32 : 1);
 }
 
 /* x op y, elementwise. inplace: into x (an Array of the result's dtype and shape: 1 if it was so). Two Numbers
@@ -404,7 +412,7 @@ static void un_run(void *ctx, int64_t n, unsigned char *const *p, const int64_t 
         case ARR_ATAN: ULOOP(float, float, atanf(x)); break;
         case ARR_SINH: ULOOP(float, float, sinhf(x)); break;
         case ARR_COSH: ULOOP(float, float, coshf(x)); break;
-        case ARR_TANH: ULOOP(float, float, tanhf(x)); break;
+        case ARR_TANH: ULOOP(float, float, vm_tanh(x)); break;  /* (vecmath.h's: vectorized, the same bits everywhere) */
         case ARR_ASINH: ULOOP(float, float, asinhf(x)); break;
         case ARR_ACOSH: ULOOP(float, float, acoshf(x)); break;
         case ARR_ATANH: ULOOP(float, float, atanhf(x)); break;
@@ -474,7 +482,9 @@ static LubeValue un_op(LubeVM *vm, int op, LubeValue xv) {
             Loop L;
             loop_make(&L, &s, 2, base, size);
             OpCtx c = {op, kind};
-            loop_go(&L, un_run, &c);
+            int light = op == ARR_NEG || op == ARR_ABS || op == ARR_SQUARE || op == ARR_SIGN || op == ARR_NOT ||
+                        op >= ARR_ISNAN || (op >= ARR_FLOOR && op <= ARR_RINT) || op == ARR_RECIPROCAL;
+            loop_go(&L, un_run, &c, light ? 1 : op == ARR_SQRT ? 4 : 32);
             if (write != result) {
                 Array *conv;
                 LubeValue cv = arr_copy(vm, dst, result, &conv);
@@ -523,35 +533,81 @@ static double sum_f32(const float *x, int64_t n) {
     return t;
 }
 
+/* The sum of (x - c)^2 over n floats in a row, likewise in eight sums (var and std). */
+#define SQUARES(T, NAME)                                                                                       \
+    static double NAME(const T *x, int64_t n, double c) {                                                      \
+        double s[8] = {0};                                                                                     \
+        int64_t i = 0;                                                                                         \
+        for (; i + 8 <= n; i += 8)                                                                             \
+            for (int k = 0; k < 8; k++) {                                                                      \
+                double d = x[i + k] - c;                                                                       \
+                s[k] += d * d;                                                                                 \
+            }                                                                                                  \
+        double t = ((s[0] + s[1]) + (s[2] + s[3])) + ((s[4] + s[5]) + (s[6] + s[7]));                          \
+        for (; i < n; i++) t += (x[i] - c) * (x[i] - c);                                                       \
+        return t;                                                                                              \
+    }
+SQUARES(double, squares_f64)
+SQUARES(float, squares_f32)
+
 typedef struct {
     const unsigned char *data;
     int dtype;
     int64_t n;
     double *parts;
+    int squares;      /* the squares' sum about center, not the sum */
+    double center;
 } SumJob;
+
+/* The sum of x^2 (a center of 0: norm's), in eight sums. */
+#define SQUARES0(T, NAME)                                                                                      \
+    static double NAME(const T *x, int64_t n) {                                                                \
+        double s[8] = {0};                                                                                     \
+        int64_t i = 0;                                                                                         \
+        for (; i + 8 <= n; i += 8)                                                                             \
+            for (int k = 0; k < 8; k++) s[k] += (double)x[i + k] * x[i + k];                                   \
+        double t = ((s[0] + s[1]) + (s[2] + s[3])) + ((s[4] + s[5]) + (s[6] + s[7]));                          \
+        for (; i < n; i++) t += (double)x[i] * x[i];                                                           \
+        return t;                                                                                              \
+    }
+SQUARES0(double, squares0_f64)
+SQUARES0(float, squares0_f32)
+
+static double sum_piece(const SumJob *j, int64_t at, int64_t len) {
+    if (j->squares && j->center == 0)
+        return j->dtype == ARR_F64 ? squares0_f64((const double *)j->data + at, len)
+                                   : squares0_f32((const float *)j->data + at, len);
+    if (j->squares)
+        return j->dtype == ARR_F64 ? squares_f64((const double *)j->data + at, len, j->center)
+                                   : squares_f32((const float *)j->data + at, len, j->center);
+    return j->dtype == ARR_F64 ? sum_f64((const double *)j->data + at, len) : sum_f32((const float *)j->data + at, len);
+}
 
 static void sum_pieces(void *ctx, int64_t from, int64_t to) {
     SumJob *j = (SumJob *)ctx;
     for (int64_t p = from; p < to; p++) {
         int64_t at = p * SUM_PIECE, len = j->n - at < SUM_PIECE ? j->n - at : SUM_PIECE;
-        j->parts[p] = j->dtype == ARR_F64 ? sum_f64((const double *)j->data + at, len)
-                                          : sum_f32((const float *)j->data + at, len);
+        j->parts[p] = sum_piece(j, at, len);
     }
 }
 
-/* The sum of a run of n floats (f64 or f32), in fixed pieces, those on several threads when there are many. */
-static double sum_run(const unsigned char *data, int dtype, int64_t n) {
-    if (n <= SUM_PIECE) return dtype == ARR_F64 ? sum_f64((const double *)data, n) : sum_f32((const float *)data, n);
+/* The sum of a run of n floats (f64 or f32), or of their squares about center, in fixed pieces, those on
+ * several threads when there are many. */
+static double sum_or_squares(const unsigned char *data, int dtype, int64_t n, int squares, double center) {
+    SumJob j = {data, dtype, n, NULL, squares, center};
+    if (n <= SUM_PIECE) return sum_piece(&j, 0, n);
     int64_t pieces = (n + SUM_PIECE - 1) / SUM_PIECE;
     double small[64], *parts = pieces <= 64 ? small : (double *)malloc(sizeof(double) * (size_t)pieces);
     if (!parts) abort();  /* LCOV_EXCL_LINE: out of memory */
-    SumJob j = {data, dtype, n, parts};
+    j.parts = parts;
     par_for(pieces, PARALLEL_WORK / SUM_PIECE, sum_pieces, &j);
     double t = 0;
     for (int64_t p = 0; p < pieces; p++) t += parts[p];
     if (parts != small) free(parts);
     return t;
 }
+
+static double sum_run(const unsigned char *data, int dtype, int64_t n) { return sum_or_squares(data, dtype, n, 0, 0); }
 
 /* The dtype a reduction gives for one of dtype t. */
 static int reduce_dtype(int op, int t) {
@@ -564,79 +620,232 @@ static int reduce_dtype(int op, int t) {
     }
 }
 
-/* Reduces n elements, `step` apart, starting at p (a C-contiguous Array's), into one result written at out. */
+#if defined(__aarch64__) && defined(__ARM_NEON)
+/* The largest (or smallest) of n > 0 floats in a row, NaN if one is NaN: NEON's maximum and minimum keep a NaN,
+ * so one pass finds both (and of 0 and -0 they take 0 as the larger). */
+#define NEON_EXTREME(NAME, T, V, LD, DUP, MAX, MIN, LANES)                                                     \
+    static T NAME(const T *x, int64_t n, int want_max) {                                                       \
+        V a0 = DUP(x[0]), a1 = a0, a2 = a0, a3 = a0;                                                           \
+        int64_t i = 0;                                                                                         \
+        if (want_max)                                                                                          \
+            for (; i + 4 * LANES <= n; i += 4 * LANES) {                                                       \
+                a0 = MAX(a0, LD(x + i));                                                                       \
+                a1 = MAX(a1, LD(x + i + LANES));                                                               \
+                a2 = MAX(a2, LD(x + i + 2 * LANES));                                                           \
+                a3 = MAX(a3, LD(x + i + 3 * LANES));                                                           \
+            }                                                                                                  \
+        else                                                                                                   \
+            for (; i + 4 * LANES <= n; i += 4 * LANES) {                                                       \
+                a0 = MIN(a0, LD(x + i));                                                                       \
+                a1 = MIN(a1, LD(x + i + LANES));                                                               \
+                a2 = MIN(a2, LD(x + i + 2 * LANES));                                                           \
+                a3 = MIN(a3, LD(x + i + 3 * LANES));                                                           \
+            }                                                                                                  \
+        V a = want_max ? MAX(MAX(a0, a1), MAX(a2, a3)) : MIN(MIN(a0, a1), MIN(a2, a3));                        \
+        T lanes[LANES];                                                                                        \
+        memcpy(lanes, &a, sizeof lanes);                                                                       \
+        T e = lanes[0];                                                                                        \
+        for (int k = 1; k < LANES; k++) e = e != e || lanes[k] != lanes[k] ? NAN : want_max ? (lanes[k] > e ? lanes[k] : e) : (lanes[k] < e ? lanes[k] : e); \
+        for (; i < n; i++) e = e != e || x[i] != x[i] ? NAN : want_max ? (x[i] > e ? x[i] : e) : (x[i] < e ? x[i] : e); \
+        return e;                                                                                              \
+    }
+NEON_EXTREME(neon_extreme_f64, double, float64x2_t, vld1q_f64, vdupq_n_f64, vmaxq_f64, vminq_f64, 2)
+NEON_EXTREME(neon_extreme_f32, float, float32x4_t, vld1q_f32, vdupq_n_f32, vmaxq_f32, vminq_f32, 4)
+#endif
+
+/* The code for each integer dtype (and bool), T its type, for a run of them at p. */
+#define BY_INT(dt, ...)                                                                                        \
+    do {                                                                                                       \
+        if ((dt) == ARR_I64) {                                                                                 \
+            typedef int64_t T;                                                                                 \
+            __VA_ARGS__                                                                                        \
+        } else if ((dt) == ARR_I32) {                                                                          \
+            typedef int32_t T;                                                                                 \
+            __VA_ARGS__                                                                                        \
+        } else {                                                                                               \
+            typedef unsigned char T;                                                                           \
+            __VA_ARGS__                                                                                        \
+        }                                                                                                      \
+    } while (0)
+
+/* The same for each dtype. */
+#define BY_ANY(dt, ...)                                                                                        \
+    do {                                                                                                       \
+        if ((dt) == ARR_F64) {                                                                                 \
+            typedef double T;                                                                                  \
+            __VA_ARGS__                                                                                        \
+        } else if ((dt) == ARR_F32) {                                                                          \
+            typedef float T;                                                                                   \
+            __VA_ARGS__                                                                                        \
+        } else {                                                                                               \
+            BY_INT(dt, __VA_ARGS__);                                                                           \
+        }                                                                                                      \
+    } while (0)
+
+/* Reduces n elements in a row at p into one result written at out. (step: always 1, or n is 0: axes before the
+ * last go by reduce_cols.) Loops for each dtype, so that they vectorize. */
 static void reduce_one(int op, const unsigned char *p, int dtype, int64_t n, int64_t step, int ddof,
                        unsigned char *out, int rtype) {
+    (void)step;
     int z = ITEMSIZE[dtype];
     switch (op) {
     case ARR_SUM: case ARR_MEAN: {
-        if (!IS_FLOAT(dtype) && op == ARR_SUM) {
+        if (!IS_FLOAT(dtype) && op == ARR_SUM) {  /* (whole numbers: exactly, wrapping as int64 does) */
             uint64_t s = 0;
-            for (int64_t i = 0; i < n; i++) s += (uint64_t)load_int(p + i * step * z, dtype);
+            BY_INT(dtype, {
+                const T *x = (const T *)p;
+                for (int64_t i = 0; i < n; i++) s += (uint64_t)(int64_t)x[i];
+            });
             store_int(out, rtype, (int64_t)s);
             break;
         }
         double s = 0;
-        if (IS_FLOAT(dtype) && step == 1) s = sum_run(p, dtype, n);
-        else
-            for (int64_t i = 0; i < n; i++) s += load(p + i * step * z, dtype);
+        if (IS_FLOAT(dtype)) {
+            s = sum_run(p, dtype, n);
+        } else {
+            BY_INT(dtype, {
+                const T *x = (const T *)p;
+                for (int64_t i = 0; i < n; i++) s += (double)x[i];
+            });
+        }
         store(out, rtype, op == ARR_MEAN ? s / (double)n : s);
         break;
     }
     case ARR_PROD: {
         if (!IS_FLOAT(dtype)) {
             uint64_t s = 1;
-            for (int64_t i = 0; i < n; i++) s *= (uint64_t)load_int(p + i * step * z, dtype);
+            BY_INT(dtype, {
+                const T *x = (const T *)p;
+                for (int64_t i = 0; i < n; i++) s *= (uint64_t)(int64_t)x[i];
+            });
             store_int(out, rtype, (int64_t)s);
             break;
         }
         double s = 1;
-        for (int64_t i = 0; i < n; i++) s *= load(p + i * step * z, dtype);
+        if (dtype == ARR_F64) for (int64_t i = 0; i < n; i++) s *= ((const double *)p)[i];
+        else for (int64_t i = 0; i < n; i++) s *= ((const float *)p)[i];
         store(out, rtype, s);
         break;
     }
     case ARR_VAR: case ARR_STD: {
         double mean = 0, ss = 0;
-        for (int64_t i = 0; i < n; i++) mean += load(p + i * step * z, dtype);
-        mean /= (double)n;
-        for (int64_t i = 0; i < n; i++) {
-            double d = load(p + i * step * z, dtype) - mean;
-            ss += d * d;
+        if (IS_FLOAT(dtype)) {  /* (as sum's: in fixed pieces, eight sums in each) */
+            mean = sum_run(p, dtype, n) / (double)n;
+            ss = sum_or_squares(p, dtype, n, 1, mean);
+        } else {
+            BY_INT(dtype, {
+                const T *x = (const T *)p;
+                for (int64_t i = 0; i < n; i++) mean += (double)x[i];
+                mean /= (double)n;
+                for (int64_t i = 0; i < n; i++) ss += ((double)x[i] - mean) * ((double)x[i] - mean);
+            });
         }
         double v = n - ddof > 0 ? ss / (double)(n - ddof) : NAN;
         store(out, rtype, op == ARR_STD ? sqrt(v) : v);
         break;
     }
     case ARR_MIN: case ARR_MAX: case ARR_ARGMIN: case ARR_ARGMAX: {
-        int want_max = op == ARR_MAX || op == ARR_ARGMAX;
+        /* In two passes that vectorize (the extreme, or a NaN; then the first place it is): what one pass taking
+         * each strictly better one would pick. */
+        int want_max = op == ARR_MAX || op == ARR_ARGMAX, nan = 0, arg = op == ARR_ARGMIN || op == ARR_ARGMAX, exact = 0;
         int64_t best = 0;
-        if (IS_FLOAT(dtype)) {
-            double b = load(p, dtype);
-            for (int64_t i = 1; i < n && b == b; i++) {  /* (the first NaN is the answer) */
-                double x = load(p + i * step * z, dtype);
-                if (x != x || (want_max ? x > b : x < b)) {
-                    b = x;
-                    best = i;
-                }
-            }
-        } else {
-            int64_t b = load_int(p, dtype);
-            for (int64_t i = 1; i < n; i++) {
-                int64_t x = load_int(p + i * step * z, dtype);
-                if (want_max ? x > b : x < b) {
-                    b = x;
-                    best = i;
-                }
-            }
-        }
-        if (op == ARR_ARGMIN || op == ARR_ARGMAX) store_int(out, rtype, best);
-        else memcpy(out, p + best * step * z, (size_t)z);
+        /* (eight extremes side by side, by fmax and fmin for floats, which vectorize: NaN is looked for apart,
+         * and of 0 and -0 the first in the row is taken anyway) */
+#define EXTREME(T, BIGGER, SMALLER)                                                                            \
+    do {                                                                                                       \
+        const T *x = (const T *)p;                                                                             \
+        T e = x[0], ek[8];                                                                                     \
+        int nk[8] = {0};                                                                                       \
+        int64_t i = 0;                                                                                         \
+        for (int k = 0; k < 8; k++) ek[k] = x[0];                                                              \
+        if (want_max) {                                                                                        \
+            for (; i + 8 <= n; i += 8)                                                                         \
+                for (int k = 0; k < 8; k++) {                                                                  \
+                    ek[k] = BIGGER(ek[k], x[i + k]);                                                           \
+                    nk[k] |= x[i + k] != x[i + k];                                                             \
+                }                                                                                              \
+            for (int k = 0; k < 8; k++) e = BIGGER(e, ek[k]);                                                  \
+            for (; i < n; i++) e = BIGGER(e, x[i]);                                                            \
+        } else {                                                                                               \
+            for (; i + 8 <= n; i += 8)                                                                         \
+                for (int k = 0; k < 8; k++) {                                                                  \
+                    ek[k] = SMALLER(ek[k], x[i + k]);                                                          \
+                    nk[k] |= x[i + k] != x[i + k];                                                             \
+                }                                                                                              \
+            for (int k = 0; k < 8; k++) e = SMALLER(e, ek[k]);                                                 \
+            for (; i < n; i++) e = SMALLER(e, x[i]);                                                           \
+        }                                                                                                      \
+        for (int k = 0; k < 8; k++) nan |= nk[k];                                                              \
+        for (i = n & ~(int64_t)7; i < n; i++) nan |= x[i] != x[i];                                             \
+        nan |= x[0] != x[0];                                                                                   \
+        if (nan) {                                                                                             \
+            while (x[best] == x[best]) best++;                                                                 \
+        } else if (arg || e == 0) {  /* (where it is: for argmin and argmax, and for 0, whose sign is the first's) */ \
+            while (x[best] != e) best++;                                                                       \
+        } else {                                                                                               \
+            exact = 1;                                                                                         \
+            if (IS_FLOAT(dtype)) store(out, rtype, (double)e);  /* (the very value: exact in its dtype) */          \
+            else store_int(out, rtype, (int64_t)e);                                                            \
+        }                                                                                                      \
+    } while (0)
+#define IBIG(a, b) ((b) > (a) ? (b) : (a))
+#define ISMALL(a, b) ((b) < (a) ? (b) : (a))
+#if defined(__aarch64__) && defined(__ARM_NEON)
+#define FLOAT_EXTREME(T, FN)                                                                                   \
+    do {                                                                                                       \
+        const T *x = (const T *)p;                                                                             \
+        T e = FN(x, n, want_max);                                                                              \
+        if (e != e) {                                                                                          \
+            nan = 1;                                                                                           \
+            while (x[best] == x[best]) best++;                                                                 \
+        } else if (arg || e == 0) {                                                                            \
+            while (x[best] != e) best++;                                                                       \
+        } else {                                                                                               \
+            exact = 1;                                                                                         \
+            store(out, rtype, (double)e);                                                                      \
+        }                                                                                                      \
+    } while (0)
+        if (dtype == ARR_F64) FLOAT_EXTREME(double, neon_extreme_f64);
+        else if (dtype == ARR_F32) FLOAT_EXTREME(float, neon_extreme_f32);
+#undef FLOAT_EXTREME
+#else
+        if (dtype == ARR_F64) EXTREME(double, fmax, fmin);
+        else if (dtype == ARR_F32) EXTREME(float, fmaxf, fminf);
+#endif
+        else BY_INT(dtype, { EXTREME(T, IBIG, ISMALL); });
+#undef EXTREME
+#undef IBIG
+#undef ISMALL
+        if (arg) store_int(out, rtype, best);
+        else if (!exact) memcpy(out, p + best * z, (size_t)z);
         break;
     }
-    default: {  /* any, all */
+    default: {  /* any, all: in blocks, stopping at the first that settles it */
         int any = op == ARR_ANY, r = !any;
-        for (int64_t i = 0; i < n && r != any; i++)
-            if ((load(p + i * step * z, dtype) != 0) == any) r = any;
+        if (z == 1) {  /* (bytes: all is no 0 among them, any a word of them that is not 0) */
+            if (!any) {
+                *out = memchr(p, 0, (size_t)n) == NULL;
+                break;
+            }
+            int64_t i = 0;
+            uint64_t w = 0;
+            for (; i + 8 <= n && !w; i += 8) {
+                uint64_t v;
+                memcpy(&v, p + i, 8);
+                w |= v;
+            }
+            for (; i < n && !w; i++) w |= p[i];
+            *out = w != 0;
+            break;
+        }
+        for (int64_t at = 0; at < n && r != any; at += 4096) {
+            int64_t m = n - at < 4096 ? n - at : 4096, hits = 0;
+            BY_ANY(dtype, {
+                const T *x = (const T *)p + at;
+                for (int64_t i = 0; i < m; i++) hits += x[i] != 0;
+            });
+            if (any ? hits > 0 : hits < m) r = any;
+        }
         *out = (unsigned char)r;
         break;
     }
@@ -657,6 +866,138 @@ static void reduce_rows(void *ctx, int64_t from, int64_t to) {
         int64_t o = r / j->inner, i = r % j->inner;
         reduce_one(j->op, j->data + (o * j->n * j->inner + i) * z, j->dtype, j->n, j->inner, j->ddof,
                    j->out + r * rz, j->rtype);
+    }
+}
+
+/* Along an axis that is not the last (inner > 1): row after row of a block of columns, each row's part loaded
+ * into a buffer, the columns' accumulators beside it in the cache, so that every loop runs along memory. Each
+ * column's arithmetic is reduce_one's, in the same order: the same results. Tasks: an outer position and a block
+ * of RC_COLS inner ones. */
+#define RC_COLS 256
+
+static void load_row(double *x, const unsigned char *p, int dtype, int64_t m) {
+    switch (dtype) {
+    case ARR_F64: memcpy(x, p, sizeof(double) * (size_t)m); break;
+    case ARR_F32: for (int64_t i = 0; i < m; i++) x[i] = ((const float *)p)[i]; break;
+    case ARR_I64: for (int64_t i = 0; i < m; i++) x[i] = (double)((const int64_t *)p)[i]; break;
+    case ARR_I32: for (int64_t i = 0; i < m; i++) x[i] = ((const int32_t *)p)[i]; break;
+    default: for (int64_t i = 0; i < m; i++) x[i] = p[i]; break;  /* uint8, bool */
+    }
+}
+
+static void load_row_int(int64_t *x, const unsigned char *p, int dtype, int64_t m) {
+    switch (dtype) {
+    case ARR_I64: memcpy(x, p, sizeof(int64_t) * (size_t)m); break;
+    case ARR_I32: for (int64_t i = 0; i < m; i++) x[i] = ((const int32_t *)p)[i]; break;
+    default: for (int64_t i = 0; i < m; i++) x[i] = p[i]; break;  /* uint8, bool */
+    }
+}
+
+static void reduce_cols(void *ctx, int64_t from, int64_t to) {
+    ReduceJob *j = (ReduceJob *)ctx;
+    int op = j->op, dt = j->dtype, z = ITEMSIZE[dt], rz = ITEMSIZE[j->rtype], flt = IS_FLOAT(dt);
+    int64_t n = j->n, inner = j->inner, blocks = (inner + RC_COLS - 1) / RC_COLS, rowstep = inner * z;
+    double x[RC_COLS], acc[RC_COLS], acc2[RC_COLS];
+    int64_t xi[RC_COLS], best[RC_COLS];
+    uint64_t ua[RC_COLS];
+    unsigned char flag[RC_COLS];
+    for (int64_t t = from; t < to; t++) {
+        int64_t o = t / blocks, i0 = (t % blocks) * RC_COLS, m = inner - i0 < RC_COLS ? inner - i0 : RC_COLS;
+        const unsigned char *base = j->data + (o * n * inner + i0) * z;
+        unsigned char *out = j->out + (o * inner + i0) * rz;
+        switch (op) {
+        case ARR_SUM: case ARR_PROD: case ARR_MEAN:
+            if (!flt && op != ARR_MEAN) {  /* (whole numbers: exactly, wrapping as int64 does) */
+                for (int64_t i = 0; i < m; i++) ua[i] = op == ARR_PROD;
+                for (int64_t k = 0; k < n; k++) {
+                    load_row_int(xi, base + k * rowstep, dt, m);
+                    if (op == ARR_SUM) for (int64_t i = 0; i < m; i++) ua[i] += (uint64_t)xi[i];
+                    else for (int64_t i = 0; i < m; i++) ua[i] *= (uint64_t)xi[i];
+                }
+                for (int64_t i = 0; i < m; i++) store_int(out + i * rz, j->rtype, (int64_t)ua[i]);
+                break;
+            }
+            for (int64_t i = 0; i < m; i++) acc[i] = op == ARR_PROD;
+            for (int64_t k = 0; k < n; k++) {
+                if (dt == ARR_F64 && op != ARR_PROD) {  /* (straight from the row) */
+                    const double *row = (const double *)(base + k * rowstep);
+                    for (int64_t i = 0; i < m; i++) acc[i] += row[i];
+                    continue;
+                }
+                load_row(x, base + k * rowstep, dt, m);
+                if (op == ARR_PROD) for (int64_t i = 0; i < m; i++) acc[i] *= x[i];
+                else for (int64_t i = 0; i < m; i++) acc[i] += x[i];
+            }
+            for (int64_t i = 0; i < m; i++) store(out + i * rz, j->rtype, op == ARR_MEAN ? acc[i] / (double)n : acc[i]);
+            break;
+        case ARR_VAR: case ARR_STD:
+            for (int64_t i = 0; i < m; i++) acc[i] = acc2[i] = 0;
+            for (int64_t k = 0; k < n; k++) {
+                load_row(x, base + k * rowstep, dt, m);
+                for (int64_t i = 0; i < m; i++) acc[i] += x[i];
+            }
+            for (int64_t i = 0; i < m; i++) acc[i] /= (double)n;
+            for (int64_t k = 0; k < n; k++) {
+                load_row(x, base + k * rowstep, dt, m);
+                for (int64_t i = 0; i < m; i++) {
+                    double d = x[i] - acc[i];
+                    acc2[i] += d * d;
+                }
+            }
+            for (int64_t i = 0; i < m; i++) {
+                double v = n - j->ddof > 0 ? acc2[i] / (double)(n - j->ddof) : NAN;
+                store(out + i * rz, j->rtype, op == ARR_STD ? sqrt(v) : v);
+            }
+            break;
+        case ARR_MIN: case ARR_MAX: case ARR_ARGMIN: case ARR_ARGMAX: {
+            int want_max = op == ARR_MAX || op == ARR_ARGMAX, arg = op == ARR_ARGMIN || op == ARR_ARGMAX;
+            for (int64_t i = 0; i < m; i++) best[i] = 0;
+            /* (the first NaN is the answer; without branches, so that the loops vectorize; positions only for
+             * argmin and argmax) */
+#define RC_PICK(BETTER, A, X)                                                                                  \
+    for (int64_t i = 0; i < m; i++) {                                                                          \
+        int up = BETTER;                                                                                       \
+        A[i] = up ? X[i] : A[i];                                                                               \
+        if (arg) best[i] = up ? k : best[i];                                                                   \
+    }
+            if (flt) {
+                load_row(acc, base, dt, m);
+                for (int64_t k = 1; k < n; k++) {
+                    const double *xr = x;  /* (float64: straight from the row) */
+                    if (dt == ARR_F64) xr = (const double *)(base + k * rowstep);
+                    else load_row(x, base + k * rowstep, dt, m);
+                    if (want_max) RC_PICK((acc[i] == acc[i]) & ((xr[i] != xr[i]) | (xr[i] > acc[i])), acc, xr)
+                    else RC_PICK((acc[i] == acc[i]) & ((xr[i] != xr[i]) | (xr[i] < acc[i])), acc, xr)
+                }
+            } else {
+                int64_t *b = (int64_t *)ua;
+                load_row_int(b, base, dt, m);
+                for (int64_t k = 1; k < n; k++) {
+                    load_row_int(xi, base + k * rowstep, dt, m);
+                    if (want_max) RC_PICK(xi[i] > b[i], b, xi)
+                    else RC_PICK(xi[i] < b[i], b, xi)
+                }
+            }
+#undef RC_PICK
+            for (int64_t i = 0; i < m; i++) {
+                if (arg) store_int(out + i * rz, j->rtype, best[i]);
+                else if (flt) store(out + i * rz, j->rtype, acc[i]);  /* (the very value: exact in its dtype) */
+                else store_int(out + i * rz, j->rtype, ((int64_t *)ua)[i]);
+            }
+            break;
+        }
+        default: {  /* any, all */
+            int any = op == ARR_ANY;
+            for (int64_t i = 0; i < m; i++) flag[i] = (unsigned char)!any;
+            for (int64_t k = 0; k < n; k++) {
+                load_row(x, base + k * rowstep, dt, m);
+                if (any) for (int64_t i = 0; i < m; i++) flag[i] |= x[i] != 0;
+                else for (int64_t i = 0; i < m; i++) flag[i] &= x[i] != 0;
+            }
+            memcpy(out, flag, (size_t)m);
+            break;
+        }
+        }
     }
 }
 
@@ -689,8 +1030,14 @@ static LubeValue reduce_op(LubeVM *vm, int op, LubeValue xv, int axis, int keepd
         r = arr_new(vm, rtype, nd, shape, &dst, 0);
         if (dst) {
             ReduceJob j = {op, a->dtype, rtype, ddof, a->data, dst->data, n, inner};
-            if (outer * inner == 1) reduce_rows(&j, 0, 1);
-            else par_for(outer * inner, PARALLEL_WORK / (n ? n : 1) + 1, reduce_rows, &j);
+            if (outer * inner == 1) {
+                reduce_rows(&j, 0, 1);
+            } else if (inner > 1 && n > 0) {  /* (along an axis that is not the last: by rows) */
+                int64_t tasks = outer * ((inner + RC_COLS - 1) / RC_COLS);
+                par_for(tasks, PARALLEL_WORK / (n * RC_COLS) + 1, reduce_cols, &j);
+            } else {
+                par_for(outer * inner, PARALLEL_WORK / (n ? n : 1) + 1, reduce_rows, &j);
+            }
         }
     }
     lube->release(keep);

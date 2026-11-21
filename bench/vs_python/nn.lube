@@ -1,0 +1,150 @@
+// nn.lube: the plugin nn (nn.py does the same with PyTorch): Tensor operations, Linear, Conv2d, the activations,
+// LayerNorm, Embedding, cross_entropy, backward, Adam and SGD steps, training steps, saving and loading. Every
+// weight and input is drawn from array's generator (numpy's numbers) and given to both sides, so the results
+// can be compared (each seeded after the modules are made: their own starting weights are drawn from the same
+// generator). Forward passes run without recording gradients (no_grad); the size is the shape of the input.
+import "harness"
+import array as np
+import nn
+import fs
+
+fn f32(a) => nn.tensor(a.astype("float32"))
+fn uniform(shape, fan_in) => f32((np.rand(shape) * 2 - 1) / sqrt(fan_in))
+
+fn mlp(sizes, seed) {  // Sequential([Linear, ReLU, Linear, ...]) with weights drawn here
+  var layers = []
+  for i in 0..len(sizes) - 1 {
+    if i > 0 { layers.push(nn.ReLU()) }
+    layers.push(nn.Linear(sizes[i], sizes[i + 1]))
+  }
+  let model = nn.Sequential(layers)
+  np.seed(seed)
+  var state = {}
+  for i in 0..len(sizes) - 1 {
+    state["{2 * i}.weight"] = uniform([sizes[i + 1], sizes[i]], sizes[i])
+    state["{2 * i}.bias"] = uniform([sizes[i + 1]], sizes[i])
+  }
+  model.load_state_dict(state)
+  return model
+}
+fn first_param(model) => model.parameters()[0].data
+
+// ---------- Tensor operations ----------
+for shape in [[64, 1024], [1024, 1024]] {
+  let size = "{shape[0]}x{shape[1]}"
+  np.seed(30)
+  let a = f32(np.randn(shape))
+  let b = f32(np.randn(shape))
+  let w = f32(np.randn([shape[1], 256]) / 32)
+  bench("tensor_add", size, fn() => a + b)
+  bench("tensor_mul", size, fn() => a * b)
+  bench("tensor_matmul_x256", size, fn() => a @ w)
+  bench("tensor_sum", size, fn() => a.sum())
+  bench("tensor_mean_dim1", size, fn() => a.mean(1))
+  bench("tensor_exp", size, fn() => a.exp())
+  bench("tensor_transpose_matmul", size, fn() => a.T @ b)
+
+  // ---------- activations (modules) ----------
+  let acts = [["ReLU", nn.ReLU()], ["GELU", nn.GELU()], ["Tanh", nn.Tanh()], ["Sigmoid", nn.Sigmoid()],
+              ["Softmax", nn.Softmax(1)], ["LogSoftmax", nn.LogSoftmax(1)], ["SiLU", nn.SiLU()]]
+  for act in acts {
+    let m = act[1]
+    bench(act[0], size, fn() => m.forward(a))
+  }
+}
+
+// ---------- layers ----------
+for batch in [64, 1024] {
+  let lin = nn.Linear(784, 256)
+  let ln = nn.LayerNorm(512)
+  let emb = nn.Embedding(10000, 128)
+  np.seed(31)
+  lin.load_state_dict({weight: uniform([256, 784], 784), bias: uniform([256], 784)})
+  let X = f32(np.rand(batch, 784))
+  let H = f32(np.randn(batch, 512))
+  emb.load_state_dict({weight: f32(np.randn(10000, 128))})
+  let ids = np.randint(0, 10000, [batch / 2, 32])
+  bench("Linear_784_256", "{batch}x784", fn() => nn.no_grad(fn() => lin.forward(X)))
+  bench("LayerNorm_512", "{batch}x512", fn() => nn.no_grad(fn() => ln.forward(H)))
+  bench("Embedding_10000x128", "{batch / 2}x32", fn() => nn.no_grad(fn() => emb.forward(ids)))
+}
+for batch in [8, 64] {
+  let conv = nn.Conv2d(3, 16, 3, {padding: 1})
+  let pool = nn.MaxPool2d(2)
+  np.seed(32)
+  conv.load_state_dict({weight: uniform([16, 3, 3, 3], 27), bias: uniform([16], 27)})
+  let img = f32(np.randn(batch, 3, 32, 32))
+  let fmap = f32(np.randn(batch, 16, 32, 32))
+  bench("Conv2d_3_16_k3", "{batch}x3x32x32", fn() => nn.no_grad(fn() => conv.forward(img)))
+  bench("MaxPool2d_2", "{batch}x16x32x32", fn() => nn.no_grad(fn() => pool.forward(fmap)))
+}
+for shape in [[64, 10], [4096, 1000]] {
+  np.seed(33)
+  let logits = f32(np.randn(shape))
+  let labels = np.randint(0, shape[1], shape[0])
+  bench("cross_entropy", "{shape[0]}x{shape[1]}", fn() => nn.cross_entropy(logits, labels))
+}
+
+// ---------- training: backward, optimizer steps, whole steps ----------
+for cfg in [[[784, 256, 10], 64], [[784, 1024, 1024, 10], 512]] {
+  let sizes = cfg[0]
+  let batch = cfg[1]
+  let size = "{join(map(sizes, fn(s) => str(s)), "-")}/b{batch}"
+  let model = mlp(sizes, 340)
+  np.seed(34)
+  let X = f32(np.rand(batch, 784))
+  let Y = np.randint(0, 10, batch)
+  let adam = nn.Adam(model.parameters(), {lr: 0.001})
+  bench_chk("forward_backward", size, fn() {
+    adam.zero_grad()
+    let loss = nn.cross_entropy(model.forward(X), Y)
+    loss.backward()
+    return loss.item()
+  }, fn(r) => r)
+  bench_chk("adam_step", size, fn() {
+    adam.step()
+    return 0
+  }, fn(r) => first_param(model))
+  let model_s = mlp(sizes, 341)
+  let sgd = nn.SGD(model_s.parameters(), {lr: 0.01, momentum: 0.9})
+  nn.cross_entropy(model_s.forward(X), Y).backward()
+  bench_chk("sgd_step", size, fn() {
+    sgd.step()
+    return 0
+  }, fn(r) => first_param(model_s))
+  let model2 = mlp(sizes, 342)
+  let opt2 = nn.Adam(model2.parameters(), {lr: 0.001})
+  bench_chk("train_step_adam", size, fn() {
+    opt2.zero_grad()
+    let loss = nn.cross_entropy(model2.forward(X), Y)
+    loss.backward()
+    opt2.step()
+    return loss.item()
+  }, fn(r) => r)
+  let fresh = mlp(sizes, 343)  // (the others' weights depend on how many steps their measurements took)
+  let path = H_TMP + "/nn_{batch}.safetensors"
+  nn.save(path, fresh.state_dict())  // (first, so that each case can run alone)
+  bench("save_state_dict", size, fn() {
+    nn.save(path, fresh.state_dict())
+    return 0
+  })
+  bench("load_state_dict_file", size, fn() => nn.load(path))
+  fs.remove_file(path)
+}
+
+for batch in [32, 128] {
+  let cnn = nn.Sequential([nn.Conv2d(1, 8, 3, {padding: 1}), nn.ReLU(), nn.MaxPool2d(2), nn.Flatten(), nn.Linear(8 * 14 * 14, 10)])
+  np.seed(35)
+  cnn.load_state_dict({"0.weight": uniform([8, 1, 3, 3], 9), "0.bias": uniform([8], 9),
+                       "4.weight": uniform([10, 8 * 14 * 14], 8 * 14 * 14), "4.bias": uniform([10], 8 * 14 * 14)})
+  let imgs = f32(np.randn(batch, 1, 28, 28))
+  let labels = np.randint(0, 10, batch)
+  let opt = nn.SGD(cnn.parameters(), {lr: 0.01, momentum: 0.9})
+  bench_chk("cnn_train_step_sgd", "{batch}x1x28x28", fn() {
+    opt.zero_grad()
+    let loss = nn.cross_entropy(cnn.forward(imgs), labels)
+    loss.backward()
+    opt.step()
+    return loss.item()
+  }, fn(r) => r)
+}

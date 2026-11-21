@@ -17,7 +17,7 @@
 
 #include "../lube_plugin.h"
 
-#define ARRAY_EXPORTS 1  /* this table's version */
+#define ARRAY_EXPORTS 2  /* this table's version (2: make_empty) */
 #define ARR_MAXDIM 16    /* the most dimensions an Array has */
 
 enum { ARR_F64, ARR_F32, ARR_I64, ARR_I32, ARR_U8, ARR_BOOL, ARR_NDTYPES };  /* dtypes */
@@ -96,6 +96,9 @@ typedef struct {
     void (*seed)(uint32_t n);
     /* How a prints, as print(a) shows it: snprintf's count */
     int (*describe)(const Array *a, char *buf, size_t size);
+    /* As make, but the memory is not cleared: for an Array the plugin fills in whole (clearing megabytes costs
+     * about as much as filling them) */
+    LubeValue (*make_empty)(LubeVM *vm, int dtype, int ndim, const int64_t *shape, void **data);
 } ArrayExports;
 
 #endif

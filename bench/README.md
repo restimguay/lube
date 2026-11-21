@@ -22,3 +22,21 @@ python3 bench/vs_rust/run.py --native --fast  # ... with --native --fast (wrappi
 Rust is built with `rustc -C opt-level=3`. `--base` runs the two lubes
 alternately; on macOS it counts CPU cycles and instructions, which other
 programs running at the same time barely affect.
+
+## Lube against Python
+
+`vs_python/` does the same computations in Lube and in Python, case by case
+and at several sizes: the language, Money against `decimal`, `math`, `cmath`,
+`statistics` and `random`, and the plugins against the libraries they match
+(numpy, `numpy.linalg`, PyTorch, scikit-learn, llama-cpp-python), and
+isolates against threads and processes. Each case prints its time and a
+checksum, so the table shows both who is faster and whether the two computed
+the same thing.
+
+```sh
+python3 bench/vs_python/run.py                        # every area: Lube, Python, Python/Lube, checksums
+python3 bench/vs_python/run.py array --json new.json  # one area, results kept
+python3 bench/vs_python/run.py --compare old.json     # each case's Lube time before and after
+```
+
+See `vs_python/README.md` for how it measures and what it needs.

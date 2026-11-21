@@ -27,14 +27,29 @@ static void rng_seed(uint32_t seed) {
     rng_seeded = 1;
 }
 
-static uint32_t next32(void) {
-    if (rng.pos == 624) {
-        for (int i = 0; i < 624; i++) {
-            uint32_t y = (rng.key[i] & 0x80000000u) | (rng.key[(i + 1) % 624] & 0x7fffffffu);
-            rng.key[i] = rng.key[(i + 397) % 624] ^ (y >> 1) ^ (y & 1 ? 0x9908b0dfu : 0);
-        }
-        rng.pos = 0;
+/* The next 624 words (the twist, in three runs: no remainders, no branches), kept out of line so that next32's
+ * usual path inlines into the loops that fill Arrays. */
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline))
+#endif
+static void twist(void) {
+    uint32_t *k = rng.key, y;
+    int i = 0;
+    for (; i < 624 - 397; i++) {
+        y = (k[i] & 0x80000000u) | (k[i + 1] & 0x7fffffffu);
+        k[i] = k[i + 397] ^ (y >> 1) ^ (0x9908b0dfu & (0u - (y & 1)));
     }
+    for (; i < 623; i++) {
+        y = (k[i] & 0x80000000u) | (k[i + 1] & 0x7fffffffu);
+        k[i] = k[i + 397 - 624] ^ (y >> 1) ^ (0x9908b0dfu & (0u - (y & 1)));
+    }
+    y = (k[623] & 0x80000000u) | (k[0] & 0x7fffffffu);
+    k[623] = k[396] ^ (y >> 1) ^ (0x9908b0dfu & (0u - (y & 1)));
+    rng.pos = 0;
+}
+
+static inline uint32_t next32(void) {
+    if (rng.pos == 624) twist();
     uint32_t y = rng.key[rng.pos++];
     y ^= y >> 11;
     y ^= (y << 7) & 0x9d2c5680u;
@@ -47,7 +62,7 @@ static uint64_t next64(void) {
     return hi << 32 | next32();
 }
 
-static double next_double(void) {  /* [0, 1) with 53 random bits */
+static inline double next_double(void) {  /* [0, 1) with 53 random bits */
     uint32_t a = next32() >> 5, b = next32() >> 6;
     return (a * 67108864.0 + b) / 9007199254740992.0;
 }

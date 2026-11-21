@@ -949,10 +949,10 @@ An `Array` is n-dimensional (up to 16) and of one dtype: `"float64"` unless aske
 - Properties `shape`, `ndim`, `size`, `dtype`, `T`, `itemsize`, `nbytes`; methods `reshape(...)` (one axis may be `-1`), `flatten`, `ravel`, `transpose(axes?)`, `swapaxes`, `squeeze`, `astype(dtype)`, `copy`, `to_list`, `to_bytes`, `item(i?)`, `dot`, `clip`, `round`, `sort`, `argsort`, `nonzero`, and the reductions.
 - Elementwise functions, which take Numbers too (so `import array.*` can replace Lube's own `sqrt`, `abs`...): `abs`, `sqrt`, `cbrt`, `exp`, `exp2`, `expm1`, `log(x, base?)`, `log2`, `log10`, `log1p`, `sin`, `cos`, `tan`, `arcsin`, `arccos`, `arctan`, `sinh`, `cosh`, `tanh`, `arcsinh`, `arccosh`, `arctanh`, `erf`, `floor`, `ceil`, `trunc`, `rint`, `round(x, decimals?)` (half to even, as numpy's and Python's), `sign`, `square`, `reciprocal`, `negative`, `isnan`, `isinf`, `isfinite`, `logical_not`; and of two: `add`, `subtract`, `multiply`, `divide`, `mod`, `power`, `maximum`, `minimum`, `arctan2`, `hypot`, `fmod`, `floor_divide`, `copysign`, the comparisons by name (`less`, `equal`...), `logical_and`, `logical_or`, `logical_xor`, `where(cond, x, y)`, `clip`, `isclose`, `allclose`.
 - Reductions over everything or along an axis (`a.sum(0)`, `{keepdims: true}`): `sum`, `prod`, `mean`, `var` and `std` (`{ddof: 1}`), `min`, `max`, `argmin`, `argmax`, `any`, `all`, `ptp`, `cumsum`, `cumprod`, `count_nonzero`, `average(a, axis?, {weights})`, `median`, `percentile(a, q, axis?)`, `quantile`. `min` and `max` of several Numbers are still their smallest and largest. Then `sort` and `argsort` (along an axis; argsort keeps equal ones in order), `unique(a, {return_index, return_inverse, return_counts})`, `searchsorted`, `bincount`, `nonzero`, `flip`, `roll`.
-- Linear algebra: `matmul`, `dot`, `inner`, `outer`, `trace`, `det`, `slogdet`, `inv`, `solve`, `lstsq` (`[x, residuals, rank, s]`), `pinv`, `matrix_rank`, `qr` (`[q, r]`), `svd` (`[u, s, vh]`, `{full_matrices, compute_uv}`), `eigh` and `eigvalsh` (symmetric matrices), `cholesky`, `norm(x, ord?, axis?)`. Decompositions work in float64 and give float32 for float32.
+- Linear algebra: `matmul`, `dot`, `inner`, `outer`, `trace`, `det`, `slogdet`, `inv`, `solve`, `lstsq` (`[x, residuals, rank, s]`), `pinv`, `matrix_rank`, `qr` (`[q, r]`), `svd` (`[u, s, vh]`, `{full_matrices, compute_uv}`), `eigh` and `eigvalsh` (symmetric matrices), `cholesky`, `norm(x, ord?, axis?)`. Decompositions work in float64 and give float32 for float32. They call the system's LAPACK where there is one, as numpy does (Accelerate's on macOS, the one inside OpenBLAS, or `liblapack`), on the matrices by columns as numpy passes them, so they give numpy's answers to the last digit when both use the same LAPACK; `use_blas(false)` turns to array's own code (Householder tridiagonalization and the QL method for `eigh`, one-sided Jacobi for `svd`), which gives the same answers on every system.
 - Random Arrays give numpy's numbers for the same seed (its `RandomState`): `seed(n?)`, `rand(shape...)`, `randn`, `random(size?)`, `uniform(low, high, size?)`, `normal(loc, scale, size?)`, `standard_normal`, `exponential`, `randint(low, high?, size?)`, `choice(a, size?, {replace, p})`, `permutation(x)`, and `shuffle(x)` (a new Array). One generator for the process, under a lock.
 - Files: `save(path, a)` and `load(path)` write and read numpy's `.npy`, both ways; `loadtxt(path, {delimiter, skiprows, dtype})` and `savetxt(path, a, {fmt, delimiter, header})` numbers in columns; `load_safetensors(path)` and `save_safetensors(path, {name: a})` the format models come in (float16 and bfloat16 become float32).
-- Speed: the matrix product uses the system's BLAS where there is one (Accelerate on macOS, OpenBLAS on Linux or Windows when it is installed: `blas()` says which, and `use_blas(false)` turns to array's own kernel, blocked and packed), and loops over big Arrays share out among threads (`threads(n)`; their results don't depend on how many). Against numpy 2.5 on an M5: `exp` of 10 million numbers 5 times as fast, `sum` 1.5 times, sorting a million 1.2 times, small Arrays' operations about twice as fast (Lube's calls cost less), and big matrix products the same (both are Accelerate's).
+- Speed: the matrix product and the decompositions use the system's BLAS and LAPACK where there is one (Accelerate on macOS, OpenBLAS on Linux or Windows when it is installed: `blas()` says which, and `use_blas(false)` turns to array's own kernel, blocked and packed), and loops over big Arrays share out among threads (`threads(n)`; their results don't depend on how many). `median`, `percentile` and `quantile` select the elements they need (Floyd and Rivest's way) instead of sorting; a bool mask of the Array's own shape is counted and copied in one go; reductions along an axis that is not the last go row by row, so that they read memory in order. Against numpy 2.5 on an M5: `exp` of 10 million numbers 5 times as fast, `median` of a million twice as fast and along an axis 5 times, `x[x > 0]` 4 to 19 times, `unique` up to 6 times, sorting a million 1.2 times, small Arrays' operations about twice as fast (Lube's calls cost less), and big matrix products and decompositions the same (both are Accelerate's). `bench/vs_python` compares every function at several sizes.
 - What numpy has and this hasn't: complex Arrays (see `cmath` for complex numbers), the smaller dtypes (int8, int16, float16), structured dtypes, `np.linalg.eig` for matrices that aren't symmetric, and numpy's keyword arguments, which come as an object at the end.
 
 ### Neural networks: `nn`
@@ -987,7 +987,7 @@ print(nn.no_grad(fn() => nn.sigmoid(model.forward(X))))   // XOR: about 0, 1, 1,
 - Modules, each with `forward(x)`, `parameters()`, `train()`, `eval()`, `state_dict()`, `load_state_dict(state)` and `zero_grad()`: `Linear(in, out, {bias})`, `Conv2d(in, out, k, {stride, padding, bias})`, `Embedding(n, dim)`, `LayerNorm(dim, {eps})`, `Dropout(p?)`, `ReLU`, `LeakyReLU`, `GELU`, `SiLU`, `Sigmoid`, `Tanh`, `Softmax(dim?)`, `LogSoftmax`, `Flatten`, `MaxPool2d(k, {stride})`, `AvgPool2d`, `Sequential([...])`, and the losses as modules (`MSELoss`, `L1Loss`, `CrossEntropyLoss`, `BCELoss`, `BCEWithLogitsLoss`: `forward(input, target)`). Starting weights are drawn as PyTorch draws them. A `Sequential` can hold objects of your own classes too: anything with `forward(x)` and `parameters()` methods.
 - Optimizers `SGD(params, {lr, momentum, dampening, weight_decay, nesterov})`, `Adam(params, {lr, betas, eps, weight_decay})` and `AdamW` (decoupled weight decay), with `step()`, `zero_grad()`, `lr` and `set_lr(x)`. `params` is a list of Tensors or a module.
 - `save(path, tensors)` writes an object of Tensors by name (or a module's `state_dict()`) as safetensors, the format of Hugging Face's models; `load(path)` reads one back as Tensors.
-- Every operation's gradient is checked against PyTorch's (and against finite differences in the tests), and to the 6th decimal they are the same. Training is faster: an MNIST-sized network (784, 256, 10, batches of 64) trains twice as fast as PyTorch 2.15 on an M5, a small CNN 1.4 times, and a tiny network 14 times (Lube's calls cost less than Python's).
+- Every operation's gradient is checked against PyTorch's (and against finite differences in the tests), and to the 6th decimal they are the same. Training is faster: an MNIST-sized network (784, 256, 10, batches of 64) trains twice as fast as PyTorch 2.15 on an M5, a small CNN 1.4 times, and a tiny network 14 times (Lube's calls cost less than Python's). float32's activations (sigmoid, tanh, GELU, SiLU) and softmax run without the C library, in loops that vectorize, on array's threads: within a few units in the last place, and GELU stays accurate far into its tail, where PyTorch's float32 GELU loses everything below -5.
 - What PyTorch has and this hasn't: GPUs, recurrent layers (LSTM, GRU) and attention as modules (build them from the operations: `softmax(q @ k.T / 8) @ v`), BatchNorm, learning-rate schedulers, and higher-order gradients.
 
 ### Machine learning: `learn`
@@ -1281,7 +1281,7 @@ All of these are globals, and all of them can be called in method style; the row
 | output and input | `print(...)`, `write(...)` (no newline), `input(prompt?)` (an error at end of input), `read_file(path)`, `write_file(path, text)`, `append_file(path, text)`, `exit(code?)` |
 | types | `str(x)`, `String(x)`, `Number(x, fallback?)`, `Bool(x)`, `Object(x)`, `Map(x)`, `List(x)`, `Function(f)`, `Range(...)`, plus the sized integers; `type(x)` gives the type's name; the lowercase `num`, `int`, `bool` and `list` still work; `repr(x)` |
 | sized integers | `int8`, `int16`, `int32`, `int64`, `uint8`, `uint16`, `uint32`, `uint64`; each takes an optional value and defaults to 0 |
-| lists | `len`, `slice(x, start, end?)`, `reverse`, `sort(xs, compare?)`, `contains`, `index_of`, `join(xs, sep?)`, `list(x)`, `zip(a, b)` |
+| lists | `len`, `slice(x, start, end?)`, `reverse`, `sort(xs, compare_or_key?)`, `contains`, `index_of`, `join(xs, sep?)`, `list(x)`, `zip(a, b)` |
 | objects | `keys`, `values`, `items`, `has(obj, key)`, `get(obj, key, default?)` (a missing key without a default is an error) |
 | functional | `map`, `filter`, `each`, `reduce(xs, f, start?)`, `find(xs, f, default?)`, `find_index` (-1 if none), `any(xs, f?)`, `all(xs, f?)`, `sum`, `min`, `max`, `range(end)` / `range(start, end, step?)` |
 | strings | `upper`, `lower`, `trim`, `split(s, sep?)`, `replace(s, old, new)`, `starts_with`, `ends_with`, `chars`, `ord`, `chr`, `pad_left(x, width, fill?)`, `pad_right`, `fixed(n, digits?)` |
@@ -1304,7 +1304,7 @@ All of these are globals, and all of them can be called in method style; the row
 | `fs` (plugin) | `open(path, mode?)`; methods `f.read(n?)`, `f.read_line()`, `f.write(x)`, `f.seek(pos, from?)`, `f.tell()`, `f.size()`, `f.eof()`, `f.flush()`, `f.close()`; `read_bytes`, `write_bytes`, `exists`, `is_dir`, `list_dir`, `make_dir`, `remove_file`, `rename_file`, `file_size` |
 | misc | `assert(cond, message?)`, `clock()` (CPU seconds), `time()` (Unix time), `now()` (a steady clock, for timing), `sleep(seconds)`, `hot_reload()` (see Hot reload), `args` |
 
-Everything outside the first row returns a new value and leaves its arguments alone; `sort` and `reverse` return new lists. `map`, `filter` and `each` also pass the index when the function takes two parameters: `xs.map(fn(x, i) => ...)`. A `sort` comparator can return a number (negative means `a` goes first) or a bool (`true` means `a` goes first).
+Everything outside the first row returns a new value and leaves its arguments alone; `sort` and `reverse` return new lists. `map`, `filter` and `each` also pass the index when the function takes two parameters: `xs.map(fn(x, i) => ...)`. A `sort` comparator can return a number (negative means `a` goes first) or a bool (`true` means `a` goes first). A function of one item is a key instead, as Python's `key=` is: `people.sort(fn(p) => p.age)` calls it once for each item, then orders the items by their keys (equal ones keep their order). That is much faster than a comparator, which is called for each pair the sort compares.
 
 Lengths and indexes count bytes. Iterating text, `chars()`, `ord()`, `chr()` and a `String`'s `length` understand UTF-8.
 
@@ -1442,7 +1442,7 @@ Lube is written in C, and its plugins read files from anywhere (models, arrays, 
   - scikit-learn;
   - Python's `math`, `cmath`, `statistics` and `random`, with the same random numbers digit for digit;
   - for `llm`, a NumPy model that computes the way llama.cpp does. `tests/models/make_models.py` makes the tiny GGUF models the tests load and prints what that model gives.
-- **The same output everywhere.** Results that depend on the C library (`exp`, `sin`, float32's functions...) print rounded. The plugins are compiled without fused multiply-adds, so a sum comes out the same on ARM and x86, with either compiler.
+- **The same output everywhere.** Results that depend on the C library (`exp`, `sin`, float32's functions...) or on the system's LAPACK print rounded, and the decompositions run twice, with LAPACK and with array's own code, which must agree. The plugins are compiled without fused multiply-adds, so a sum comes out the same on ARM and x86, with either compiler.
 - **Memory.** `make check` runs the suite on a build with AddressSanitizer and UndefinedBehaviorSanitizer. That build also fails if any object is still alive at exit, in the main program or in any isolate.
 - **Threads.** `make tsan` runs it with ThreadSanitizer, which reports any data race: between isolates, and in the thread pool that `array`, `nn`, `learn` and `llm` share.
 - **Coverage.** `make coverage` builds with clang's source-based coverage, runs the suite, and fails unless every line and every function of the interpreter and its plugins ran. The few defensive lines that no program can reach are marked `LCOV_EXCL_LINE` (or sit between `LCOV_EXCL_START` and `LCOV_EXCL_STOP`), and the report counts them.
@@ -1489,28 +1489,52 @@ Every round is seeded the same way, so its checksums must never change: one that
 **An hour on an M5** (10 cores, 16 GB), loading stories15M and SmolLM2-135M:
 
 - **Rounds:** 7,019, and every checksum was the same.
-- **Memory:** flat. Resident memory had a median of 372–378 MB in every 10 minutes, and the physical footprint peaked at 374 MB, trending slightly down. Most of it is the isolates' (alone, that workload peaks at 207 MB, every other one under 25 MB): each interpreter reserves a 16 MB stack and a 16 MB type table, and memory reused from one isolate for the next is resident.
+- **Memory:** flat. Resident memory had a median of 372–378 MB in every 10 minutes, and the physical footprint peaked at 374 MB, trending slightly down. Most of it was the isolates': each interpreter reserved a 16 MB stack and a 16 MB type table, and malloc cleared that memory again for each new isolate. The interpreter now maps those from the system, so only the pages it touches count, and they go back when it ends: the same soak's footprint now peaks at 46 MB.
 - **Leaks:** `leaks` found nothing at any of its six checks.
 - **Speed:** a round took 445–456 ms (the median of each 10 minutes) for 50 minutes. The last 10 were slower only because the machine got busier: a fresh process started then was just as slow.
 
-The same workload in Python, run back to back with Lube on the same machine (the median of each, in ms):
+**Against Python.** The same workload in Python, run back to back with Lube for five minutes each, after the speed work below (the median of each, in ms; the machine was busy with other work at the time, the same for both):
 
 | workload | Lube | Python | |
 |---|---|---|---|
-| core language | 8.3 | 9.2 | Lube 1.1× faster |
-| Money (Python: `decimal`) | 28.0 | 13.8 | Python 2.0× faster |
-| `math`, `cmath`, `statistics`, `random` | 10.0 | 9.0 | Python 1.1× faster |
-| `array` (NumPy) | 241.1 | 30.4 | Python 7.9× faster |
-| `nn` (PyTorch) | 59.3 | 53.5 | Python 1.1× faster |
-| `learn` (scikit-learn, the forest on all cores) | 12.6 | 139.2 | Lube 11× faster |
-| `llm` (llama-cpp-python), loading included | 93.3 | 428.7 | Lube 4.6× faster |
-| isolates (Python: a process pool and threads) | 10.2 | 1,514.9 | Lube 149× faster |
-| 3,400 errors | 2.0 | 58.8 | Lube 29× faster |
-| tiny operations | 1.1 | 4.6 | Lube 4.2× faster |
-| **a whole round** | **482** | **2,347** | **Lube 4.9× faster** (1.6× without the isolates) |
+| core language | 8.4 | 9.5 | Lube 1.1× faster |
+| Money (Python: `decimal`) | 5.3 | 13.5 | Lube 2.6× faster |
+| `math`, `cmath`, `statistics`, `random` | 6.7 | 8.4 | Lube 1.3× faster |
+| `array` (NumPy) | 13.5 | 27.2 | Lube 2.0× faster |
+| `nn` (PyTorch) | 25.1 | 38.1 | Lube 1.5× faster |
+| `learn` (scikit-learn, the forest on all cores) | 12.6 | 125.3 | Lube 10× faster |
+| `llm` (llama-cpp-python), loading included | 89.4 | 181.3 | Lube 2.0× faster |
+| isolates (Python: a process pool and threads) | 4.8 | 1,162.2 | Lube 242× faster |
+| 3,400 errors | 1.8 | 37.4 | Lube 21× faster |
+| tiny operations | 0.7 | 4.1 | Lube 5.8× faster |
+| **a whole round** | **169** | **1,604** | **Lube 9.5× faster** (2.7× without the isolates) |
 
-Where Python wins, the cause is known:
+Before that work, Python won three of these: `array` (7.9× faster than Lube, almost all of it `eigh` by Jacobi's method), Money (2×) and `nn` (1.1×, GELU computing `erf` one element at a time).
 
-- **`array`:** almost all of it is `eigh`. It uses Jacobi's method and takes 202 ms on a 300×300 matrix, where LAPACK takes 3.4 ms. Behind it are `median` (it sorts everything: 11× slower), and `solve` and `svd` (4.5–6× slower, unblocked where NumPy calls LAPACK). Lube wins on `sort` and `argsort` (2× and 4.7×) and on reading and writing files (2–3×), and matrix products are even.
-- **`nn`:** GELU computes `erf` one element at a time, 11× slower than PyTorch's. The linear layers and convolutions are as fast as PyTorch's or faster.
-- **Money** gets the same amounts as `decimal`, to the cent, but takes twice as long.
+### Against Python, case by case
+
+`bench/vs_python` (see `bench/README.md`) times 1,100 cases in each language, every function at several sizes: the language, Money, `math`, `cmath`, `statistics` and `random`, and the plugins against NumPy, `numpy.linalg`, PyTorch, scikit-learn and llama-cpp-python. Python/Lube for each area, as the geometric mean of its cases (above 1, Lube is faster), on the M5 under the same load, before and after the speed work:
+
+| area | cases | before | after | where Python is still faster |
+|---|---|---|---|---|
+| core language | 114 | 1.10 | 1.07 | 64 |
+| Money | 40 | 0.90 | 2.98 | 0 |
+| `math`, `cmath`, `statistics`, `random` | 139 | 1.16 | 1.72 | 67 |
+| `array` | 550 | 0.95 | 1.52 | 148 |
+| linear algebra | 76 (68 before: 8 took too long) | 0.39 | 1.63 | 7 |
+| `nn` | 54 | 0.54 | 0.99 | 31 |
+| `learn` | 90 | 5.27 | 6.51 | 6 |
+| `llm` | 17 | 3.12 | 4.58 | 2 |
+| isolates | 20 | 3.20 | 5.26 | 4 |
+| **all** | **1,100** | **1.09** | **1.76** | **329 (from 514)** |
+
+What changed: the decompositions call the system's LAPACK (as NumPy does), with a faster method of Lube's own where there is none; `median` and the percentiles select instead of sorting; masks, `unique`, reductions along an axis, `where`, `roll`, `repeat`, `nonzero` and indexing by positions got loops of their own; float32's activations and softmax in `nn` vectorize; Money converts a Number to cents without formatting it as text; the threads that `array`, `nn`, `learn` and `llm` share no longer wait for each other; and a package's function is found once per call site, not by name at each call.
+
+Where Python is still faster, the cause is known:
+
+- **The interpreter's own work.** Inserting into maps, appending to lists, comparing strings and making objects take 1.5–3 times as long as in CPython 3.15, whose interpreter specializes each operation as it runs. A `sort` with a comparator calls it for every pair it compares: a key function (`sort(xs, fn(x) => x.age)`) is called once per item, and is 10 times as fast.
+- **Calls that make an object each time:** `math.isclose(a, b, {rel_tol: ...})` builds its options, and each `cmath` result is a new Complex (0.3–0.6×).
+- **`nn` on small batches:** softmax and GELU on a 64×1024 batch (0.1–0.4×), where the threads' start-up costs more than the work; on big ones Lube is as fast or faster. Loading a big state dict (0.2×): PyTorch's safetensors maps the file, where Lube reads it.
+- **`llm`:** reading a prompt is 0.35–0.8× llama.cpp's, generating 0.55–0.7×, because Lube promises the same logits on every system and for a prompt read at once or a token at a time, which rules out llama.cpp's reordered matrix kernels for batches.
+- **Starting an isolate** (0.2× a Python thread): each one is a fresh interpreter that runs the program's declarations again; a pool of them (`parallel_map`) is 3–5 times as fast as Python's.
+- **`from_bytes`:** NumPy's `frombuffer` does not copy, and Lube's Array owns its memory.

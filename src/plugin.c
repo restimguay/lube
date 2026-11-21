@@ -244,9 +244,22 @@ static LubeValue api_list_get(LubeValue x, size_t i) {
     return L(IS_LIST(v) && i < AS_LIST(v)->count ? AS_LIST(v)->items[i] : NIL_VAL);
 }
 
+/* key, interned: through a cache by its address (plugins' keys are mostly their literals), checked against the
+ * text it holds, so that a key in a reused buffer still finds its own. */
+static ObjString *plugin_key(Interp *I, const char *key) {
+    size_t len = strlen(key);
+    unsigned at = (unsigned)(((uintptr_t)key >> 3) & 63);
+    ObjString *s = I->key_cache[at].s;
+    if (I->key_cache[at].at == key && s->length == len && !memcmp(s->chars, key, len)) return s;
+    s = lube_intern(I, key, len);  /* (interned strings live until the end: the cache may keep it) */
+    I->key_cache[at].at = key;
+    I->key_cache[at].s = s;
+    return s;
+}
+
 static int api_object_get(LubeVM *vm, LubeValue o, const char *key, LubeValue *out) {
     Value v = V(o), got;
-    if (!IS_MAP(v) || !map_get(AS_MAP(v), OBJ_VAL(lube_intern((Interp *)vm, key, strlen(key))), &got)) return 0;
+    if (!IS_MAP(v) || !map_get(AS_MAP(v), OBJ_VAL(plugin_key((Interp *)vm, key)), &got)) return 0;
     *out = L(got);
     return 1;
 }
@@ -309,7 +322,7 @@ static LubeValue api_new_object(LubeVM *vm) {
 
 static void api_object_set(LubeVM *vm, LubeValue o, const char *key, LubeValue x) {
     Value v = V(o);
-    if (IS_MAP(v) && !AS_MAP(v)->klass) map_set(AS_MAP(v), retain(OBJ_VAL(lube_intern((Interp *)vm, key, strlen(key)))), V(x));
+    if (IS_MAP(v) && !AS_MAP(v)->klass) map_set(AS_MAP(v), retain(OBJ_VAL(plugin_key((Interp *)vm, key))), V(x));
     else release(V(x));
 }
 

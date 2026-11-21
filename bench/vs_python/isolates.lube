@@ -1,0 +1,91 @@
+// isolates.lube: isolates and channels (isolates.py does the same with threads and queues, multiprocessing and
+// ProcessPoolExecutor): starting and joining, sharing work out over every core, and sending values between them.
+// Each Python case says what it is measured against in its name. This file imports no plugin, so that an isolate
+// starts with nothing but the program.
+import "harness"
+
+fn noop(x) => x
+fn fib(n) {
+  if n < 2 { return n }
+  return fib(n - 1) + fib(n - 2)
+}
+fn echo(jobs: Channel, results: Channel) {
+  for v in jobs { results.send(v * 2) }
+}
+fn summer(jobs: Channel, results: Channel) {
+  for xs in jobs { results.send(sum(xs)) }
+}
+
+// ---------- start and join ----------
+bench("spawn_join_vs_thread", 1, fn() => spawn(noop, 1).join())
+bench("spawn_join_vs_process", 1, fn() => spawn(noop, 1).join())
+for n in [10, 100] {
+  bench("spawn_join_many_vs_threads", n, fn() {
+    var pool = []
+    for i in 0..n { pool.push(spawn(fib, 15)) }
+    var s = 0
+    for p in pool { s += p.join() }
+    return s
+  })
+}
+
+// ---------- work over every core: n tasks of fib(k) ----------
+for cfg in [[100, 15], [40, 24]] {
+  let tasks = map(list(0..cfg[0]), fn(i) => cfg[1] - i % 3)
+  let size = "{cfg[0]}xfib{cfg[1]}"
+  bench("map_serial", size, fn() => map(tasks, fib))
+  bench("parallel_map_vs_pool", size, fn() => parallel_map(tasks, fib))
+  bench("parallel_map_vs_new_pool", size, fn() => parallel_map(tasks, fib))
+  bench("parallel_map_vs_threads", size, fn() => parallel_map(tasks, fib))
+}
+
+// ---------- channels: n numbers to a worker and back ----------
+for n in [1000, 100000] {
+  bench("channel_roundtrip_vs_thread_queue", n, fn() {
+    let jobs = channel()
+    let results = channel()
+    let w = spawn(echo, jobs, results)
+    for i in 0..n { jobs.send(i) }
+    jobs.close()
+    let out = results.take(n)
+    w.join()
+    return sum(out)
+  })
+  bench("channel_pool4_vs_thread_queue", n, fn() {
+    let jobs = channel()
+    let results = channel()
+    var pool = []
+    for k in 0..4 { pool.push(spawn(echo, jobs, results)) }
+    for i in 0..n { jobs.send(i) }
+    jobs.close()
+    let out = results.take(n)
+    for w in pool { w.join() }
+    return sum(out)
+  })
+}
+for n in [1000, 10000] {
+  bench("channel_roundtrip_vs_process_queue", n, fn() {
+    let jobs = channel()
+    let results = channel()
+    let w = spawn(echo, jobs, results)
+    for i in 0..n { jobs.send(i) }
+    jobs.close()
+    let out = results.take(n)
+    w.join()
+    return sum(out)
+  })
+}
+
+// ---------- sending a list of n numbers to a running worker, and its sum back ----------
+let jobs = channel()
+let results = channel()
+let worker = spawn(summer, jobs, results)
+for n in [1000, 100000] {
+  let xs = list(0..n)
+  bench("send_list_vs_process_queue", n, fn() {
+    jobs.send(xs)
+    return results.receive()
+  })
+}
+jobs.close()
+worker.join()

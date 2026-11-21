@@ -1,0 +1,98 @@
+// learn.lube: the plugin learn (learn.py does the same with scikit-learn): fit and predict or transform for each
+// model learn has, model selection and metrics. The data are make_blobs' and make_regression's, which give sklearn's
+// numbers for the same random_state; the size is samples x features. The checksum of a fit is what the model
+// scores; iterative solvers stop near the same optimum (rtol 1e-2), and forests draw their own trees (rtol 0.05).
+import "harness"
+import array as np
+import learn
+
+fn score_on(X, y) => fn(m) => m.score(X, y)
+fn absum(a) => np.abs(a).sum()
+
+for cfg in [[1000, 10], [20000, 20]] {
+  let n = cfg[0]
+  let f = cfg[1]
+  let size = "{n}x{f}"
+  let blobs = learn.make_blobs({n_samples: n, n_features: f, centers: 3, cluster_std: 4.0, random_state: 0})
+  let X = blobs[0]
+  let y = blobs[1]
+  let yb = np.array(y == 0, "int64")
+  let reg = learn.make_regression({n_samples: n, n_features: f, noise: 10, random_state: 0})
+  let Xr = reg[0]
+  let yr = reg[1]
+  let Xs = learn.StandardScaler().fit_transform(X)
+  let Xq = X[0..1000]
+  let nd = min(n, 5000)
+  let Xd = Xs[0..nd]
+  np.seed(40)
+  let cat = np.randint(0, 5, [n, 4])
+
+  // ---------- linear models ----------
+  bench_chk("LinearRegression.fit", size, fn() => learn.LinearRegression().fit(Xr, yr), score_on(Xr, yr))
+  let linr = learn.LinearRegression().fit(Xr, yr)
+  bench("LinearRegression.predict", size, fn() => linr.predict(Xr))
+  bench_chk("Ridge.fit", size, fn() => learn.Ridge({alpha: 1.0}).fit(Xr, yr), score_on(Xr, yr))
+  bench_tol("Lasso.fit", size, fn() => learn.Lasso({alpha: 1.0}).fit(Xr, yr), score_on(Xr, yr), 1e-2)
+  bench_tol("ElasticNet.fit", size, fn() => learn.ElasticNet({alpha: 1.0, l1_ratio: 0.5}).fit(Xr, yr), score_on(Xr, yr), 1e-2)
+  bench_tol("LogisticRegression.fit_multinomial", size, fn() => learn.LogisticRegression({max_iter: 200}).fit(Xs, y), score_on(Xs, y), 1e-2)
+  bench_tol("LogisticRegression.fit_binary", size, fn() => learn.LogisticRegression({max_iter: 200}).fit(Xs, yb), score_on(Xs, yb), 1e-2)
+  let logit = learn.LogisticRegression({max_iter: 200}).fit(Xs, y)
+  bench_tol("LogisticRegression.predict_proba", size, fn() => logit.predict_proba(Xs), false, 1e-2)
+  bench_tol("LinearSVC.fit", size, fn() => learn.LinearSVC().fit(Xs, yb), score_on(Xs, yb), 1e-2)
+
+  // ---------- neighbors ----------
+  let knn = learn.KNeighborsClassifier(5).fit(X, y)
+  bench_chk("KNeighborsClassifier.fit", size, fn() => learn.KNeighborsClassifier(5).fit(X, y), fn(m) => m.n_features_in_)
+  bench("KNeighborsClassifier.predict_1000", size, fn() => knn.predict(Xq))
+  let knr = learn.KNeighborsRegressor(5).fit(Xr, yr)
+  bench("KNeighborsRegressor.predict_1000", size, fn() => knr.predict(Xr[0..1000]))
+
+  // ---------- trees and forests ----------
+  bench_chk("DecisionTreeClassifier.fit", size, fn() => learn.DecisionTreeClassifier({random_state: 0}).fit(X, y), score_on(X, y))
+  bench_chk("DecisionTreeRegressor.fit", size, fn() => learn.DecisionTreeRegressor({max_depth: 10, random_state: 0}).fit(Xr, yr), score_on(Xr, yr))
+  bench_tol("RandomForestClassifier.fit", size, fn() => learn.RandomForestClassifier({n_estimators: 50, random_state: 0}).fit(X, y), score_on(X, y), 0.05)
+  bench_tol("RandomForestRegressor.fit", size, fn() => learn.RandomForestRegressor({n_estimators: 50, max_depth: 10, random_state: 0}).fit(Xr, yr), score_on(Xr, yr), 0.05)
+  let forest = learn.RandomForestClassifier({n_estimators: 50, random_state: 0}).fit(X, y)
+  bench_tol("RandomForestClassifier.predict", size, fn() => forest.predict(X), false, 0.05)
+
+  // ---------- the others ----------
+  bench_chk("GaussianNB.fit", size, fn() => learn.GaussianNB().fit(X, y), score_on(X, y))
+  let nb = learn.GaussianNB().fit(X, y)
+  bench("GaussianNB.predict", size, fn() => nb.predict(X))
+  bench_tol("KMeans.fit", size, fn() => learn.KMeans({n_clusters: 3, random_state: 0}).fit(X), fn(m) => m.inertia_, 1e-2)
+  let km = learn.KMeans({n_clusters: 3, random_state: 0}).fit(X)
+  bench("KMeans.predict", size, fn() => km.predict(X))
+  let eps = sqrt(f)
+  bench("DBSCAN.fit_predict", "{nd}x{f}", fn() => learn.DBSCAN({eps: eps, min_samples: 5}).fit_predict(Xd))
+  bench_chk("PCA.fit", size, fn() => learn.PCA(5).fit(X), fn(m) => m.explained_variance_ratio_)
+  let pca = learn.PCA(5).fit(X)
+  bench_chk("PCA.transform", size, fn() => pca.transform(X), absum)
+  bench("StandardScaler.fit_transform", size, fn() => learn.StandardScaler().fit_transform(X))
+  bench("MinMaxScaler.fit_transform", size, fn() => learn.MinMaxScaler().fit_transform(X))
+  bench("LabelEncoder.fit_transform", size, fn() => learn.LabelEncoder().fit_transform(y))
+  bench("OneHotEncoder.fit_transform", size, fn() => learn.OneHotEncoder().fit_transform(cat))
+  bench("PolynomialFeatures.fit_transform", size, fn() => learn.PolynomialFeatures(2).fit_transform(X[.., 0..5]))
+
+  // ---------- choosing models ----------
+  bench("train_test_split", size, fn() => learn.train_test_split(X, y, {test_size: 0.25, random_state: 0}))
+  bench_chk("KFold.split", size, fn() => learn.KFold({n_splits: 5, shuffle: true, random_state: 0}).split(X), fn(r) => map(r, fn(s) => s[1]))
+  bench("cross_val_score_GaussianNB", size, fn() => learn.cross_val_score(learn.GaussianNB(), X, y, {cv: 5}))
+  bench("cross_val_score_Ridge", size, fn() => learn.cross_val_score(learn.Ridge({alpha: 1.0}), Xr, yr, {cv: 5}))
+
+  // ---------- metrics ----------
+  let pred = nb.predict(X)
+  let proba = nb.predict_proba(X)
+  let rpred = linr.predict(Xr)
+  bench("accuracy_score", size, fn() => learn.accuracy_score(y, pred))
+  bench("precision_score_macro", size, fn() => learn.precision_score(y, pred, {average: "macro"}))
+  bench("recall_score_macro", size, fn() => learn.recall_score(y, pred, {average: "macro"}))
+  bench("f1_score_macro", size, fn() => learn.f1_score(y, pred, {average: "macro"}))
+  bench("confusion_matrix", size, fn() => learn.confusion_matrix(y, pred))
+  bench("classification_report", size, fn() => learn.classification_report(y, pred))
+  bench("log_loss", size, fn() => learn.log_loss(y, proba))
+  bench("roc_auc_score", size, fn() => learn.roc_auc_score(yb, proba[.., 0]))
+  bench("mean_squared_error", size, fn() => learn.mean_squared_error(yr, rpred))
+  bench("r2_score", size, fn() => learn.r2_score(yr, rpred))
+  bench("adjusted_rand_score", size, fn() => learn.adjusted_rand_score(y, km.labels_))
+  bench("silhouette_score", "{nd}x{f}", fn() => learn.silhouette_score(X[0..nd], y[0..nd]))
+}

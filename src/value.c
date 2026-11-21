@@ -722,6 +722,25 @@ void format_number(char *buf, size_t size, double n) {
         while (len > 0 && i + 1 < size) buf[i++] = digits[--len];
         buf[i] = '\0';
     } else {
+        int64_t z = 0;
+        int k = fabs(n) >= 1e-4 ? short_decimal(n, &z) : -1;
+        if (k > 0 && size >= 24) {  /* (what %.15g shows for it, without it: the digits of z, a point k from the end) */
+            char digits[24];
+            int len = 0;
+            uint64_t u = z < 0 ? 0 - (uint64_t)z : (uint64_t)z;
+            do {
+                digits[len++] = (char)('0' + u % 10);
+                u /= 10;
+            } while (u || len <= k);  /* (a 0 before the point, at least) */
+            size_t i = 0;
+            if (z < 0) buf[i++] = '-';
+            while (len > 0) {
+                buf[i++] = digits[--len];
+                if (len == k) buf[i++] = '.';
+            }
+            buf[i] = '\0';
+            return;
+        }
         for (int prec = 15; prec <= 17; prec++) {
             snprintf(buf, size, "%.*g", prec, n);
             if (strtod(buf, NULL) == n) break;
@@ -880,8 +899,13 @@ void append_value(StrBuf *sb, Value v, int quote) { append_inner(sb, v, quote, 0
 /* The string form of v, as str() returns it (a new reference). */
 ObjString *value_to_string(Value v) {
     if (IS_TEXT(v)) return (ObjString *)retain(OBJ_VAL(text_of(v))).as.obj;
+    char small[128];
+    if (v.type == VAL_NUM) {  /* (Numbers, the most common: no buffer at all) */
+        format_number(small, sizeof small, v.as.number);
+        return new_string(small, strlen(small));
+    }
     StrBuf sb;
-    sb_init(&sb);
+    sb_init_on(&sb, small, sizeof small);
     append_value(&sb, v, 0);
     ObjString *s = new_string(sb.data, sb.len);
     sb_free(&sb);
@@ -890,8 +914,9 @@ ObjString *value_to_string(Value v) {
 
 /* The quoted form of v, as the REPL shows it (a new reference). */
 ObjString *value_repr(Value v) {
+    char small[128];
     StrBuf sb;
-    sb_init(&sb);
+    sb_init_on(&sb, small, sizeof small);
     append_value(&sb, v, 1);
     ObjString *s = new_string(sb.data, sb.len);
     sb_free(&sb);

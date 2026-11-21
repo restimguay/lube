@@ -154,6 +154,28 @@ print(drop, drop.training, drop.eval().training, drop.forward(nn.ones(3)).data, 
 let acts = [nn.ReLU(), nn.Sigmoid(), nn.Tanh(), nn.GELU(), nn.SiLU(), nn.LeakyReLU(), nn.LeakyReLU(0.3), nn.Softmax(), nn.Softmax(0), nn.LogSoftmax(), nn.Flatten()]
 for m in acts { write(m, " ", r(m.forward(nn.tensor(data(4, 0.9).reshape(2, 2))).data).to_list(), " | ") }
 print()
+// float32's activations (vectorized, without the C library) against float64's, forward and backward, out to
+// the extremes: within a few units in float32's last place
+let wide = np.concatenate([np.linspace(-30, 30, 1201), np.array([0, -0.0, 1e-30, -1e-30, 88, -88, 100, -100, 1e30, -1e30])])
+for name in ["sigmoid", "tanh", "gelu", "silu", "relu", "leaky_relu"] {
+  let f64 = leaf(wide.astype("float32").astype("float64"))  // (the very inputs float32 has)
+  let f32 = leaf(wide.astype("float32"))
+  let pick = {sigmoid: nn.sigmoid, tanh: nn.tanh, gelu: nn.gelu, silu: nn.silu, relu: nn.relu, leaky_relu: nn.leaky_relu}
+  let y64 = pick[name](f64)
+  let y32 = pick[name](f32)
+  y64.sum().backward()
+  y32.sum().backward()
+  let close = np.allclose(y32.data.astype("float64"), y64.data, {rtol: 2e-6, atol: 1e-37})
+  let gclose = np.allclose(f32.grad.astype("float64"), f64.grad, {rtol: 2e-5, atol: 1e-7})  // (o (1 - o) and 1 - o^2 cancel in float32)
+  print(name, y32.dtype, close, gclose, np.isnan(pick[name](nn.tensor(np.array([np.nan], "float32"))).data).all(), pick[name](nn.tensor(np.array([np.inf, -np.inf], "float32"))).data)
+}
+let rows32 = nn.tensor((np.arange(24) * 0.37 - 3).reshape(2, 12).astype("float32"))
+let rows64 = nn.tensor((np.arange(24) * 0.37 - 3).reshape(2, 12))
+let ln12 = nn.LayerNorm(12)
+print(np.allclose(nn.softmax(rows32, 1).data, nn.softmax(rows64, 1).data, {rtol: 1e-5}), np.allclose(nn.log_softmax(rows32, 1).data, nn.log_softmax(rows64, 1).data, {rtol: 1e-5}), np.allclose(ln12.forward(rows32).data, ln12.forward(rows64.data.astype("float32")).data), r(ln12.forward(rows32).data[0, ..3]).to_list(), nn.softmax(rows32, 0).dtype)
+let cl = leaf(np.array([-2, 0.5, 3], "float32"))
+nn.clamp(cl, -1, 1).sum().backward()
+print(nn.tanh(nn.tensor([1, 2], {dtype: "int64"})).dtype, nn.clamp(cl, -1, 1).data, cl.grad)
 print(nn.MaxPool2d(2), nn.MaxPool2d(2).forward(nn.ones(1, 1, 4, 4)).shape, nn.AvgPool2d(2, {stride: 1}).forward(nn.ones(1, 1, 3, 3)).data)
 let losses = [nn.MSELoss(), nn.L1Loss({reduction: "sum"}), nn.CrossEntropyLoss(), nn.BCELoss(), nn.BCEWithLogitsLoss({reduction: "none"})]
 let preds = [nn.tensor([0.5, 0.2]), nn.tensor([0.5, 0.2]), nn.tensor([[1.0, 2.0]]), nn.tensor([0.25, 0.5]), nn.tensor([1.0, -1.0])]

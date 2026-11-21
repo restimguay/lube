@@ -91,3 +91,4 @@ error: add_currency(): a code is 1 to 7 letters or digits, and a symbol at most 
 error: add_currency(): decimals is a whole number from 0 to 9
 error: add_currency(): decimals is a whole number from 0 to 9
 error: add_currency() takes a code, a symbol (str) and its number of decimals
+$1,125,000,000,000,000.01 $1,116,000,000,000,000.00

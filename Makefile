@@ -95,8 +95,8 @@ plugins/%$(PLUGIN_EXT): src/plugins/%.c src/lube_plugin.h | plugins
 	$(CC) $(CFLAGS) $(PLUGIN_FLAGS) -o $@ $< -lm $(PLUGIN_LIBS_$*)
 
 plugins/gfx$(PLUGIN_EXT): $(wildcard src/plugins/gfx/*.c) src/lube_gfx.h  # (its parts)
-plugins/array$(PLUGIN_EXT): $(wildcard src/plugins/array/*.c) src/plugins/array.h
-plugins/nn$(PLUGIN_EXT): $(wildcard src/plugins/nn/*.c) src/plugins/array.h
+plugins/array$(PLUGIN_EXT): $(wildcard src/plugins/array/*.c) src/plugins/array.h src/plugins/vecmath.h
+plugins/nn$(PLUGIN_EXT): $(wildcard src/plugins/nn/*.c) src/plugins/array.h src/plugins/vecmath.h
 plugins/learn$(PLUGIN_EXT): $(wildcard src/plugins/learn/*.c) src/plugins/array.h
 plugins/llm$(PLUGIN_EXT): $(wildcard src/plugins/llm/*.c) src/plugins/array.h
 
