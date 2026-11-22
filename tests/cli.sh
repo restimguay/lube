@@ -82,6 +82,36 @@ if [ "$SECTION" = os ]; then
         sed "s|$TMP|TMP|g" "$TMP/out" | sed -E 's/spin\.lube:[0-9]+/spin.lube:N/; s/^    [0-9] \| .*/    N | (a line of the loop)/'
         echo "[exit $code]"
     fi
+    if [ "$OS" != Windows ]; then  # (the same)
+        # until WORD: waits (up to 10 s) for the line WORD in the program's marks
+        until_mark() {
+            for _ in $(seq 100); do grep -q "^$1" "$TMP/marks" 2>/dev/null && return; sleep 0.1; done
+            echo "(no '$1' in 10 s)"
+        }
+        # interrupt LABEL [slow|after] MARK...: runs web_interrupt.lube, and sends it SIGTERM at each MARK in turn. (SIGTERM
+        # goes the way Ctrl-C does; this shell's background programs ignore SIGINT, and serve() leaves that so.)
+        interrupt() {
+            echo "--- $1"
+            shift
+            rm -f "$TMP/marks"
+            more=
+            case "$1" in slow | after) more=$1 && shift ;; esac
+            "$LUBE" tests/cli/web_interrupt.lube "$TMP/marks" $more >"$TMP/out" 2>&1 &
+            pid=$!
+            for m in "$@"; do
+                until_mark "$m"
+                kill -TERM "$pid"
+            done
+            { wait "$pid"; } 2>/dev/null  # (without the shell's own word on how it ended, which differs)
+            code=$?
+            sed -E 's/:[0-9]+\//:PORT\//' "$TMP/out"
+            cat "$TMP/marks"
+            echo "[exit $code]"
+        }
+        interrupt "web: a signal stops serve(), and its pages leave; the program goes on" ready
+        interrupt "web: another signal, once serve() has returned, ends the program" after ready "serve() returned"
+        interrupt "web: a second signal while the pages leave ends the program" slow ready "the page leaves"
+    fi
     exit 0
 fi
 

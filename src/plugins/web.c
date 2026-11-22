@@ -57,6 +57,7 @@
 #include <limits.h>
 #include <math.h>
 #include <stdarg.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1958,7 +1959,34 @@ FN(m_step) {
     return step_checked(vm, app_of(argv[0]), "step()", wait_arg(argc, argv, 1, 0));
 }
 
-/* app.serve(port?): listens (unless app.start() did), and serves until app.stop(). */
+/* Ctrl-C (SIGINT) or SIGTERM while serve() runs stops it as app.stop() would: its pages leave (their on leave
+ * blocks run) and serve() returns. Another one before that is done, or one when nothing serves, ends the
+ * program as it would have. Only where the program had left the signal alone: a debugger's or a host's own
+ * handler stays. (serve() may run in several isolates: a signal stops them all.) */
+static volatile sig_atomic_t sig_pending;  /* one came, and serve() has not yet stopped for it */
+static int sig_serving;                    /* the serve() calls running, in any isolate */
+static void on_signal(int s) {
+    if (sig_pending || !__atomic_load_n(&sig_serving, __ATOMIC_SEQ_CST)) {  /* (it comes again once this returns) */
+        signal(s, SIG_DFL);  /* LCOV_EXCL_LINE: (cli.sh's runs end here: a program the signal ends writes no coverage) */
+        raise(s);            /* LCOV_EXCL_LINE */
+    } else {
+        sig_pending = 1;
+    }
+}
+static void watch_signal(int s) {
+#ifdef _WIN32  /* LCOV_EXCL_START: (Windows) */
+    void (*was)(int) = signal(s, on_signal);
+    if (was != SIG_DFL && was != on_signal && was != SIG_ERR) signal(s, was);
+#else  /* LCOV_EXCL_STOP */
+    struct sigaction now, was;
+    memset(&now, 0, sizeof now);
+    now.sa_handler = on_signal;  /* (no SA_RESTART: poll() wakes for it) */
+    sigemptyset(&now.sa_mask);
+    if (sigaction(s, NULL, &was) == 0 && was.sa_handler == SIG_DFL) sigaction(s, &now, NULL);
+#endif
+}
+
+/* app.serve(port?): listens (unless app.start() did), and serves until app.stop() (or Ctrl-C). */
 FN(m_serve) {
     App *a = app_of(argv[0]);
     if (a->busy) return lube->error(vm, "serve(): the app is serving already (a handler cannot serve)");
@@ -1968,11 +1996,20 @@ FN(m_serve) {
         if (lube->failed(r)) return r;
         log_line("serving at http://%s%s%s:%d/", strchr(a->host, ':') ? "[" : "", a->host, strchr(a->host, ':') ? "]" : "", a->port);
     }
+    watch_signal(SIGINT);
+    watch_signal(SIGTERM);
+    __atomic_add_fetch(&sig_serving, 1, __ATOMIC_SEQ_CST);
     while (a->started) {
-        r = step_checked(vm, a, "serve()", INFINITY);
-        if (lube->failed(r)) return r;  /* LCOV_EXCL_LINE: step() fails only when serve() would not start */
+        if (sig_pending) {  /* (a quarter of a second at most after it came, in whichever thread it came) */
+            log_line("stopping (interrupted)");
+            app_close(vm, a);
+            break;
+        }
+        r = step_checked(vm, a, "serve()", 0.25);
+        if (lube->failed(r)) break;  /* LCOV_EXCL_LINE: step() fails only when serve() would not start */
     }
-    return lube->nothing();
+    if (__atomic_sub_fetch(&sig_serving, 1, __ATOMIC_SEQ_CST) == 0) sig_pending = 0;
+    return lube->failed(r) ? r : lube->nothing();
 }
 
 /* app.stop(): its pages leave, its connections end, and it stops listening (now, or once the step ends). */

@@ -24,3 +24,23 @@ Lube debugger: h lists the commands (Ctrl-C pauses the program)
     N | (a line of the loop)
 (lube) true
 (lube) [exit 0]
+--- web: a signal stops serve(), and its pages leave; the program goes on
+web: serving at http://127.0.0.1:PORT/
+web: stopping (interrupted)
+ready
+the page leaves
+serve() returned: HTTP/1.1 200 OK, 0 pages
+[exit 0]
+--- web: another signal, once serve() has returned, ends the program
+web: serving at http://127.0.0.1:PORT/
+web: stopping (interrupted)
+ready
+the page leaves
+serve() returned: HTTP/1.1 200 OK, 0 pages
+[exit 143]
+--- web: a second signal while the pages leave ends the program
+web: serving at http://127.0.0.1:PORT/
+web: stopping (interrupted)
+ready
+the page leaves
+[exit 143]
