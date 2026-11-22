@@ -883,6 +883,7 @@ error: a str has no properties (it is plain text): use len(x) for its length, or
 error: thrown
 error: push() expects a List as argument 1, got Number
 locals [1, "ab", [1, 2], [1], 12, 20, [1, 1, 2]] [0, 1]
+component 2
 done
 [exit 0]
 --- debugger without a file
@@ -2071,4 +2072,53 @@ program:3:10: syntax error: #strict: parameter 'old' needs a type, like old: Num
 program:1:9: syntax error: Isolate has no default value: start one with spawn(f, ...)
     1 | var i = Isolate
       |         ^
+[exit 65]
+--- component: in a function
+program:2: error: a component is declared at the top level of a file, as fn Name(...) component { ... }
+    2 |   fn Inner() component {
+[exit 65]
+--- component: as a method
+program:2: error: a component is declared at the top level of a file, as fn Name(...) component { ... }
+    2 |   fn shown() component {
+[exit 65]
+--- component: a var parameter
+program:1: error: a component's parameters are plain: 'title' cannot take & or var
+    1 | fn Card(var title) component {
+[exit 65]
+--- component: with a return type
+program:1:19: syntax error: a component cannot have a return type: calling it makes the component
+    1 | fn Card(): Number component {
+      |                   ^
+[exit 65]
+--- component: no view at the end
+program:2: error: a component's body ends with 'return' and the view it shows, like 'return div(...)'
+    2 |   var n = 0
+[exit 65]
+--- component: an empty body
+program:1: error: a component's body ends with 'return' and the view it shows, like 'return div(...)'
+    1 | fn Card() component { }
+[exit 65]
+--- component: a return before the end
+program:2: error: a component returns once, at the end of its body: the view it shows, like 'return div(...)'
+    2 |   if x { return 1 }
+[exit 65]
+--- component: a handler with a default
+program:2: error: a handler's parameters are plain: 'n' cannot take &, var or a default
+    2 |   fn set(n = 1) { }
+[exit 65]
+--- component: a handler with a return type
+program:2: error: a handler cannot have a return type
+    2 |   fn get(): Number => 1
+[exit 65]
+--- component: a handler named view
+program:2: error: a component's 'view' is its own: name the handler something else
+    2 |   fn view() { }
+[exit 65]
+--- component: on leave with (old, new)
+program:2: error: 'on leave' takes no (old, new): nothing changes
+    2 |   on leave (old, new) { }
+[exit 65]
+--- component: on a global
+program:3: error: a component's 'on' blocks watch its own vars, and 'score' is a global: watch it at the top level of the file
+    3 |   on score { }
 [exit 65]

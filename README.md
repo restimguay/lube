@@ -616,6 +616,47 @@ A block inside a function runs on that function's own frame. It reads and change
 - In a `#strict` file, `(old, new)` need types: `on score (old: Number, new: Number)`.
 - With hot reload, a changed file's top-level `on` blocks replace the old ones.
 
+### Components: `fn ... component`
+
+A component is a function whose frame outlives its call. Its `var`s are its state, the `fn`s in its body are its handlers, its `on` blocks are its effects, and what it returns is its view. The body runs once, when the component is made. The view is worked out again each time it's asked for, from the state as it is then:
+
+```lube
+fn Card(title) component {
+  var open = false
+  var clicks = 0
+  on open (old, new) { print("open:", new) }       // an effect: runs when open changes
+  on leave { print(title, "leaves") }              // runs once, at c.leave()
+  fn toggle() {                                    // a handler: changes the card's own vars
+    open = not open
+    clicks += 1
+  }
+  fn add(n) => clicks += n
+  return {title: title, open: open, clicks: clicks, onclick: toggle}
+}
+
+let c = Card("Lube")
+c.toggle()                 // open: true
+print(c.view())            // {title: "Lube", open: true, clicks: 1, onclick: <handler toggle>}
+let h = c.toggle           // a handler is a function: kept, passed on, called later
+h()                        // open: false
+print(c.add(10))           // 12
+c.leave()                  // Lube leaves
+```
+
+- A handler runs on the component's frame, as an `on` block in a function does, so it changes the component's vars themselves. A closure gets copies and can't. A handler can call the component's other handlers, and the body can call them too.
+- `c.view()` runs the `return` expression again. `c.name(...)` calls a handler, and `c.name` is the handler as a function. A view that holds a handler, like `onclick: toggle` above, is how a page calls back into its component.
+- `c.leave()` runs its `on leave` blocks; after that, its view and handlers are gone. Leaving twice does nothing.
+- A component can hold other components in its vars, a list of them for instance, and its handlers can call theirs.
+- A handler doesn't keep its component alive: once nothing else holds the component, calling the handler is an error. So a component can keep its own handlers in its vars with no cycle, and with no garbage collector nothing is left over.
+- The rules:
+  - A component is declared at the top level of a file.
+  - Its parameters, and its handlers', are plain: no `&`, `var` or defaults. Neither has a return type.
+  - Its body ends with `return` and the view, and returns nowhere else.
+  - Its `on` blocks watch its own vars; a global is watched at the top level of the file.
+  - A handler can't call itself, and a component can't leave while one of its blocks is running.
+  - Inside a component, `view` and `leave` are its own names: a handler can't use them, and `on leave` is the leave block.
+- A component isn't data, so it can't be sent to another isolate. It prints as `<component Card>`, and its type is `Component`.
+
 ### Concurrency: isolates and channels
 
 A program can use every core. `spawn` runs a function in an *isolate*: a separate interpreter, with its own heap and globals, on its own thread. Isolates share no values (Lube's values are copies anyway), so there are no locks and no data races, and each one runs at full speed. They talk through *channels*:

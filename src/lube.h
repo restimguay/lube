@@ -201,6 +201,8 @@ typedef struct {
 #define IS_TEXT(v)     (IS_STRING(v) || IS_STROBJ(v))  /* a str or a String */
 #define IS_TUPLE(v)    (IS_LIST(v) && AS_LIST(v)->elem == TT_TUPLE)  /* x[i, j]'s indexes */
 #define IS_CALLABLE(v) (IS_FUNCTION(v) || IS_NATIVE(v))
+#define IS_COMPONENT(v) (IS_OBJ(v) && OBJ_TYPE(v) == OBJ_COMPONENT)
+#define AS_COMPONENT(v) ((struct ObjComponent *)(void *)(v).as.obj)
 
 #define AS_STRING(v)   ((ObjString *)(v).as.obj)
 #define AS_LIST(v)     ((ObjList *)(v).as.obj)
@@ -225,7 +227,8 @@ typedef enum {
     OBJ_CHANNEL, OBJ_ISOLATE, OBJ_PACKAGE,
     OBJ_BYTES,            /* io.c */
     OBJ_MONEY,            /* money.c: an amount of a currency */
-    OBJ_FOREIGN           /* plugin.c: a plugin's own kind of object (a Socket, a Sound) */
+    OBJ_FOREIGN,          /* plugin.c: a plugin's own kind of object (a Socket, a Sound) */
+    OBJ_COMPONENT         /* interp.c: a component, made by calling a fn ... component (see ObjComponent) */
 } ObjType;
 
 struct Obj {
@@ -309,6 +312,8 @@ struct ObjNative {
     int min_args, max_args; /* max_args < 0 means "any number" */
     int changes_first;      /* takes its first argument with & (push, pop, ...); 2: it is push itself */
     const void *plugin_fn;  /* a plugin's function (fn is plugin.c's, which calls it), or NULL */
+    struct CompCell *cell;  /* a component's handler: the component it runs on (see ObjComponent), or NULL */
+    const struct OnDesc *od;  /* ...and the handler */
 };
 
 struct ObjFunction {
@@ -693,7 +698,8 @@ typedef uint32_t Instr;
     X(OP_ARG_DEFAULT) X(OP_DEF_PARAM) X(OP_PRINT_REPL)                                                               \
     X(OP_HOT_KEEP) X(OP_IF_GLOBAL) X(OP_FAIL) X(OP_LAZY_GLOBAL) X(OP_IMPORT_PACKAGE)                                 \
     X(OP_NATIVE_LOOP)  /* a top-level loop's machine code (lube --build --native): skips its bytecode when it ran */ \
-    X(OP_PUSH_CHECK) X(OP_PUSH_DO)  /* xs.push(v), xs a local List: appended without a call (see compile_method) */
+    X(OP_PUSH_CHECK) X(OP_PUSH_DO)  /* xs.push(v), xs a local List: appended without a call (see compile_method) */ \
+    X(OP_COMPONENT_BEGIN) X(OP_HANDLER) X(OP_COMPONENT_END)  /* fn ... component: see ObjComponent */
 
 typedef enum {
 #define LUBE_OP_ENUM(op) op,
@@ -776,12 +782,40 @@ typedef struct OnDesc {
     int count;
     FuncDecl *func;         /* the block (with (old, new) as its parameters) */
     int frame;              /* runs on a frame (else: a top-level watcher) */
+    int kind;               /* ON_WATCH; or, in a component, the block of one of its handlers, its view, or leave */
     int token;              /* frame: the hidden slot that holds the block while it is in scope */
-    int param_slot[2];      /* frame: where (old, new) go */
+    int param_slot[2];      /* frame: where (old, new) go (a handler's parameters: from param_slot[0] on, in a row) */
     int first, nslots;      /* frame: the block's own slots, cleared after each run */
     OnUse *uses;            /* frame: the variables from around it that it reads */
     int nuses, capuses;
 } OnDesc;
+
+enum { ON_WATCH, ON_HANDLER, ON_VIEW, ON_LEAVE };  /* OnDesc.kind */
+
+/* fn Card(title) component { ... }: a function whose frame outlives its call. When its body ends, the frame's
+ * slots and `on` blocks move into a Component, and come back to the stack whenever one of its blocks runs: a
+ * handler (a fn declared in the body), its view (the expression the body returns) or `on leave`. Its handlers
+ * reach it through a CompCell, which does not own it, so a handler kept in the component's own variables is no
+ * cycle: when the component goes, the cell says so. */
+typedef struct CompCell {
+    size_t rc;
+    struct ObjComponent *comp;  /* NULL once it is freed */
+} CompCell;
+
+typedef struct { OnDesc *od; Value token; } CompBlock;
+void lube_cell_release(CompCell *cell);  /* (interp.c) */
+
+typedef struct ObjComponent {
+    Obj obj;
+    FuncDecl *decl;
+    CompCell *cell;
+    Value *slots;           /* its frame's slots, while no block of it runs (the stack has them meanwhile) */
+    TypeDesc *types;        /* ...and the types its vars keep (Interp.decl) */
+    CompBlock *blocks;      /* its `on` blocks, handlers, view and leave, likewise */
+    int nblocks, capblocks;
+    int depth;              /* while a block of it runs: its frame's depth (VM_DEPTH); else 0 */
+    int left;               /* leave() ran: its blocks are gone */
+} ObjComponent;
 
 struct OnList {             /* the `on` blocks watching one local variable */
     OnDesc **ons;
@@ -868,6 +902,8 @@ struct FuncDecl {
     unsigned char plain_method;  /* a method whose other parameters are like that: OP_INVOKE's fast path */
     unsigned char plain_ctor;    /* a constructor whose parameters are like that: started without enter() too */
     const LubeNative *native;    /* compiled to machine code (lube --build --native), or NULL */
+    unsigned char is_component;  /* fn Card() component { ... } */
+    int comp_slot;               /* a component: the hidden slot that holds it while its body or a block of it runs */
     /* (interp.c, worked out at the function's first call: 0 before) what OP_CALL's plain call checks */
     int fast_argc;          /* nparams + 1 when a call with every argument needs nothing checked, about them or about
                                what it returns (plain, no type written, no machine code); else -1 */
@@ -903,7 +939,7 @@ struct Node {
         FuncDecl *func;                                           /* N_FUNC */
         struct { Node *start, *end; int inclusive; } range;       /* N_RANGE */
         Node *expr;                             /* N_EXPR, N_RETURN, N_THROW, N_REF */
-        struct { VarRef var; Node *value; int is_var, is_fn; } let;  /* N_LET */
+        struct { VarRef var; Node *value; int is_var, is_fn; } let;  /* N_LET (is_fn 2: a component's handler) */
         struct { NodeList stmts; int first_slot, nslots,
                  frame_slots; } block;     /* frame_slots: program root only */
         struct { Node *cond, *then_branch, *else_branch; } if_s;  /* N_IF */

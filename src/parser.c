@@ -449,6 +449,12 @@ static void function_params(Parser *P, FuncDecl *d) {
 static FuncDecl *function_rest(Parser *P, ObjString *name, int line) {
     FuncDecl *d = new_decl(P, name, line);
     function_params(P, d);
+    Token *t = peek(P);
+    if (t->type == T_IDENT && t->length == 9 && !memcmp(t->start, "component", 9) && peek_at(P, 1)->type == T_LBRACE) {
+        advance(P);  /* fn Card(title) component { ... } (a name anywhere else) */
+        if (d->ret.set) error_at(P, t, "a component cannot have a return type: calling it makes the component");
+        d->is_component = 1;
+    }
     if (check(P, T_ARROW)) {
         Token *arrow = advance(P);
         d->is_arrow = 1;

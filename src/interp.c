@@ -767,9 +767,12 @@ static Value index_get(Interp *I, Value obj, Value idx) {
     return lube_error(I, "cannot index into %s", a_type(obj));
 }
 
+static Value component_member(Interp *I, ObjComponent *c, ObjString *name);
+
 static Value field_get(Interp *I, Value obj, ObjString *name) {
     Value r;
     if (IS_FOREIGN(obj) && lube_foreign_property(I, obj, name, &r)) return r;  /* a plugin's: a.shape */
+    if (IS_COMPONENT(obj)) return component_member(I, AS_COMPONENT(obj), name);  /* onclick: c.toggle */
     if (IS_MONEY(obj)) return lube_money_field(I, obj, name);
     if (IS_STROBJ(obj)) {
         return lube_string_property(I, obj, name);
@@ -1794,15 +1797,18 @@ static void set_slot_at(Interp *I, int at, Value v) {
     release(prev);
 }
 
-/* Runs frame watcher i's block with (old, new): on the frame it belongs to,
- * as a frame of its own with the same base, so it sees that frame's
- * variables. Returns NIL_VAL or ERR_VAL (a result it returned is dropped). */
-static Value run_frame_block(Interp *I, int i, Value old, Value now) {
+/* Runs frame watcher i's block with the argc arguments in argv (borrowed; as many as it has parameters): on the
+ * frame it belongs to, as a frame of its own with the same base, so it sees that frame's variables. Returns what
+ * the block returned (NIL_VAL for an `on` block that does not run now), or ERR_VAL. */
+static Value run_block_args(Interp *I, int i, const Value *argv) {
     FrameWatcher *w = &I->fwatch[i];
     OnDesc *od = w->od;
     FuncDecl *d = od->func;
     int base = w->base;
-    if (w->running || !fw_live(I, w)) return NIL_VAL;
+    if (w->running || !fw_live(I, w)) {
+        if (od->kind == ON_WATCH) return NIL_VAL;
+        return lube_error(I, "%s() is already running: it cannot call itself", d->name->chars);
+    }
     for (int k = 0; k < od->nuses; k++)
         if (IS_NIL(I->stack[base + od->uses[k].slot]))
             return lube_error(I, "the '%s' block cannot run now: '%s' is lent out with & to a call that has not returned",
@@ -1811,8 +1817,8 @@ static Value run_frame_block(Interp *I, int i, Value old, Value now) {
         return lube_error(I, "stack overflow: too much recursion");
     Value r = NIL_VAL;
     for (int k = 0; k < d->nparams && !IS_ERR(r); k++) {
-        Value v = retain(k == 0 ? old : now);
-        int slot = base + od->param_slot[k];
+        Value v = retain(argv[k]);
+        int slot = base + od->param_slot[0] + k;
         if (check_param(I, d, d->name->chars, k, &v, slot)) set_slot_at(I, slot, v);
         else r = ERR_VAL;
         if (IS_ERR(r)) release(v);
@@ -1824,6 +1830,13 @@ static Value run_frame_block(Interp *I, int i, Value old, Value now) {
         own[k] = NIL_VAL;
         release(v);
     }
+    return r;
+}
+
+/* Runs frame watcher i's block with (old, new). Returns NIL_VAL or ERR_VAL (a result it returned is dropped). */
+static Value run_frame_block(Interp *I, int i, Value old, Value now) {
+    Value args[2] = {old, now};
+    Value r = run_block_args(I, i, args);
     if (IS_ERR(r)) return r;
     release(r);
     return NIL_VAL;
@@ -1845,6 +1858,236 @@ static Value run_block_frame(Interp *I, FrameWatcher *w, int i) {
     Value r = execute(I);
     I->fwatch[i].running = 0;  /* (the array may have moved) */
     return r;
+}
+
+/* ======================================================================
+ * Components (see ObjComponent in lube.h). A component's frame is on the
+ * stack while its body runs, and again while one of its blocks runs; in
+ * between, its slots and blocks are kept in the component.
+ * ==================================================================== */
+
+void lube_cell_release(CompCell *cell) {
+    if (--cell->rc == 0) free(cell);
+}
+
+static ObjComponent *new_component(FuncDecl *d) {
+    ObjComponent *c = (ObjComponent *)alloc_object(sizeof(ObjComponent), OBJ_COMPONENT);
+    c->decl = d;
+    c->cell = xmalloc(sizeof(CompCell));
+    c->cell->rc = 1;
+    c->cell->comp = c;
+    c->slots = NULL;
+    c->types = NULL;
+    c->blocks = NULL;
+    c->nblocks = c->capblocks = 0;
+    c->depth = 0;
+    c->left = 0;
+    return c;
+}
+
+/* Its frame (at base, the newest at its depth) gives its slots and blocks to c. The caller holds c. */
+static void component_keep(Interp *I, ObjComponent *c, int base) {
+    FuncDecl *d = c->decl;
+    int first = I->nfwatch;
+    while (first > 0 && I->fwatch[first - 1].depth == c->depth) first--;
+    for (int i = first; i < I->nfwatch; i++) {  /* (all in scope: its view, added last, dropped those that were not) */
+        FrameWatcher *w = &I->fwatch[i];
+        if (c->nblocks == c->capblocks) {
+            c->capblocks = c->capblocks ? c->capblocks * 2 : 4;
+            c->blocks = xrealloc(c->blocks, sizeof(CompBlock) * (size_t)c->capblocks);
+        }
+        c->blocks[c->nblocks].od = w->od;
+        c->blocks[c->nblocks++].token = w->token;
+    }
+    I->nfwatch = first;
+    if (!c->slots) {
+        c->slots = xmalloc(sizeof(Value) * (size_t)d->nslots);
+        c->types = xmalloc(sizeof(TypeDesc) * (size_t)d->nslots);
+    }
+    for (int i = 0; i < d->nslots; i++) {
+        c->slots[i] = I->stack[base + i];
+        c->types[i] = I->decl[base + i];
+        I->stack[base + i] = NIL_VAL;
+    }
+    Value self = c->slots[d->comp_slot];
+    c->slots[d->comp_slot] = NIL_VAL;
+    c->depth = 0;
+    release(self);
+}
+
+/* c's frame back on the stack, the newest, with its blocks: NULL (an error raised) when there is no room. */
+static Frame *component_enter(Interp *I, ObjComponent *c) {
+    FuncDecl *d = c->decl;
+    int base = I->sp;
+    if (VM_DEPTH(I) + 1 >= LUBE_MAX_FRAMES || base + d->nslots + d->code.maxstack > LUBE_STACK_MAX) {
+        lube_error(I, "stack overflow: too much recursion");
+        return NULL;
+    }
+    for (int i = 0; i < d->nslots; i++) {
+        I->stack[base + i] = c->slots[i];
+        I->decl[base + i] = c->types[i];
+        c->slots[i] = NIL_VAL;
+    }
+    I->stack[base + d->comp_slot] = retain(OBJ_VAL(c));
+    I->sp = base + d->nslots;
+    Frame *f = new_frame(I);
+    frame_init(I, f, I->frame, NULL, d, d->name->chars, d->line, base, 0, base, base + d->nslots);
+    f->entry = 1;
+    FRAME_SLOW_RET(f);
+    I->frame = f;
+    c->depth = VM_DEPTH(I);
+    for (int i = 0; i < c->nblocks; i++) {
+        if (I->nfwatch == I->cap_fwatch) {
+            I->cap_fwatch = I->cap_fwatch ? I->cap_fwatch * 2 : 8;
+            I->fwatch = xrealloc(I->fwatch, sizeof(FrameWatcher) * (size_t)I->cap_fwatch);
+        }
+        FrameWatcher *w = &I->fwatch[I->nfwatch++];
+        w->od = c->blocks[i].od;
+        w->base = base;
+        w->depth = c->depth;
+        w->token = c->blocks[i].token;
+        w->running = 0;
+    }
+    c->nblocks = 0;
+    return f;
+}
+
+/* Where c's block od is in I->fwatch (c's frame on the stack: its blocks are all there). */
+static int component_block_at(Interp *I, ObjComponent *c, const OnDesc *od) {
+    int i = I->nfwatch - 1;
+    while (I->fwatch[i].depth != c->depth || I->fwatch[i].od != od) i--;
+    return i;
+}
+
+/* c's block of this kind (and name, for a handler), or NULL. */
+static const OnDesc *component_find(Interp *I, ObjComponent *c, int kind, ObjString *name) {
+    int n = c->depth ? I->nfwatch : c->nblocks;
+    for (int i = 0; i < n; i++) {
+        const OnDesc *od = c->depth ? I->fwatch[i].od : c->blocks[i].od;
+        if (c->depth && I->fwatch[i].depth != c->depth) continue;
+        if (od->kind == kind && (!name || od->func->name == name)) return od;
+    }
+    return NULL;
+}
+
+/* Runs c's block od with argv (borrowed): on its frame, which is on the stack already (its body, or another of
+ * its blocks, is running) or is brought back for it. Returns what the block returned, or ERR_VAL. */
+static Value component_run(Interp *I, ObjComponent *c, const OnDesc *od, const Value *argv) {
+    if (c->left) return lube_error(I, "this %s has left: its blocks are gone", c->decl->name->chars);
+    retain(OBJ_VAL(c));
+    Frame *own = c->depth ? NULL : component_enter(I, c);
+    Value r = c->depth ? run_block_args(I, component_block_at(I, c, od), argv) : ERR_VAL;
+    if (own) {
+        int base = own->base;
+        component_keep(I, c, base);
+        pop_to(I, base);
+        I->frame = own->prev;
+        if (I->dbg) debug_left_frame(I);
+    }
+    release(OBJ_VAL(c));
+    return r;
+}
+
+/* c.view(): what its body returned, worked out again. */
+static Value component_view(Interp *I, ObjComponent *c) {
+    if (c->left) return lube_error(I, "this %s has left: it has no view", c->decl->name->chars);
+    const OnDesc *od = component_find(I, c, ON_VIEW, NULL);
+    if (!od) return lube_error(I, "%s's view cannot be worked out while its body runs", c->decl->name->chars);
+    return component_run(I, c, od, NULL);
+}
+
+/* c.leave(): its `on leave` blocks run, then its blocks are gone (it stays, with no view). */
+static Value component_leave(Interp *I, ObjComponent *c) {
+    if (c->left) return NIL_VAL;
+    if (c->depth) return lube_error(I, "%s cannot leave while its body or one of its blocks runs", c->decl->name->chars);
+    for (int i = 0; i < c->nblocks && !c->left; i++) {
+        if (c->blocks[i].od->kind != ON_LEAVE) continue;
+        Value r = component_run(I, c, c->blocks[i].od, NULL);
+        if (IS_ERR(r)) return r;
+        release(r);
+    }
+    c->left = 1;
+    for (int i = 0; i < c->nblocks; i++) release(c->blocks[i].token);
+    c->nblocks = 0;
+    return NIL_VAL;
+}
+
+/* A handler (or c.view, c.leave) kept as a function: the component it belongs to, or NULL with an error raised
+ * (it does not keep the component: see CompCell). */
+static ObjComponent *bound_component(Interp *I) {
+    ObjComponent *c = I->calling->cell->comp;
+    if (!c) lube_error(I, "%s() belongs to a component that is gone", I->calling->name);
+    return c;
+}
+
+static Value n_handler(Interp *I, int argc, Value *argv) {
+    const OnDesc *od = I->calling->od;
+    ObjComponent *c = bound_component(I);
+    (void)argc;
+    return c ? component_run(I, c, od, argv) : ERR_VAL;
+}
+
+static Value n_component_view(Interp *I, int argc, Value *argv) {
+    ObjComponent *c = bound_component(I);
+    (void)argc;
+    (void)argv;
+    return c ? component_view(I, c) : ERR_VAL;
+}
+
+static Value n_component_leave(Interp *I, int argc, Value *argv) {
+    ObjComponent *c = bound_component(I);
+    (void)argc;
+    (void)argv;
+    return c ? component_leave(I, c) : ERR_VAL;
+}
+
+/* c.toggle(...), c.view(), c.leave(): called as methods, with c first (so a component made for the call lasts
+ * through it). */
+static Value n_component_method(Interp *I, int argc, Value *argv) {
+    const OnDesc *od = I->calling->od;
+    const char *name = I->calling->name;
+    int want = od ? od->func->nparams : 0;
+    if (argc - 1 != want) return arity_error(I, name, want, want, argc - 1);
+    ObjComponent *c = AS_COMPONENT(argv[0]);
+    if (od) return component_run(I, c, od, argv + 1);
+    return name[0] == 'v' ? component_view(I, c) : component_leave(I, c);
+}
+
+static Value bound_native(ObjComponent *c, const char *name, NativeFn fn, const OnDesc *od, int nargs) {
+    ObjNative *n = new_native(name, fn, nargs, nargs, 0);
+    n->cell = c->cell;
+    c->cell->rc++;
+    n->od = od;
+    return OBJ_VAL(n);
+}
+
+/* c's handler `name`, or NULL with an error raised. */
+static const OnDesc *component_handler(Interp *I, ObjComponent *c, ObjString *name) {
+    if (c->left) {
+        lube_error(I, "this %s has left: its blocks are gone", c->decl->name->chars);
+        return NULL;
+    }
+    const OnDesc *od = component_find(I, c, ON_HANDLER, name);
+    if (!od) lube_error(I, "%s has no handler '%s'", c->decl->name->chars, name->chars);
+    return od;
+}
+
+/* c.name: its view or leave, or a handler of its, as a function. */
+static Value component_member(Interp *I, ObjComponent *c, ObjString *name) {
+    if (!strcmp(name->chars, "view")) return bound_native(c, "view", n_component_view, NULL, 0);
+    if (!strcmp(name->chars, "leave")) return bound_native(c, "leave", n_component_leave, NULL, 0);
+    const OnDesc *od = component_handler(I, c, name);
+    return od ? bound_native(c, od->func->name->chars, n_handler, od, od->func->nparams) : ERR_VAL;
+}
+
+/* c.name(...): the function to call with c first. */
+static Value component_method(Interp *I, ObjComponent *c, ObjString *name) {
+    const OnDesc *od = NULL;
+    if (strcmp(name->chars, "view") && strcmp(name->chars, "leave") && !(od = component_handler(I, c, name)))
+        return ERR_VAL;
+    ObjNative *n = new_native(od ? od->func->name->chars : name->chars, n_component_method, 1, -1, 0);
+    n->od = od;
+    return OBJ_VAL(n);
 }
 
 static PendingCall *new_pending(Interp *I) {
@@ -2126,6 +2369,13 @@ static Value package_callee(Interp *I, Value pkgv, MethodDesc *md) {
 
 LUBE_NOINLINE static int prep_method(Interp *I, MethodDesc *md, Value obj, Place *place, int have_place) {
     ObjString *name = md->name;
+    if (IS_COMPONENT(obj)) {  /* c.view(), c.leave(), c.toggle() */
+        if (have_place) place_free(place);
+        Value callee = component_method(I, AS_COMPONENT(obj), name);
+        if (!IS_ERR(callee)) return push_call(I, callee, SELF_VALUE, obj, NULL);
+        release(obj);
+        return -1;
+    }
     if (IS_PACKAGE(obj)) {  /* geometry.area(s): a package's function */
         Value callee = package_callee(I, obj, md);
         release(obj);
@@ -3478,6 +3728,24 @@ LUBE_NOINLINE static int vm_step(Interp *I) {
             OnDesc *od = code->ons[ARG_OF(in)];
             if ((od->frame ? add_frame_watcher(I, od) : add_watcher(I, od)) < 0) goto error;
             break;
+        }
+        case OP_COMPONENT_BEGIN: {  /* fn ... component: the component, in its hidden slot while its body runs */
+            ObjComponent *c = new_component(f->fn->decl);
+            set_slot(I, ARG_OF(in), OBJ_VAL(c));
+            c->depth = VM_DEPTH(I);
+            break;
+        }
+        case OP_HANDLER: {  /* fn toggle() { ... } in a component's body: a function that runs it on the component */
+            OnDesc *od = code->ons[ARG_OF(in)];
+            ObjComponent *c = AS_COMPONENT(I->stack[f->base + f->fn->decl->comp_slot]);
+            PUSH(bound_native(c, od->func->name->chars, n_handler, od, od->func->nparams));
+            break;
+        }
+        case OP_COMPONENT_END: {  /* its body is done: its frame goes into the component, which is what it returns */
+            ObjComponent *c = AS_COMPONENT(I->stack[f->base + ARG_OF(in)]);
+            r = retain(OBJ_VAL(c));
+            component_keep(I, c, f->base);
+            goto do_return;
         }
         case OP_LWATCH_BEFORE: {
             LocalWatch *lw = &code->lwatch[ARG_OF(in)];

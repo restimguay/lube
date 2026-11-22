@@ -361,6 +361,8 @@ static void resolve_block(Resolver *R, Node *b) {
     b->as.block.nslots = end_scope(R, start);
 }
 
+static void resolve_component(Resolver *R, FuncDecl *d);
+
 static void resolve_function(Resolver *R, FuncDecl *d) {
     FnCtx f;
     memset(&f, 0, sizeof f);
@@ -378,7 +380,8 @@ static void resolve_function(Resolver *R, FuncDecl *d) {
         if (d->defaults[i]) resolve(R, d->defaults[i]);
         declare(R, d->params[i], d->line, d->modes[i] != PARAM_LET, d->is_method && i == 0 ? ORIGIN_THIS : ORIGIN_PARAM);
     }
-    if (d->is_arrow) resolve(R, d->body);
+    if (d->is_component) resolve_component(R, d);
+    else if (d->is_arrow) resolve(R, d->body);
     else resolve_list(R, &d->body->as.block.stmts);  /* the body shares the parameters' scope */
 
     d->nslots = f.max_slots;
@@ -411,7 +414,10 @@ static void resolve_frame_block(Resolver *R, OnDesc *od, FuncDecl *d) {
     }
     f->ons[f->nons++] = od;
     int start = begin_scope(R);
-    for (int i = 0; i < d->nparams; i++) od->param_slot[i] = declare(R, d->params[i], d->line, 0, ORIGIN_PARAM);
+    for (int i = 0; i < d->nparams; i++) {  /* (in a row: a handler's from param_slot[0] on) */
+        int slot = declare(R, d->params[i], d->line, 0, ORIGIN_PARAM);
+        if (i < 2) od->param_slot[i] = slot;
+    }
     resolve_list(R, &d->body->as.block.stmts);
     end_scope(R, start);
     f->nons--;
@@ -459,6 +465,105 @@ static void resolve_on(Resolver *R, Node *n) {
     }
     if (od->frame) resolve_frame_block(R, od, od->func);
     else resolve_function(R, od->func);
+}
+
+/* A block of a component (a handler, its view, on leave): runs on its frame, as an `on` block in a function does,
+ * whenever it is asked to (it watches nothing). */
+static OnDesc *component_block(Resolver *R, FuncDecl *d, int kind) {
+    OnDesc *od = arena_alloc(R->tree, sizeof(OnDesc));
+    memset(od, 0, sizeof *od);
+    od->func = d;
+    od->frame = 1;
+    od->kind = kind;
+    resolve_frame_block(R, od, d);
+    return od;
+}
+
+static Node *tree_node(Resolver *R, NodeKind kind, int line);
+
+/* A { } block of one statement. */
+static Node *block_of(Resolver *R, Node *stmt) {
+    Node *b = tree_node(R, N_BLOCK, stmt->line);
+    b->as.block.stmts.items = arena_alloc(R->tree, sizeof(Node *));
+    b->as.block.stmts.items[0] = stmt;
+    b->as.block.stmts.count = b->as.block.stmts.cap = 1;
+    return b;
+}
+
+static Node *tree_node(Resolver *R, NodeKind kind, int line) {
+    Node *n = arena_alloc(R->tree, sizeof(Node));
+    memset(n, 0, sizeof *n);
+    n->kind = kind;
+    n->line = n->end_line = line;
+    return n;
+}
+
+/* fn Card(title) component { ...; return view }: its body's own fns are its handlers, its `on leave` runs when it
+ * leaves (c.leave()), and what it returns is its view, worked out again each time c.view() is asked for. */
+static void resolve_component(Resolver *R, FuncDecl *d) {
+    FnCtx *f = R->fn;
+    if (!d->name || d->is_method || f->parent->decl || f->parent->depth > 0)
+        rerror(R, d->line, "a component is declared at the top level of a file, as fn Name(...) component { ... }");
+    for (int i = 0; i < d->nparams; i++)
+        if (d->modes[i] != PARAM_LET)
+            rerror(R, d->line, "a component's parameters are plain: '%s' cannot take & or var", d->params[i]->chars);
+    d->comp_slot = f->nslots++;
+    if (f->nslots > f->max_slots) f->max_slots = f->nslots;
+    NodeList *stmts = &d->body->as.block.stmts;
+    Node *last = stmts->count ? stmts->items[stmts->count - 1] : NULL;
+    if (!last || last->kind != N_RETURN || !last->as.expr)
+        rerror(R, last ? last->line : d->line,
+               "a component's body ends with 'return' and the view it shows, like 'return div(...)'");
+    for (int i = 0; i < stmts->count; i++) {
+        Node *s = stmts->items[i];
+        if (s == last) {  /* return view: a block of its own, run by c.view() */
+            FuncDecl *v = arena_alloc(R->tree, sizeof(FuncDecl));
+            memset(v, 0, sizeof *v);
+            v->name = lube_intern(R->I, "view", 4);
+            v->line = s->line;
+            v->src = d->src;
+            v->strict = d->strict;
+            v->defaults = d->defaults;  /* (none are read: it has no parameters) */
+            v->body = block_of(R, s);
+            Node *on = tree_node(R, N_ON, s->line);
+            on->as.on.func = v;
+            on->as.on.desc = component_block(R, v, ON_VIEW);
+            stmts->items[i] = on;
+        } else if (s->kind == N_LET && s->as.let.is_fn) {  /* fn toggle() { ... }: a handler */
+            FuncDecl *h = s->as.let.value->as.func;
+            for (int k = 0; k < h->nparams; k++)
+                if (h->modes[k] != PARAM_LET || h->defaults[k])
+                    rerror(R, h->line, "a handler's parameters are plain: '%s' cannot take &, var or a default",
+                           h->params[k]->chars);
+            if (h->ret.set) rerror(R, h->line, "a handler cannot have a return type");
+            if (!strcmp(h->name->chars, "view") || !strcmp(h->name->chars, "leave"))
+                rerror(R, h->line, "a component's '%s' is its own: name the handler something else", h->name->chars);
+            if (h->is_arrow) {  /* fn add(n) => count += n: the same as { return count += n } */
+                Node *ret = tree_node(R, N_RETURN, h->body->line);
+                ret->as.expr = h->body;
+                h->body = block_of(R, ret);
+                h->is_arrow = 0;
+            }
+            VarRef *v = &s->as.let.var;
+            bind(v, declare(R, v->name, s->line, 0, ORIGIN_FN), 0, ORIGIN_FN);
+            Node *on = tree_node(R, N_ON, s->line);
+            on->as.on.func = h;
+            on->as.on.desc = component_block(R, h, ON_HANDLER);
+            s->as.let.value = on;
+            s->as.let.is_fn = 2;
+        } else if (s->kind == N_ON && s->as.on.count == 1 && !s->as.on.items[0].npath &&
+                   !strcmp(s->as.on.items[0].name->chars, "leave")) {  /* on leave { ... } */
+            if (s->as.on.func->nparams) rerror(R, s->line, "'on leave' takes no (old, new): nothing changes");
+            s->as.on.count = 0;
+            s->as.on.desc = component_block(R, s->as.on.func, ON_LEAVE);
+        } else {
+            resolve(R, s);
+            for (int k = 0; s->kind == N_ON && k < s->as.on.count; k++)
+                if (s->as.on.items[k].root.kind == VAR_GLOBAL)
+                    rerror(R, s->line, "a component's 'on' blocks watch its own vars, and '%s' is a global: watch it "
+                                       "at the top level of the file", s->as.on.items[k].name->chars);
+        }
+    }
 }
 
 /* Long chains like 1 + 1 + ... build deep trees without deep nesting in
@@ -616,6 +721,9 @@ static void resolve_node(Resolver *R, Node *n) {
     case N_RETURN: {  /* in an `on` block's code: ends the block */
         FuncDecl *d = R->fn->nons ? R->fn->ons[R->fn->nons - 1]->func : R->fn->decl;
         if (!d) rerror(R, n->line, "'return' can only be used inside a function");
+        if (d->is_component)
+            rerror(R, n->line, "a component returns once, at the end of its body: the view it shows, like 'return "
+                               "div(...)'");
         const char *fname = d->name ? d->name->chars : "this function";
         const char *paren = d->name ? "()" : "";
         if (!n->as.expr && d->ret.set)
