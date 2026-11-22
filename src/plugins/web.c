@@ -1789,10 +1789,14 @@ static void conn_read(App *a, Conn *c, double now) {
     }
 }
 
+/* At most this much in each send(): Windows takes all of a send, of any size, while its buffer is not quite full,
+ * so a client that does not read would have the system keep its whole answer (and never seem slow). */
+#define SEND_PIECE (256 * 1024)
 static void conn_flush(Conn *c, double now) {
     pump(c);
     while (c->out.n) {
-        long n = (long)send(c->fd, c->out.p, (int)c->out.n, SEND_FLAGS);
+        size_t piece = c->out.n < SEND_PIECE ? c->out.n : SEND_PIECE;
+        long n = (long)send(c->fd, c->out.p, (int)piece, SEND_FLAGS);
         if (n > 0) {
             buf_drop(&c->out, (size_t)n);
             c->sent_at = now;
