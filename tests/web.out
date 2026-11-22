@@ -129,7 +129,7 @@ slow body: HTTP/1.1 408 Request Timeout
 idle: HTTP/1.1 200 OK true
 after a quiet while: 0 false
 trickle: HTTP/1.1 408 Request Timeout
-a last answer: HTTP/1.1 400 Bad Request false
+a last answer: HTTP/1.1 400 Bad Request
 then: 0 false
 -- connections
 a third from one address: true true false

@@ -269,7 +269,7 @@ print("trickle:", status(drain(trickle).decode()))
 trickle.close()
 let lingers = net.tcp_connect("127.0.0.1", port)  // after a last answer, what still comes is dropped; closed in a second
 lingers.send("GET / HTTP/1.1\r\nHost: localhost\r\nContent-Length: x\r\n\r\n")
-print("a last answer:", status(drain(lingers).decode()), lingers.is_open())
+print("a last answer:", status(drain(lingers).decode()))
 lingers.send("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
 wait(1.2)
 print("then:", len(drain(lingers)), lingers.is_open())
@@ -852,10 +852,10 @@ reader.get("/big", fn(req) => big)  // handler, where a slow build would take lo
 use(reader)
 let lazy = net.tcp_connect("127.0.0.1", port)
 lazy.send("GET /big HTTP/1.1\r\nHost: localhost\r\n\r\n")
-wait(0.3)
-var lazy_got = 0  // (what its buffers kept comes, then the end: Windows keeps several MB)
+wait(2)  // it reads nothing while the server sends, until the buffers between are full (slow builds: a while)
+var lazy_got = 0  // then what the buffers kept comes, and the end (Windows keeps several MB)
 let lazy_until = now() + 10
-while lazy.is_open() and now() < lazy_until { lazy_got += len(lazy.receive(0.01)) }
+while lazy.is_open() and now() < lazy_until { lazy_got += len(lazy.receive(0.01)) }  // (the server steps no more)
 print("a lazy reader is dropped:", lazy_got < 64000000, lazy.is_open())
 lazy.close()
 let gone_reader = net.tcp_connect("127.0.0.1", port)
