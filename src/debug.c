@@ -137,7 +137,7 @@ static FuncDecl *compile_in(Interp *I, Frame *f, const char *text) {
     d->body = stmts->items[0]->as.expr;
     DebugVar vars[256];
     int n = frame_vars(f, vars, 256);
-    if (!resolve_debug(I, d, src, arena, f->src, vars, n)) {
+    if (!resolve_debug(I, d, src, arena, lube_frame_src(f), vars, n)) {
         arena_free(arena);
         return NULL;
     }
@@ -264,7 +264,7 @@ static Breakpoint *breakpoint_at(Interp *I, Frame *f, int line) {
     Debugger *D = I->dbg;
     for (int i = 0; i < D->nbps; i++) {
         Breakpoint *b = &D->bps[i];
-        if (b->line != line || !f->src || !same_file(b->file, f->src->path)) continue;
+        if (b->line != line || !lube_frame_src(f) || !same_file(b->file, lube_frame_src(f)->path)) continue;
         Value v;
         if (b->cond) {
             FuncDecl *d = compiled(I, b, f);
@@ -336,8 +336,8 @@ void debug_hook(Interp *I) {
         D->pause = 0;
         interrupted = 0;
         stop(I, "pause", NULL);
-    } else if (D->step == STEP_IN || (D->step == STEP_OVER && I->depth <= D->step_depth) ||
-               (D->step == STEP_OUT && I->depth < D->step_depth)) {
+    } else if (D->step == STEP_IN || (D->step == STEP_OVER && VM_DEPTH(I) <= D->step_depth) ||
+               (D->step == STEP_OUT && VM_DEPTH(I) < D->step_depth)) {
         stop(I, "step", NULL);
     }
 }
@@ -363,7 +363,7 @@ void debug_error(Interp *I) {
 
 void debug_left_frame(Interp *I) {
     Debugger *D = I->dbg;  /* stepping: stop again in the caller (not after the debugger's own calls) */
-    if (D->step != STEP_NONE && !D->busy && I->frame) I->frame->dbg_line = -1;
+    if (D->step != STEP_NONE && !D->busy && I->frame) I->frame->dbg_line = DBG_NO_LINE;
 }
 
 /* ---------- the terminal prompt ---------- */
@@ -389,8 +389,9 @@ static const char *source_line(Source *src, int line, int *len) {
 
 static void show_frame(Interp *I, Frame *f, int marker) {
     int line = lube_frame_line(f), len;
-    printf("%s at %s (%s:%d)\n", marker ? "=>" : "  ", f->name, f->src ? f->src->path : "?", line);
-    const char *text = source_line(f->src, line, &len);
+    Source *fsrc = lube_frame_src(f);
+    printf("%s at %s (%s:%d)\n", marker ? "=>" : "  ", lube_frame_name(f), fsrc ? fsrc->path : "?", line);
+    const char *text = source_line(fsrc, line, &len);
     if (text) printf("%5d | %.*s\n", line, len, text);
     (void)I;
 }
@@ -406,7 +407,7 @@ static void show_value(Interp *I, const char *name, Value v) {
 static void list_source(Frame *f) {
     int line = lube_frame_line(f), len;
     for (int l = line - 5 < 1 ? 1 : line - 5; l <= line + 5; l++) {
-        const char *text = source_line(f->src, l, &len);
+        const char *text = source_line(lube_frame_src(f), l, &len);
         if (!text) break;
         printf("%s%4d | %.*s\n", l == line ? "=>" : "  ", l, len, text);
     }
@@ -420,7 +421,7 @@ static int parse_location(Interp *I, const char *arg, char *file, size_t size, i
         snprintf(file, size, "%.*s", (int)(colon - arg), arg);
         arg = colon + 1;
     } else {
-        snprintf(file, size, "%s", f && f->src ? f->src->path : "");
+        snprintf(file, size, "%s", f && lube_frame_src(f) ? lube_frame_src(f)->path : "");
     }
     char *end;
     long n = strtol(arg, &end, 10);
@@ -477,14 +478,14 @@ static void terminal_stop(Interp *I, const char *reason, const char *text) {
             return;
         } else if (!strcmp(cmd, "n") || !strcmp(cmd, "next")) {
             D->step = STEP_OVER;
-            D->step_depth = I->depth;
+            D->step_depth = VM_DEPTH(I);
             return;
         } else if (!strcmp(cmd, "s") || !strcmp(cmd, "step")) {
             D->step = STEP_IN;
             return;
         } else if (!strcmp(cmd, "o") || !strcmp(cmd, "out")) {
             D->step = STEP_OUT;
-            D->step_depth = I->depth;
+            D->step_depth = VM_DEPTH(I);
             return;
         } else if (!strcmp(cmd, "p") || !strcmp(cmd, "print")) {
             Value v;
@@ -514,7 +515,7 @@ static void terminal_stop(Interp *I, const char *reason, const char *text) {
         } else if (!strcmp(cmd, "bt") || !strcmp(cmd, "where")) {
             int i = 0;
             for (Frame *f = I->frame; f; f = f->prev, i++) {
-                printf("%s#%d %s (%s:%d)\n", i == D->selected ? "=>" : "  ", i, f->name, f->src ? f->src->path : "?",
+                printf("%s#%d %s (%s:%d)\n", i == D->selected ? "=>" : "  ", i, lube_frame_name(f), lube_frame_src(f) ? lube_frame_src(f)->path : "?",
                        lube_frame_line(f));
             }
         } else if (!strcmp(cmd, "up") || !strcmp(cmd, "down") || !strcmp(cmd, "frame")) {

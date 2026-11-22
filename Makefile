@@ -84,7 +84,7 @@ liblube.a: $(LIB_OBJ)
 	rm -f $@
 	$(AR) rcs $@ $(LIB_OBJ)
 
-build/%.o: src/%.c src/lube.h src/lube_plugin.h src/lube_embed.h | build
+build/%.o: src/%.c src/lube.h src/lube_plugin.h src/lube_embed.h src/interp_ops.h | build
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 build:
@@ -106,12 +106,12 @@ plugins:
 # A checking build: AddressSanitizer and UndefinedBehaviorSanitizer catch
 # any out-of-bounds access, use-after-free or undefined behaviour, and the
 # interpreter verifies at exit that every object was freed (no leaks).
-lube-check: $(CHECK_SRC) $(PLUGIN_PARTS) src/lube.h src/lube_plugin.h
+lube-check: $(CHECK_SRC) $(PLUGIN_PARTS) src/lube.h src/lube_plugin.h src/interp_ops.h
 	$(CC) $(CFLAGS) -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -DLUBE_STATIC_PLUGINS \
 		-fno-sanitize-recover=undefined -DLUBE_CHECK_LEAKS $(LDFLAGS) -o $@ $(CHECK_SRC) $(CHECK_LIBS)
 
 # A ThreadSanitizer build: catches data races between isolates (threads).
-lube-tsan: $(CHECK_SRC) $(PLUGIN_PARTS) src/lube.h src/lube_plugin.h
+lube-tsan: $(CHECK_SRC) $(PLUGIN_PARTS) src/lube.h src/lube_plugin.h src/interp_ops.h
 	$(CC) $(CFLAGS) -O1 -g -fsanitize=thread -DLUBE_STATIC_PLUGINS $(LDFLAGS) -o $@ $(CHECK_SRC) $(CHECK_LIBS)
 
 test: all

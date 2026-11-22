@@ -1,0 +1,79 @@
+// Run under the debugger by tests/cli.sh, where every instruction goes the long way (one at a time, for the
+// debugger to look before each): what the fast loop otherwise does itself.
+class Counter {
+  var n = 0
+  fn bump() { this.n += 1 }
+}
+fn twice(x) => x * 2
+fn fact(n) {
+  if n < 2 { return 1 }
+  return n * fact(n - 1)
+}
+fn tries(f) {
+  try { f() } catch e { print("error:", e) }
+}
+
+var c = Counter()
+c.bump()
+c.bump()
+print("counter", c.n)
+let m = {a: 1, b: "two"}
+print("map", m, m["a"], m.b)
+print("not", not true, not 0)
+print("and/or", true and false, false or "x", 0 and 1)
+var s = "a"
+s += "b"
+s += "c"
+print("joined", s)
+var xs = [3, 1, 2]
+let ys = xs
+xs.push(4)
+push(&xs, 5)
+xs.push(6)
+print("lists", xs, ys, xs[1], xs[-1], "abc"[1])
+var i = 1
+let key = "b"
+print("index2", xs[i], ys[0], m[key])
+for k in 0..3 { print("range", k) }
+for k in range(0, 10, 4) { print("stepped", k) }
+let r = 2..=4
+for k in r { print("range object", k) }
+for x in ys { print("item", x) }
+for key, v in m { print("entry", key, v) }
+print("is", xs is List, s is List)
+print("calls", fact(5), twice(21), 5.twice())
+if xs[0] > 2 { print("jumped") } else { print("not jumped") }
+tries(fn() => xs[10])
+tries(fn() => 1 + "a")
+tries(fn() => s.nope)
+tries(fn() { throw "thrown" })
+tries(fn() {
+  var n = 5
+  n.push(1)
+})
+
+// the same in a function, on its locals
+import math
+fn on_locals(r) {
+  var k = Counter()
+  k.bump()
+  var t = "a"
+  t += "b"
+  var a = [1]
+  let b = a
+  a.push(2)
+  var roots = 0
+  for i in 0..3 { roots += math.sqrt(16) }
+  var through = 0
+  for v in r { through += v }
+  for p, v in r { through += p * v }
+  var listed = []
+  for p, q in b { listed.push(p + q) }
+  for q in a { listed.push(q) }
+  return [k.n, t, a, b, roots, through, listed]
+}
+fn add_one(&xs) => xs.push(1)
+var more = [0]
+add_one(&more)
+print("locals", on_locals(2..=4), more)
+print("done")

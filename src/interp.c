@@ -57,17 +57,57 @@ static void trace_reset(Interp *I) {
 
 /* The line a frame is at: the running instruction's, for bytecode. */
 static int frame_line(Frame *f) {
+#if VM_SLIM_CALL
+    return f->proto->code.lines[f->pc - f->proto->code.code];
+#else
     return f->proto && f->pc ? f->proto->code.lines[f->pc - f->proto->code.code] : f->line;
+#endif
 }
 
 int lube_frame_line(Frame *f) { return frame_line(f); }
 
+static const char *callee_name(Value f);
+
+/* A frame's name, as tracebacks and errors give it: its function's (a constructor's is its class's), or the
+ * script's or the `on` block's. (A slim frame does not hold it: its code says.) */
+const char *lube_frame_name(Frame *f) {
+#if VM_SLIM_CALL
+    return f->block || !f->fn ? f->proto->name->chars : callee_name(OBJ_VAL(f->fn));
+#else
+    return f->name;
+#endif
+}
+
+Source *lube_frame_src(Frame *f) {
+#if VM_SLIM_CALL
+    return f->proto->src;
+#else
+    return f->src;
+#endif
+}
+
+#ifdef VM_PC_CHECK  /* a checking build: is the VM's state the Interp's whenever something can see it? */
+#include <stdio.h>
+#include <stdlib.h>
+static LUBE_THREAD_LOCAL int vm_synced = 1;  /* 0 while execute()'s loop has the state in its own registers */
+static void vm_check_pc(Interp *I) {
+    (void)I;
+    if (!vm_synced) {
+        fprintf(stderr, "VM_PC_CHECK: an error is raised while the loop's registers are not written back\n");
+        abort();
+    }
+}
+#endif
+
 /* Raises v (taking over the reference). Always returns ERR_VAL. */
 Value lube_throw(Interp *I, Value v) {
+#ifdef VM_PC_CHECK
+    vm_check_pc(I);
+#endif
     release(I->error_val);
     I->error_val = v;
     I->error_line = I->frame ? frame_line(I->frame) : 0;
-    I->error_src = I->frame ? I->frame->src : NULL;
+    I->error_src = I->frame ? lube_frame_src(I->frame) : NULL;
     trace_reset(I);
     if (I->dbg) debug_error(I);  /* break on errors: the frames are all still here */
     return ERR_VAL;
@@ -154,7 +194,8 @@ static void trace_flush_repeats(Interp *I) {
  * first MAX_TRACE distinct lines and the outermost frame. */
 LUBE_COLD static void trace_frame(Interp *I, Frame *f) {
     char line[sizeof I->trace_prev];
-    snprintf(line, sizeof line, "  at %s (%s:%d)\n", f->name, f->src ? f->src->path : "?", frame_line(f));
+    Source *src = lube_frame_src(f);
+    snprintf(line, sizeof line, "  at %s (%s:%d)\n", lube_frame_name(f), src ? src->path : "?", frame_line(f));
     I->trace_count++;
     if (strcmp(line, I->trace_prev) == 0) {
         I->trace_repeat++;
@@ -1618,17 +1659,67 @@ typedef struct FrameChunk {
     Frame frames[FRAME_CHUNK];
 } FrameChunk;
 
+/* The frame after the newest (which the caller makes the newest: I->frame). */
 static Frame *new_frame(Interp *I) {
-    int k = I->depth++;
+    int k = VM_DEPTH(I);
     if (k / FRAME_CHUNK == I->nchunks) {
         I->chunks = xrealloc(I->chunks, sizeof(FrameChunk *) * (size_t)(I->nchunks + 1));
-        I->chunks[I->nchunks++] = xmalloc(sizeof(FrameChunk));
+        FrameChunk *c = I->chunks[I->nchunks++] = xmalloc(sizeof(FrameChunk));
+        for (int i = 0; i < FRAME_CHUNK; i++) {  /* what never changes of a frame: where it is */
+            c->frames[i].index = k + i;
+            c->frames[i].last = i == FRAME_CHUNK - 1 || k + i + 1 >= LUBE_MAX_FRAMES;
+        }
     }
     return &I->chunks[k / FRAME_CHUNK]->frames[k % FRAME_CHUNK];
 }
 
 static Value execute(Interp *I);
 static int check_items(Interp *I, OnDesc *od);
+
+/* A frame whose end has more to do than give its slots back (see Frame.slow_ret): execute()'s loop leaves it to
+ * op_return. */
+#if VM_SLIM_CALL
+#define FRAME_SLOW_RET(f) ((f)->slow_ret = 1)
+#define FRAME_LENT(f) ((f)->lent != NULL)
+#else
+#define FRAME_SLOW_RET(f) ((void)0)
+#define FRAME_LENT(f) 0
+#endif
+
+/* Fills a new frame (the newest: its pending calls start where the Interp's are now). */
+LUBE_INLINE void frame_init(Interp *I, Frame *f, Frame *prev, ObjFunction *fn, FuncDecl *d, const char *name, int line,
+                            int base, int argc, int call_base, int opbase) {
+    f->prev = prev;
+#if VM_SLIM_CALL
+    (void)name;
+    (void)line;
+    f->slow_ret = fn && (d->ret.set || d->strict);  /* (what it returns is checked; whoever makes it an entry frame, a
+                                                      constructor's or a block's, or gives it loans, says so too) */
+#else
+    f->name = name;
+    f->src = d->src;
+    f->line = line;
+#endif
+    f->base = base;
+    f->slots = I->stack + base;
+    f->fn = fn;
+    f->this_locked = 0;
+    f->proto = d;
+    f->pc = d->code.code;
+    f->argc = argc;
+    f->call_base = call_base;
+    f->pending = I->npending;
+    f->construct = 0;
+    f->entry = 0;
+    f->block = 0;
+    f->opbase = opbase;
+    f->loans = NULL;
+    f->nloans = 0;
+    f->dbg_line = DBG_NO_LINE;
+#if VM_SLIM_CALL
+    f->lent = NULL;
+#endif
+}
 
 /* Calls d's machine code (lube --build --native) with the argc arguments at
  * stack[base...]: 1 with the result in *out, or 0 when the VM must run the
@@ -1638,7 +1729,7 @@ static int check_items(Interp *I, OnDesc *od);
 static int native_call(Interp *I, FuncDecl *d, int base, int argc, Value *out) {
     const char *sig = d->native->sig;
     double args[8], result;
-    int left = LUBE_MAX_FRAMES - I->depth < NATIVE_DEPTH ? LUBE_MAX_FRAMES - I->depth : NATIVE_DEPTH;
+    int left = LUBE_MAX_FRAMES - VM_DEPTH(I) < NATIVE_DEPTH ? LUBE_MAX_FRAMES - VM_DEPTH(I) : NATIVE_DEPTH;
     if (d->native->fnval) {  /* a value back (its own: the VM's now) */
         return !d->native->fnval(I, &I->stack[base], out, left);
     } else if (d->native->fnv) {  /* records: its wrapper takes the arguments as they are */
@@ -1660,11 +1751,11 @@ static int native_call(Interp *I, FuncDecl *d, int base, int argc, Value *out) {
 static int call_native(Interp *I, FuncDecl *d, int base, int argc, Value *out) {
     if (I->dbg || argc != d->nparams) return 0;
     if (I->native_off) {  /* (see Interp.native_off) */
-        if (I->depth >= I->native_off) return 0;
+        if (VM_DEPTH(I) >= I->native_off) return 0;
         I->native_off = 0;
     }
     if (native_call(I, d, base, argc, out)) return 1;
-    I->native_off = I->depth + 1;
+    I->native_off = VM_DEPTH(I) + 1;
     return 0;
 }
 
@@ -1674,7 +1765,7 @@ static int call_native(Interp *I, FuncDecl *d, int base, int argc, Value *out) {
 static int add_frame_watcher(Interp *I, OnDesc *od) {
     if (check_items(I, od) < 0) return -1;
     int keep = 0, first = I->nfwatch;
-    while (first > 0 && I->fwatch[first - 1].depth == I->depth) first--;
+    while (first > 0 && I->fwatch[first - 1].depth == VM_DEPTH(I)) first--;
     for (int i = first; i < I->nfwatch; i++) {
         if (fw_live(I, &I->fwatch[i])) I->fwatch[first + keep++] = I->fwatch[i];
         else release(I->fwatch[i].token);
@@ -1687,10 +1778,11 @@ static int add_frame_watcher(Interp *I, OnDesc *od) {
     FrameWatcher *w = &I->fwatch[I->nfwatch++];
     w->od = od;
     w->base = I->frame->base;
-    w->depth = I->depth;
+    w->depth = VM_DEPTH(I);
     w->token = OBJ_VAL(new_function(od->func, 0));
     w->running = 0;
     set_slot(I, od->token, retain(w->token));
+    FRAME_SLOW_RET(I->frame);  /* (its `on` blocks end with it: see leave) */
     return 0;
 }
 
@@ -1715,7 +1807,7 @@ static Value run_frame_block(Interp *I, int i, Value old, Value now) {
         if (IS_NIL(I->stack[base + od->uses[k].slot]))
             return lube_error(I, "the '%s' block cannot run now: '%s' is lent out with & to a call that has not returned",
                               d->name->chars, od->uses[k].name->chars);
-    if (I->depth >= LUBE_MAX_FRAMES || I->sp + d->code.maxstack > LUBE_STACK_MAX)
+    if (VM_DEPTH(I) >= LUBE_MAX_FRAMES || I->sp + d->code.maxstack > LUBE_STACK_MAX)
         return lube_error(I, "stack overflow: too much recursion");
     Value r = NIL_VAL;
     for (int k = 0; k < d->nparams && !IS_ERR(r); k++) {
@@ -1742,25 +1834,12 @@ static Value run_block_frame(Interp *I, FrameWatcher *w, int i) {
     FuncDecl *d = w->od->func;
     Frame *owner = &I->chunks[(w->depth - 1) / FRAME_CHUNK]->frames[(w->depth - 1) % FRAME_CHUNK];
     Frame *f = new_frame(I);
-    f->prev = I->frame;
-    f->name = d->name->chars;
-    f->src = d->src;
-    f->line = d->line;
-    f->base = w->base;
-    f->fn = owner->fn;  /* for the function's captures */
+    frame_init(I, f, I->frame, owner->fn /* for the function's captures */, d, d->name->chars, d->line, w->base, 0, I->sp,
+               I->sp);
     f->this_locked = owner->this_locked;
-    f->proto = d;
-    f->pc = d->code.code;
-    f->argc = 0;
-    f->call_base = I->sp;
-    f->pending = I->npending;
-    f->construct = 0;
     f->entry = 1;
     f->block = 1;
-    f->opbase = I->sp;
-    f->loans = NULL;
-    f->nloans = 0;
-    f->dbg_line = -1;
+    FRAME_SLOW_RET(f);
     I->frame = f;
     w->running = 1;
     Value r = execute(I);
@@ -1864,7 +1943,7 @@ static Frame *enter(Interp *I, ObjFunction *fn, int base, int argc) {
     }
     for (int i = 0; i < argc; i++)
         if (!check_param(I, d, name, i, &I->stack[base + i], base + i)) return NULL;
-    if (I->depth >= LUBE_MAX_FRAMES || base + d->nslots + d->code.maxstack > LUBE_STACK_MAX) {
+    if (VM_DEPTH(I) >= LUBE_MAX_FRAMES || base + d->nslots + d->code.maxstack > LUBE_STACK_MAX) {
         lube_error(I, "stack overflow: too much recursion");
         return NULL;
     }
@@ -1874,7 +1953,7 @@ static Frame *enter(Interp *I, ObjFunction *fn, int base, int argc) {
 /* May a call of d, whose parameters from `first` on are plain (see FuncDecl.plain), start without enter()?
  * When it has every argument, those of Number parameters are Numbers, and there is room for its frame. */
 static inline int plain_args(Interp *I, FuncDecl *d, int base, int argc, int first) {
-    if (argc != d->nparams || I->depth >= LUBE_MAX_FRAMES || base + d->nslots + d->code.maxstack > LUBE_STACK_MAX) return 0;
+    if (argc != d->nparams || VM_DEPTH(I) >= LUBE_MAX_FRAMES || base + d->nslots + d->code.maxstack > LUBE_STACK_MAX) return 0;
     for (int i = first; d->types && i < argc; i++)
         if (d->types[i].set && !IS_NUM(I->stack[base + i])) return 0;
     return 1;
@@ -1886,25 +1965,7 @@ LUBE_INLINE Frame *push_frame(Interp *I, ObjFunction *fn, const char *name, int 
     for (int i = base + argc; i < base + d->nslots; i++) I->stack[i] = NIL_VAL;
     I->sp = base + d->nslots;
     Frame *f = new_frame(I);
-    f->prev = I->frame;
-    f->name = name;
-    f->src = d->src;
-    f->line = d->line;
-    f->base = base;
-    f->fn = fn;
-    f->this_locked = 0;
-    f->proto = d;
-    f->pc = d->code.code;
-    f->argc = argc;
-    f->call_base = base - 1;
-    f->pending = I->npending;
-    f->construct = 0;
-    f->entry = 0;
-    f->block = 0;
-    f->opbase = base + d->nslots;
-    f->loans = NULL;
-    f->nloans = 0;
-    f->dbg_line = -1;
+    frame_init(I, f, I->frame, fn, d, name, d->line, base, argc, base - 1, base + d->nslots);
     I->frame = f;
     return f;
 }
@@ -1918,6 +1979,9 @@ static Value leave(Interp *I, Value r) {
     /* copy what is needed: an `on` block run below may reuse this frame */
     int base = f->base, construct = f->construct, entry = f->entry, call_base = f->call_base, nloans = f->nloans;
     Loan *loans = f->loans;
+#if VM_SLIM_CALL
+    const VarRef *lent = f->lent;
+#endif
     Value made = NIL_VAL;
     if (construct) {
         made = I->stack[base];
@@ -1925,8 +1989,7 @@ static Value leave(Interp *I, Value r) {
     }
     pop_to(I, f->block ? f->opbase : base + f->argc);  /* a block's slots are its function's */
     I->frame = f->prev;
-    I->depth--;
-    while (I->nfwatch && I->fwatch[I->nfwatch - 1].depth > I->depth)  /* its `on` blocks end with it */
+    while (I->nfwatch && I->fwatch[I->nfwatch - 1].depth > VM_DEPTH(I))  /* its `on` blocks end with it */
         release(I->fwatch[--I->nfwatch].token);
     if (I->dbg) debug_left_frame(I);
     if (construct) {
@@ -1938,6 +2001,14 @@ static Value leave(Interp *I, Value r) {
         }
     }
     if (loans) r = return_loans(I, base, loans, nloans, r);
+#if VM_SLIM_CALL
+    if (lent) {  /* (as return_loans gives a loan back: nothing watches x, or the call would have had a Loan) */
+        Value self = I->stack[base], *root = &SLOT(lent->index);
+        I->stack[base] = NIL_VAL;
+        release(*root);
+        *root = self;
+    }
+#endif
     if (!entry) pop_to(I, call_base);
     return r;
 }
@@ -1978,6 +2049,7 @@ static int start_call(Interp *I, int ci, int argc, Loan *loans, int nloans, int 
             f->call_base = ci;
             f->loans = loans;
             f->nloans = nloans;
+            if (loans) FRAME_SLOW_RET(f);
             return 1;
         }
         r = ERR_VAL;
@@ -1996,6 +2068,7 @@ static int start_call(Interp *I, int ci, int argc, Loan *loans, int nloans, int 
             if (f) {
                 f->construct = 1;
                 f->call_base = ci;
+                FRAME_SLOW_RET(f);
                 return 1;
             }
             r = ERR_VAL;  /* the instance is popped with the arguments */
@@ -2378,7 +2451,7 @@ static int add_watcher(Interp *I, OnDesc *od) {
     w->items = od->items;
     w->nnames = od->count;
     w->fn = make_closure(I, od->func);
-    w->file = I->frame->src->path;
+    w->file = lube_frame_src(I->frame)->path;
     w->running = 0;
     return 0;
 }
@@ -2404,22 +2477,388 @@ static Value global_error(Interp *I, ObjString *name, Value *g) {
         ip = f->pc;                  \
     } while (0)
 
-/* Runs bytecode from I->frame until the entry frame it starts in returns,
- * and returns that frame's result (or ERR_VAL). */
-static Value execute(Interp *I) {
+/* What OP_CALL's plain call checks (see FuncDecl.fast_argc), worked out at d's first call. */
+LUBE_NOINLINE static void decl_prepare(FuncDecl *d) {
+    int unchecked = !d->types && !d->native && !d->ret.set && !d->strict;
+    d->frame_need = d->nslots + d->code.maxstack;
+    d->fast_argc = d->plain && unchecked ? d->nparams + 1 : -1;
+    d->fast_margc = d->plain_method && unchecked ? d->nparams + 1 : -1;
+}
+
+/* A jump's target (see JUMP_ARG): pc0 is the instruction's own first word. */
+#if VM_REL_JUMP
+#define REL24(x) ((int)((x) ^ 0x800000) - 0x800000)
+#define JUMP_TO(in) (pc0 + JUMP_REL(in))
+#define JUMP_TO_WORD(w) (pc0 + REL24(w))  /* (w: an operand word that holds a JUMP_ARG) */
+#else
+#define JUMP_TO(in) (code->code + ARG_OF(in))
+#define JUMP_TO_WORD(w) (code->code + (int)(w))
+#endif
+
+/* Runs one instruction, the one at I->frame->pc, the long way: everything it reads and leaves is the Interp's
+ * (I->sp, I->frame, each frame's pc), so whatever it calls sees the VM as it is. Every instruction can be run
+ * this way; execute() runs the common cases of the common ones itself, and comes here for the rest.
+ *   VM_NEXT   done: I->frame->pc is the instruction to run next (in another frame, after a call or a return;
+ *             at a catch, after an error it caught)
+ *   VM_DONE   the frame execute() was entered for returned: its result is in I->ret_val
+ *   VM_ERROR  an error left that frame */
+enum { VM_NEXT, VM_DONE, VM_ERROR, VM_RAISED };
+
+/* The instructions that cost most to send through vm_step, as functions of their own: vm_step calls them, and so
+ * does execute()'s loop once it has written its state back (SYNC). Each works on the Interp's stack, as all of
+ * the long way does. */
+
+/* OP_CALL and OP_CALL_FN: the callee and its arguments are on the stack. 1: the call has a frame (I->frame; the
+ * caller waits at its call); 0: it is done, and its result pushed; -1: an error is raised. */
+LUBE_NOINLINE static int op_call(Interp *I, Frame *f, Code *code, Instr in) {
+    Value r;
+    int fn_call = OP_OF(in) == OP_CALL_FN, argc = fn_call ? ARG_OF(in) & 0xff : ARG_OF(in);
+    int ci = I->sp - argc - 1;
+    if (IS_FUNCTION(I->stack[ci])) {  /* a plain function: started here (see FuncDecl.plain) */
+        ObjFunction *fn = AS_FUNCTION(I->stack[ci]);
+        FuncDecl *d = fn->decl;
+        int base = ci + 1;
+        if (!d->fast_argc) decl_prepare(d);  /* (its first call: the next ones may start in execute's loop) */
+        if (d->native && call_native(I, d, base, argc, &r)) {  /* its machine code did it */
+            pop_to(I, ci);
+            PUSH(r);
+            return 0;
+        }
+        int ok = d->plain && argc == d->nparams && VM_DEPTH(I) < LUBE_MAX_FRAMES &&
+                 base + d->nslots + d->code.maxstack <= LUBE_STACK_MAX;
+        for (int i = 0; ok && d->types && i < argc; i++)
+            ok = !d->types[i].set || IS_NUM(I->stack[base + i]);
+        if (ok) {
+            for (int i = base + argc; i < base + d->nslots; i++) I->stack[i] = NIL_VAL;
+            I->sp = base + d->nslots;
+            Frame *nf = new_frame(I);
+            frame_init(I, nf, f, fn, d, d->name ? d->name->chars : "<lambda>", d->line, base, argc, ci,
+                       base + d->nslots);
+            I->frame = nf;
+            return 1;
+        }
+    }
+    if (fn_call && !IS_CALLABLE(I->stack[ci]) && !IS_CLASS(I->stack[ci])) {  /* replaced since */
+        lube_error(I, "'%s' is not a function (it is %s)", AS_STRING(K((ARG_OF(in) >> 8) - 1))->chars,
+                   a_type(I->stack[ci]));
+        return -1;
+    }
+    if (takes_ref(I->stack[ci]) && check_loans(I, I->stack[ci], argc, NULL, 0, 0) < 0) return -1;
+    if (start_call(I, ci, argc, NULL, 0, 0, &r)) {
+        return 1;
+    }
+    if (IS_ERR(r)) return -1;
+    PUSH(r);
+    return 0;
+}
+
+/* OP_METHOD_PREP: x.name(, what to call and how x goes along (see prep_method). 0, or -1: an error is raised. */
+LUBE_NOINLINE static int op_method_prep(Interp *I, Code *code, MethodDesc *md) {
+    Place place;
+    Value obj;
+    int have_place = md->recv_place >= 0;
+    if (have_place && code->places[md->recv_place].nkeys == 0) {
+        /* x.method(...), x a variable holding an instance of the class
+         * last seen here: the method, lending x (as prep_method does) */
+        const VarRef *rv = &code->places[md->recv_place].var;
+        int failed = 0;
+        Value *root = rv->kind == VAR_LOCAL ? &SLOT(rv->index) : rv->kind == VAR_GLOBAL ? global_ref(I, rv, &failed) : NULL;
+        if (failed) return -1;
+        place.root = rv;
+        place.nkeys = 0;
+        if (root && IS_INSTANCE(*root) && AS_MAP(*root)->klass == md->cache_class && md->cache_epoch == I->epoch &&
+            !IS_NIL(md->cache_method) && place_changeable(I, &place)) {
+            push_call(I, retain(md->cache_method), SELF_LEND, NIL_VAL, &place);
+            return 0;
+        }
+        if (root && IS_PACKAGE(*root) && md->cache_pkg == AS_PACKAGE(*root)->name) {
+            /* math.sqrt(x): the package's function last called here, if its global is still where it was
+             * (as package_callee finds it) */
+            ObjMap *g = I->globals;
+            int at = md->cache_gslot - 1;
+            if (at >= 0 && (size_t)at < g->used && g->entries[at].live &&
+                g->entries[at].key.as.obj == (Obj *)md->cache_key && IS_CALLABLE(g->entries[at].value)) {
+                push_call(I, retain(g->entries[at].value), SELF_NONE, NIL_VAL, NULL);
+                return 0;
+            }
+        }
+        Value *fn = root && root->type == VAL_OBJ && !IS_MAP(*root) && !IS_PACKAGE(*root) && !LUBE_OWN_METHODS(OBJ_TYPE(*root)) &&
+                    md->fallback.kind == VAR_GLOBAL
+                        ? global_ref(I, &md->fallback, &failed) : NULL;
+        if (failed) return -1;
+        if (fn && IS_NATIVE(*fn)) {  /* xs.push(v), s.ends_with(t): a built-in, x first (as prep_method does) */
+            if (AS_NATIVE(*fn)->changes_first) push_call(I, retain(*fn), SELF_LEND, NIL_VAL, &place);
+            else push_call(I, retain(*fn), SELF_VALUE, retain(*root), NULL);
+            return 0;
+        }
+    }
+    if (have_place) {
+        take_place(I, &code->places[md->recv_place], &place);
+        obj = place_get(I, &place);
+        if (IS_ERR(obj)) {
+            place_free(&place);
+            return -1;
+        }
+    } else {
+        obj = POP();
+    }
+    if (prep_method(I, md, obj, &place, have_place) < 0) return -1;
+    return 0;
+}
+
+/* OP_INVOKE: the pending call's arguments are on the stack. Returns as op_call does. */
+LUBE_NOINLINE static int op_invoke(Interp *I, Frame *f, Code *code, CallDesc *cd) {
+    Value r;
+    PendingCall *pc = &I->pending[I->npending - 1];
+    if (IS_FUNCTION(I->stack[pc->callee]) && !AS_FUNCTION(I->stack[pc->callee])->decl->fast_argc)
+        decl_prepare(AS_FUNCTION(I->stack[pc->callee])->decl);  /* (its first call: the next may start in execute's loop) */
+    if (pc->mode == SELF_LEND && pc->place.nkeys == 0 && !cd->refs && IS_FUNCTION(I->stack[pc->callee])) {
+        /* x.method(args), x a variable: lend x straight into the new frame (see invoke) */
+        ObjFunction *fn = AS_FUNCTION(I->stack[pc->callee]);
+        FuncDecl *d = fn->decl;
+        const VarRef *rv = pc->place.root;
+        int ci = pc->callee, base = ci + 1, argc = 1 + cd->nargs, failed = 0;
+        int ok = d->plain_method && argc == d->nparams && VM_DEPTH(I) < LUBE_MAX_FRAMES &&
+                 base + d->nslots + d->code.maxstack <= LUBE_STACK_MAX &&
+                 (rv->kind == VAR_LOCAL ? !(rv->watch && rv->watch->n)
+                                        : !(I->nwatchers || I->nfwatch) || !watched_name(I, rv->name));
+        for (int i = 1; ok && d->types && i < argc; i++) ok = !d->types[i].set || IS_NUM(I->stack[base + i]);
+        Value *root = !ok ? NULL : rv->kind == VAR_LOCAL ? &SLOT(rv->index) : global_ref(I, rv, &failed);
+        if (failed) return -1;
+        if (root && root->type != VAL_LENT) {
+            if (d->native) {  /* its machine code, x lent to it (and given back changed, when it ran) */
+                I->stack[base] = *root;
+                int ran = call_native(I, d, base, argc, &r);
+                *root = I->stack[base];
+                I->stack[base] = NIL_VAL;
+                if (ran) {
+                    I->npending--;
+                    pop_to(I, ci);
+                    PUSH(r);
+                    return 0;
+                }
+            }
+            Loan *L = new_loans(I, 1);
+            L->pos = 0;
+            move_place(&L->place, &pc->place);
+            L->holder = NIL_VAL;
+            L->lent = 1;
+            L->watched = NULL;
+            L->lwatched = NULL;
+            L->before = NIL_VAL;
+            I->npending--;
+            I->stack[base] = *root;  /* its arguments are in place after it */
+            *root = rv->kind == VAR_GLOBAL ? LENT_VAL : NIL_VAL;
+            for (int i = base + argc; i < base + d->nslots; i++) I->stack[i] = NIL_VAL;
+            I->sp = base + d->nslots;
+            Frame *nf = new_frame(I);
+            frame_init(I, nf, f, fn, d, d->name->chars, d->line, base, argc, ci, base + d->nslots);
+            nf->loans = L;
+            nf->nloans = 1;
+            FRAME_SLOW_RET(nf);
+            I->frame = nf;
+            return 1;
+        }
+    }
+    if (!cd->refs && IS_NATIVE(I->stack[pc->callee]) && pc->mode != SELF_LOCKED) {
+        /* x.f(args), f a built-in (s.ends_with(t), xs.push(v)), or a package's (math.sqrt(x), with no x
+         * in front): called here (see invoke) */
+        ObjNative *nf = AS_NATIVE(I->stack[pc->callee]);
+        int ci = pc->callee, self = pc->mode != SELF_NONE, argc = self + cd->nargs, failed = 0;
+        int lend = pc->mode == SELF_LEND, first = ci + 1 + (self ? 0 : pc->has_slot);
+        const VarRef *rv = lend ? pc->place.root : NULL;
+        Value *root = !lend ? NULL : pc->place.nkeys || !nf->changes_first || !place_changeable(I, &pc->place) ? NULL
+                    : rv->kind == VAR_LOCAL ? (rv->watch && rv->watch->n ? NULL : &SLOT(rv->index))
+                    : (I->nwatchers || I->nfwatch) && watched_name(I, rv->name) ? NULL : global_ref(I, rv, &failed);
+        if (failed) return -1;
+        if (argc >= nf->min_args && (nf->max_args < 0 || argc <= nf->max_args) && (!lend || (root && root->type != VAL_LENT)) &&
+            (lend || !nf->changes_first)) {
+            I->npending--;
+            if (lend) {  /* x is lent to it (in use meanwhile), and given back */
+                I->stack[ci + 1] = *root;
+                *root = rv->kind == VAR_GLOBAL ? LENT_VAL : NIL_VAL;
+            }
+            r = (I->calling = nf)->fn(I, argc, &I->stack[first]);
+            if (lend) {
+                root = rv->kind == VAR_LOCAL ? &SLOT(rv->index) : global_ref(I, rv, &failed);
+                *root = I->stack[ci + 1];
+                I->stack[ci + 1] = NIL_VAL;
+            }
+            pop_to(I, ci);
+            if (IS_ERR(r)) return -1;
+            PUSH(r);
+            return 0;
+        }
+    }
+    int started = invoke(I, code, cd, &r);
+    if (started < 0) return -1;
+    if (started) {
+        return 1;
+    }
+    if (IS_ERR(r)) return -1;
+    PUSH(r);
+    return 0;
+}
+
+/* OP_RETURN and OP_RETURN_NIL: the running frame f returns r. VM_NEXT: its caller goes on (the result is pushed,
+ * its pc is past the call); VM_DONE: it was the frame execute() was entered for (the result is in I->ret_val);
+ * VM_RAISED: an error is raised (in f, or, once f is left, in its caller, still at its call). */
+LUBE_NOINLINE static int op_return(Interp *I, Frame *f, Value r) {
+    if (f->fn && (f->proto->ret.set || f->proto->strict)) {
+        r = check_return(I, f->proto, lube_frame_name(f), r);
+        if (IS_ERR(r)) return VM_RAISED;
+    }
+    if (!f->entry && !f->construct && !f->loans && !f->block && I->npending == f->pending && !I->dbg && !FRAME_LENT(f) &&
+        !(I->nfwatch && I->fwatch[I->nfwatch - 1].depth >= VM_DEPTH(I))) {  /* nothing else to do (see leave) */
+        pop_to(I, f->call_base);  /* its slots, the arguments and the callee */
+        I->frame = f->prev;
+        I->frame->pc++;  /* past the call it waited on */
+        PUSH(r);
+        return VM_NEXT;
+    }
+    if (f->nloans == 1 && !f->entry && !f->construct && !f->block && I->npending == f->pending && !I->dbg &&
+        !(I->nfwatch && I->fwatch[I->nfwatch - 1].depth >= VM_DEPTH(I)) && f->loans->lent &&
+        f->loans->place.nkeys == 0 && IS_NIL(f->loans->before)) {
+        /* x.method(...) lent x, a variable, and nothing watches it: x gets it back (see leave) */
+        Loan *L = f->loans;
+        Value lent = I->stack[f->base + L->pos];
+        I->stack[f->base + L->pos] = NIL_VAL;
+        pop_to(I, f->call_base);
+        I->frame = f->prev;
+        const VarRef *rv = L->place.root;
+        int failed;
+        Value *root = rv->kind == VAR_LOCAL ? &SLOT(rv->index) : global_ref(I, rv, &failed);
+        release(*root);
+        *root = lent;
+        free_loans(I, L, 1);
+        I->frame->pc++;
+        PUSH(r);
+        return VM_NEXT;
+    }
+    {
+        int entry = f->entry;
+        r = leave(I, r);
+        if (entry) {
+            I->ret_val = r;  /* (execute takes it) */
+            return VM_DONE;
+        }
+        if (IS_ERR(r)) return VM_RAISED;  /* an `on` block raised one */
+        I->frame->pc++;  /* past the call it waited on */
+        PUSH(r);
+        return VM_NEXT;
+    }
+}
+
+/* OP_ASSIGN, OP_ASSIGN_DROP, and what OP_SET_LOCAL leaves: place op= value (see AssignDesc), the place's keys and
+ * the value on the stack. drop: a statement (the value is not kept). 0, or -1: an error is raised. */
+LUBE_NOINLINE static int op_assign(Interp *I, Frame *f, Code *code, int assign_at, int drop) {
+    Value r;
+    AssignDesc *ad = &code->assigns[assign_at];
+    PlaceDesc *pd = &code->places[ad->place];
+    Value rhs = drop && ad->kconst >= 0 ? K(ad->kconst) : POP();
+    if (pd->nkeys == 0 && pd->var.kind == VAR_LOCAL && pd->var.changeable && pd->var.origin != ORIGIN_THIS) {
+        int at = f->base + pd->var.index;
+        Value *slot = &I->stack[at];  /* a local: the common case */
+        if (ad->op == T_ASSIGN) {
+            r = I->decl[at].kind == TD_NUM && IS_NUM(rhs) ? rhs : keep_type(I, &pd->var, rhs);
+        } else if (IS_NUM(*slot) && IS_NUM(rhs)) {  /* a Number var stays a Number */
+            if (!num_op(compound_base(ad->op), slot->as.number, rhs.as.number, &r))
+                r = binary_op(I, compound_base(ad->op), *slot, rhs);
+        } else {
+            goto assign_general;
+        }
+        if (IS_ERR(r)) return -1;
+        Value old = *slot;
+        *slot = r;
+        release(old);
+        if (!drop) PUSH(retain(r));
+        return 0;
+    }
+    if (pd->nkeys == 0 && pd->var.kind == VAR_GLOBAL && (ad->op == T_ASSIGN || IS_NUM(rhs))) {
+        Origin origin;
+        int failed;
+        Value *g = global_slot(I, code, ad->global, &failed);
+        if (failed) return -1;
+        if (!g || g->type == VAL_LENT || global_origin_ref(I, &pd->var, &origin) ||
+            (ad->op != T_ASSIGN && !IS_NUM(*g)))
+            goto assign_general;  /* errors and the rest: the general way */
+        if (ad->op == T_ASSIGN)  /* (a var holding a plain Number is a Number, or untyped) */
+            r = IS_NUM(*g) && IS_NUM(rhs) ? rhs : keep_type(I, &pd->var, rhs);
+        else if (!IS_NUM(*g) || !num_op(compound_base(ad->op), g->as.number, rhs.as.number, &r))
+            r = binary_op(I, compound_base(ad->op), *g, rhs);
+        if (IS_ERR(r)) return -1;
+        Value old = *g;
+        *g = r;
+        release(old);
+        if (!drop) PUSH(retain(r));
+        return 0;
+    }
+    if (pd->nkeys > 0 && fast_assign(I, pd, ad->op, &rhs)) {  /* xs[i] = v, p.x += 1, bodies[i].vx -= d */
+        pop_to(I, I->sp - pd->nkeys);  /* the keys */
+        if (!drop) PUSH(retain(rhs));
+        return 0;
+    }
+assign_general: {
+    Place p;
+    take_place(I, pd, &p);
+    r = do_assign(I, ad->op, &p, rhs);
+    if (IS_ERR(r)) return -1;
+    if (drop) release(r);
+    else PUSH(r);
+    return 0;
+}
+}
+
+/* OP_INTERP: the n values on top of the stack, as one str (formatting runs no code of the program: one buffer, kept). */
+LUBE_NOINLINE static void op_interp(Interp *I, int n) {
+    StrBuf *sb = &I->interp;
+    sb->len = 0;
+    for (int i = I->sp - n; i < I->sp; i++) append_value(sb, I->stack[i], 0);
+    pop_to(I, I->sp - n);
+    PUSH(OBJ_VAL(new_string(sb->data ? sb->data : "", sb->len)));
+    if (sb->cap > 65536) sb_free(sb);  /* (not a large one) */
+}
+
+/* An error is raised (I->error_val), in the newest frame, at its pc: finds a catch in that frame or the ones it
+ * was called from, leaving those without one. VM_NEXT: caught (that frame's pc is the catch); VM_ERROR: the frame
+ * execute() was entered for is left too. */
+LUBE_NOINLINE static int vm_unwind(Interp *I) {
+    for (;;) {
+        Frame *f = I->frame;
+        Code *code = &f->proto->code;
+        int at = (int)(f->pc - code->code);
+        Handler *h = NULL;
+        for (int i = 0; i < code->nhandlers && !h; i++)  /* inner tries come first */
+            if (at >= code->handlers[i].start && at < code->handlers[i].end) h = &code->handlers[i];
+        if (h && !I->exiting) {  /* (exit(), in a host program: no catch stops it) */
+            pop_pending(I, f->pending);
+            pop_to(I, f->opbase + h->sp);
+            clear_slots(I, h->clear_from, f->proto->nslots - h->clear_from);
+            Value err = I->error_val;
+            I->error_val = NIL_VAL;
+            trace_reset(I);
+            if (h->catch_slot >= 0) set_slot(I, h->catch_slot, err);
+            else release(err);
+            f->pc = code->code + h->target;
+            return VM_NEXT;
+        }
+        int entry = f->entry;
+        leave(I, ERR_VAL);
+        if (entry) return VM_ERROR;
+    }
+}
+
+LUBE_NOINLINE static int vm_step(Interp *I) {
     Frame *f = I->frame;
-    if (!lube_stack_ok(I)) return leave(I, lube_error(I, "stack overflow: too much recursion"));
     Code *code = &f->proto->code;
-    const Instr *ip = f->pc;
+    const Instr *ip = f->pc, *pc0;
     Value r;
     int assign_at = 0, assign_drop = 0;  /* (OP_SET_LOCAL goes on in OP_ASSIGN's code) */
-    for (;;) {
-        if (I->dbg) {  /* the debugger looks before each instruction */
-            f->pc = ip;
-            debug_hook(I);
-        }
-        Instr in = *ip;
-        f->pc = ip++;
+    if (I->dbg) debug_hook(I);  /* the debugger looks before each instruction */
+    Instr in = *ip;
+    pc0 = ip++;
+    (void)pc0;
+    {
         switch ((OpCode)OP_OF(in)) {
         case OP_CONST:
             PUSH(retain(K(ARG_OF(in))));
@@ -2502,16 +2941,9 @@ static Value execute(Interp *I) {
                 goto error;
             }
             break;
-        case OP_INTERP: {  /* (formatting runs no code of the program: one buffer, kept) */
-            int n = ARG_OF(in);
-            StrBuf *sb = &I->interp;
-            sb->len = 0;
-            for (int i = I->sp - n; i < I->sp; i++) append_value(sb, I->stack[i], 0);
-            pop_to(I, I->sp - n);
-            PUSH(OBJ_VAL(new_string(sb->data ? sb->data : "", sb->len)));
-            if (sb->cap > 65536) sb_free(sb);  /* (not a large one) */
+        case OP_INTERP:
+            op_interp(I, ARG_OF(in));
             break;
-        }
         case OP_LIST:
         case OP_TYPED_LIST: {
             int n = ARG_OF(in);
@@ -2602,7 +3034,7 @@ static Value execute(Interp *I) {
                 release(r);
                 goto error;
             }
-            if (!r.as.boolean) ip = code->code + ARG_OF(in);
+            if (!r.as.boolean) ip = JUMP_TO(in);
             break;
         }
         case OP_SET_LOCAL: {  /* x op= value, a statement, x a local var: the common Number cases here */
@@ -2640,23 +3072,23 @@ static Value execute(Interp *I) {
             break;
         }
         case OP_JUMP:
-            ip = code->code + ARG_OF(in);
+            ip = JUMP_TO(in);
             break;
         case OP_JUMP_IF_FALSE: {
             Value v = POP();
             int t = is_truthy(v);
             release(v);
-            if (!t) ip = code->code + ARG_OF(in);
+            if (!t) ip = JUMP_TO(in);
             break;
         }
         case OP_AND:
         case OP_OR:
-            if (is_truthy(TOP) == (OP_OF(in) == OP_OR)) ip = code->code + ARG_OF(in);  /* keep the deciding value */
+            if (is_truthy(TOP) == (OP_OF(in) == OP_OR)) ip = JUMP_TO(in);  /* keep the deciding value */
             else release(POP());
             break;
         case OP_LOOP:
             if (I->hot && ++I->hot_ticks >= 1024) hot_check(I);  /* a loop's turn is a safe point */
-            ip = code->code + ARG_OF(in);
+            ip = JUMP_TO(in);
             break;
         case OP_IS_TAG: {
             Value v = POP();
@@ -2771,61 +3203,9 @@ static Value execute(Interp *I) {
             break;
         case OP_CALL:
         case OP_CALL_FN: {  /* FN: a top-level fn (argc | name constant + 1 << 8), not checked yet */
-            int fn_call = OP_OF(in) == OP_CALL_FN, argc = fn_call ? ARG_OF(in) & 0xff : ARG_OF(in);
-            int ci = I->sp - argc - 1;
-            if (IS_FUNCTION(I->stack[ci])) {  /* a plain function: started here (see FuncDecl.plain) */
-                ObjFunction *fn = AS_FUNCTION(I->stack[ci]);
-                FuncDecl *d = fn->decl;
-                int base = ci + 1;
-                if (d->native && call_native(I, d, base, argc, &r)) {  /* its machine code did it */
-                    pop_to(I, ci);
-                    PUSH(r);
-                    break;
-                }
-                int ok = d->plain && argc == d->nparams && I->depth < LUBE_MAX_FRAMES &&
-                         base + d->nslots + d->code.maxstack <= LUBE_STACK_MAX;
-                for (int i = 0; ok && d->types && i < argc; i++)
-                    ok = !d->types[i].set || IS_NUM(I->stack[base + i]);
-                if (ok) {
-                    for (int i = base + argc; i < base + d->nslots; i++) I->stack[i] = NIL_VAL;
-                    I->sp = base + d->nslots;
-                    Frame *nf = new_frame(I);
-                    nf->prev = f;
-                    nf->name = d->name ? d->name->chars : "<lambda>";
-                    nf->src = d->src;
-                    nf->line = d->line;
-                    nf->base = base;
-                    nf->fn = fn;
-                    nf->this_locked = 0;
-                    nf->proto = d;
-                    nf->pc = d->code.code;
-                    nf->argc = argc;
-                    nf->call_base = ci;
-                    nf->pending = I->npending;
-                    nf->construct = 0;
-                    nf->entry = 0;
-                    nf->block = 0;
-                    nf->opbase = base + d->nslots;
-                    nf->loans = NULL;
-                    nf->nloans = 0;
-                    nf->dbg_line = -1;
-                    I->frame = nf;
-                    SWITCH_FRAME();
-                    break;
-                }
-            }
-            if (fn_call && !IS_CALLABLE(I->stack[ci]) && !IS_CLASS(I->stack[ci])) {  /* replaced since */
-                lube_error(I, "'%s' is not a function (it is %s)", AS_STRING(K((ARG_OF(in) >> 8) - 1))->chars,
-                           a_type(I->stack[ci]));
-                goto error;
-            }
-            if (takes_ref(I->stack[ci]) && check_loans(I, I->stack[ci], argc, NULL, 0, 0) < 0) goto error;
-            if (start_call(I, ci, argc, NULL, 0, 0, &r)) {
-                SWITCH_FRAME();
-                break;
-            }
-            if (IS_ERR(r)) goto error;
-            PUSH(r);
+            int st = op_call(I, f, code, in);
+            if (st < 0) goto error;
+            if (st) SWITCH_FRAME();
             break;
         }
         case OP_CALL_PREP: {
@@ -2835,59 +3215,9 @@ static Value execute(Interp *I) {
             p->mode = SELF_NONE;
             break;
         }
-        case OP_METHOD_PREP: {
-            MethodDesc *md = &code->methods[ARG_OF(in)];
-            Place place;
-            Value obj;
-            int have_place = md->recv_place >= 0;
-            if (have_place && code->places[md->recv_place].nkeys == 0) {
-                /* x.method(...), x a variable holding an instance of the class
-                 * last seen here: the method, lending x (as prep_method does) */
-                const VarRef *rv = &code->places[md->recv_place].var;
-                int failed = 0;
-                Value *root = rv->kind == VAR_LOCAL ? &SLOT(rv->index) : rv->kind == VAR_GLOBAL ? global_ref(I, rv, &failed) : NULL;
-                if (failed) goto error;
-                place.root = rv;
-                place.nkeys = 0;
-                if (root && IS_INSTANCE(*root) && AS_MAP(*root)->klass == md->cache_class && md->cache_epoch == I->epoch &&
-                    !IS_NIL(md->cache_method) && place_changeable(I, &place)) {
-                    push_call(I, retain(md->cache_method), SELF_LEND, NIL_VAL, &place);
-                    break;
-                }
-                if (root && IS_PACKAGE(*root) && md->cache_pkg == AS_PACKAGE(*root)->name) {
-                    /* math.sqrt(x): the package's function last called here, if its global is still where it was
-                     * (as package_callee finds it) */
-                    ObjMap *g = I->globals;
-                    int at = md->cache_gslot - 1;
-                    if (at >= 0 && (size_t)at < g->used && g->entries[at].live &&
-                        g->entries[at].key.as.obj == (Obj *)md->cache_key && IS_CALLABLE(g->entries[at].value)) {
-                        push_call(I, retain(g->entries[at].value), SELF_NONE, NIL_VAL, NULL);
-                        break;
-                    }
-                }
-                Value *fn = root && root->type == VAL_OBJ && !IS_MAP(*root) && !IS_PACKAGE(*root) && !LUBE_OWN_METHODS(OBJ_TYPE(*root)) &&
-                            md->fallback.kind == VAR_GLOBAL
-                                ? global_ref(I, &md->fallback, &failed) : NULL;
-                if (failed) goto error;
-                if (fn && IS_NATIVE(*fn)) {  /* xs.push(v), s.ends_with(t): a built-in, x first (as prep_method does) */
-                    if (AS_NATIVE(*fn)->changes_first) push_call(I, retain(*fn), SELF_LEND, NIL_VAL, &place);
-                    else push_call(I, retain(*fn), SELF_VALUE, retain(*root), NULL);
-                    break;
-                }
-            }
-            if (have_place) {
-                take_place(I, &code->places[md->recv_place], &place);
-                obj = place_get(I, &place);
-                if (IS_ERR(obj)) {
-                    place_free(&place);
-                    goto error;
-                }
-            } else {
-                obj = POP();
-            }
-            if (prep_method(I, md, obj, &place, have_place) < 0) goto error;
+        case OP_METHOD_PREP:
+            if (op_method_prep(I, code, &code->methods[ARG_OF(in)]) < 0) goto error;
             break;
-        }
         case OP_PUSH_CHECK: {  /* xs.push(v), push(&xs, v): may OP_PUSH_DO append v? Else on to the call, at ip[0] */
             MethodDesc *md = &code->methods[ARG_OF(in)];
             const VarRef *rv = &code->places[md->recv_place].var;
@@ -2897,7 +3227,7 @@ static Value execute(Interp *I) {
                 (fn = global_ref(I, &md->fallback, &failed)) != NULL && IS_NATIVE(*fn) && AS_NATIVE(*fn)->changes_first == 2)
                 ip++;
             else if (failed) goto error;
-            else ip = code->code + (int)ip[0];
+            else ip = JUMP_TO_WORD(ip[0]);
             break;
         }
         case OP_PUSH_DO: {  /* ...appended as n_push does it (to a copy, if the List is shared: xs.push(xs)) */
@@ -2914,7 +3244,7 @@ static Value execute(Interp *I) {
                 release(v);
                 if (IS_ERR(r)) goto error;
             }
-            ip = code->code + (int)ip[0];
+            ip = JUMP_TO_WORD(ip[0]);
             if (OP_OF(*ip) == OP_POP) ip++;  /* (a statement: its nothing would be dropped) */
             else PUSH(NIL_VAL);
             break;
@@ -2951,110 +3281,9 @@ static Value execute(Interp *I) {
             break;
         }
         case OP_INVOKE: {
-            CallDesc *cd = &code->calls[ARG_OF(in)];
-            PendingCall *pc = &I->pending[I->npending - 1];
-            if (pc->mode == SELF_LEND && pc->place.nkeys == 0 && !cd->refs && IS_FUNCTION(I->stack[pc->callee])) {
-                /* x.method(args), x a variable: lend x straight into the new frame (see invoke) */
-                ObjFunction *fn = AS_FUNCTION(I->stack[pc->callee]);
-                FuncDecl *d = fn->decl;
-                const VarRef *rv = pc->place.root;
-                int ci = pc->callee, base = ci + 1, argc = 1 + cd->nargs, failed = 0;
-                int ok = d->plain_method && argc == d->nparams && I->depth < LUBE_MAX_FRAMES &&
-                         base + d->nslots + d->code.maxstack <= LUBE_STACK_MAX &&
-                         (rv->kind == VAR_LOCAL ? !(rv->watch && rv->watch->n)
-                                                : !(I->nwatchers || I->nfwatch) || !watched_name(I, rv->name));
-                for (int i = 1; ok && d->types && i < argc; i++) ok = !d->types[i].set || IS_NUM(I->stack[base + i]);
-                Value *root = !ok ? NULL : rv->kind == VAR_LOCAL ? &SLOT(rv->index) : global_ref(I, rv, &failed);
-                if (failed) goto error;
-                if (root && root->type != VAL_LENT) {
-                    if (d->native) {  /* its machine code, x lent to it (and given back changed, when it ran) */
-                        I->stack[base] = *root;
-                        int ran = call_native(I, d, base, argc, &r);
-                        *root = I->stack[base];
-                        I->stack[base] = NIL_VAL;
-                        if (ran) {
-                            I->npending--;
-                            pop_to(I, ci);
-                            PUSH(r);
-                            break;
-                        }
-                    }
-                    Loan *L = new_loans(I, 1);
-                    L->pos = 0;
-                    move_place(&L->place, &pc->place);
-                    L->holder = NIL_VAL;
-                    L->lent = 1;
-                    L->watched = NULL;
-                    L->lwatched = NULL;
-                    L->before = NIL_VAL;
-                    I->npending--;
-                    I->stack[base] = *root;  /* its arguments are in place after it */
-                    *root = rv->kind == VAR_GLOBAL ? LENT_VAL : NIL_VAL;
-                    for (int i = base + argc; i < base + d->nslots; i++) I->stack[i] = NIL_VAL;
-                    I->sp = base + d->nslots;
-                    Frame *nf = new_frame(I);
-                    nf->prev = f;
-                    nf->name = d->name->chars;
-                    nf->src = d->src;
-                    nf->line = d->line;
-                    nf->base = base;
-                    nf->fn = fn;
-                    nf->this_locked = 0;
-                    nf->proto = d;
-                    nf->pc = d->code.code;
-                    nf->argc = argc;
-                    nf->call_base = ci;
-                    nf->pending = I->npending;
-                    nf->construct = 0;
-                    nf->entry = 0;
-                    nf->block = 0;
-                    nf->opbase = base + d->nslots;
-                    nf->loans = L;
-                    nf->nloans = 1;
-                    nf->dbg_line = -1;
-                    I->frame = nf;
-                    SWITCH_FRAME();
-                    break;
-                }
-            }
-            if (!cd->refs && IS_NATIVE(I->stack[pc->callee]) && pc->mode != SELF_LOCKED) {
-                /* x.f(args), f a built-in (s.ends_with(t), xs.push(v)), or a package's (math.sqrt(x), with no x
-                 * in front): called here (see invoke) */
-                ObjNative *nf = AS_NATIVE(I->stack[pc->callee]);
-                int ci = pc->callee, self = pc->mode != SELF_NONE, argc = self + cd->nargs, failed = 0;
-                int lend = pc->mode == SELF_LEND, first = ci + 1 + (self ? 0 : pc->has_slot);
-                const VarRef *rv = lend ? pc->place.root : NULL;
-                Value *root = !lend ? NULL : pc->place.nkeys || !nf->changes_first || !place_changeable(I, &pc->place) ? NULL
-                            : rv->kind == VAR_LOCAL ? (rv->watch && rv->watch->n ? NULL : &SLOT(rv->index))
-                            : (I->nwatchers || I->nfwatch) && watched_name(I, rv->name) ? NULL : global_ref(I, rv, &failed);
-                if (failed) goto error;
-                if (argc >= nf->min_args && (nf->max_args < 0 || argc <= nf->max_args) && (!lend || (root && root->type != VAL_LENT)) &&
-                    (lend || !nf->changes_first)) {
-                    I->npending--;
-                    if (lend) {  /* x is lent to it (in use meanwhile), and given back */
-                        I->stack[ci + 1] = *root;
-                        *root = rv->kind == VAR_GLOBAL ? LENT_VAL : NIL_VAL;
-                    }
-                    r = (I->calling = nf)->fn(I, argc, &I->stack[first]);
-                    if (lend) {
-                        root = rv->kind == VAR_LOCAL ? &SLOT(rv->index) : global_ref(I, rv, &failed);
-                        *root = I->stack[ci + 1];
-                        I->stack[ci + 1] = NIL_VAL;
-                    }
-                    pop_to(I, ci);
-                    if (IS_ERR(r)) goto error;
-                    PUSH(r);
-                    break;
-                }
-            }
-            int started = invoke(I, code, cd, &r);
-            if (started < 0) goto error;
-            if (started) {
-                SWITCH_FRAME();
-                break;
-            }
-            if (IS_ERR(r)) goto error;
-            PUSH(r);
+            int st = op_invoke(I, f, code, &code->calls[ARG_OF(in)]);
+            if (st < 0) goto error;
+            if (st) SWITCH_FRAME();
             break;
         }
         case OP_RETURN:
@@ -3062,52 +3291,11 @@ static Value execute(Interp *I) {
             goto do_return;
         case OP_RETURN_NIL:
             r = NIL_VAL;
-        do_return:
-            if (f->fn && (f->proto->ret.set || f->proto->strict)) {
-                r = check_return(I, f->proto, f->name, r);
-                if (IS_ERR(r)) goto error;
-            }
-            if (!f->entry && !f->construct && !f->loans && !f->block && I->npending == f->pending && !I->dbg &&
-                !(I->nfwatch && I->fwatch[I->nfwatch - 1].depth >= I->depth)) {  /* nothing else to do (see leave) */
-                pop_to(I, f->call_base);  /* its slots, the arguments and the callee */
-                I->frame = f->prev;
-                I->depth--;
-                SWITCH_FRAME();
-                ip++;  /* past the call it waited on */
-                PUSH(r);
-                break;
-            }
-            if (f->nloans == 1 && !f->entry && !f->construct && !f->block && I->npending == f->pending && !I->dbg &&
-                !(I->nfwatch && I->fwatch[I->nfwatch - 1].depth >= I->depth) && f->loans->lent &&
-                f->loans->place.nkeys == 0 && IS_NIL(f->loans->before)) {
-                /* x.method(...) lent x, a variable, and nothing watches it: x gets it back (see leave) */
-                Loan *L = f->loans;
-                Value lent = I->stack[f->base + L->pos];
-                I->stack[f->base + L->pos] = NIL_VAL;
-                pop_to(I, f->call_base);
-                I->frame = f->prev;
-                I->depth--;
-                const VarRef *rv = L->place.root;
-                int failed;
-                Value *root = rv->kind == VAR_LOCAL ? &SLOT(rv->index) : global_ref(I, rv, &failed);
-                release(*root);
-                *root = lent;
-                free_loans(I, L, 1);
-                SWITCH_FRAME();
-                ip++;
-                PUSH(r);
-                break;
-            }
-            {
-                int entry = f->entry;
-                r = leave(I, r);
-                if (entry) return r;
-                SWITCH_FRAME();
-                ip++;  /* past the call it waited on */
-                if (IS_ERR(r)) goto error;  /* an `on` block raised one */
-                PUSH(r);
-                break;
-            }
+        do_return: {
+            int st = op_return(I, f, r);
+            if (st == VM_RAISED) goto error;
+            return st;  /* (the frame that goes on has its pc) */
+        }
         case OP_THROW:
             lube_throw(I, POP());
             goto error;
@@ -3129,7 +3317,7 @@ static Value execute(Interp *I) {
             if (IS_RANGE(I->stack[I->sp - 3]) && (int)ip[1] < 0) {  /* for i in a..b: the common case */
                 double k = I->stack[I->sp - 1].as.number;
                 if (k >= I->stack[I->sp - 2].as.number) {  /* (its length, from OP_FOR_PREP) */
-                    ip = code->code + ARG_OF(in);
+                    ip = JUMP_TO(in);
                     break;
                 }
                 ObjRange *rg = AS_RANGE(I->stack[I->sp - 3]);
@@ -3144,7 +3332,7 @@ static Value execute(Interp *I) {
                 ObjList *l = AS_LIST(I->stack[I->sp - 3]);
                 double k = I->stack[I->sp - 1].as.number;
                 if (k >= (double)l->count) {
-                    ip = code->code + ARG_OF(in);
+                    ip = JUMP_TO(in);
                     break;
                 }
                 Value *slot = &I->stack[f->base + (int)ip[0]], old = *slot;
@@ -3209,7 +3397,7 @@ static Value execute(Interp *I) {
                 }
             }
             if (done) {
-                ip = code->code + ARG_OF(in);
+                ip = JUMP_TO(in);
                 break;
             }
             if (!IS_MAP(it)) first = NUM_VAL(k);
@@ -3247,63 +3435,9 @@ static Value execute(Interp *I) {
         case OP_ASSIGN_DROP:  /* DROP: a statement (the value is not kept) */
             assign_drop = OP_OF(in) == OP_ASSIGN_DROP;
             assign_at = ARG_OF(in);
-        assign_with: {
-            int drop = assign_drop;
-            AssignDesc *ad = &code->assigns[assign_at];
-            PlaceDesc *pd = &code->places[ad->place];
-            Value rhs = drop && ad->kconst >= 0 ? K(ad->kconst) : POP();
-            if (pd->nkeys == 0 && pd->var.kind == VAR_LOCAL && pd->var.changeable && pd->var.origin != ORIGIN_THIS) {
-                int at = f->base + pd->var.index;
-                Value *slot = &I->stack[at];  /* a local: the common case */
-                if (ad->op == T_ASSIGN) {
-                    r = I->decl[at].kind == TD_NUM && IS_NUM(rhs) ? rhs : keep_type(I, &pd->var, rhs);
-                } else if (IS_NUM(*slot) && IS_NUM(rhs)) {  /* a Number var stays a Number */
-                    if (!num_op(compound_base(ad->op), slot->as.number, rhs.as.number, &r))
-                        r = binary_op(I, compound_base(ad->op), *slot, rhs);
-                } else {
-                    goto assign_general;
-                }
-                if (IS_ERR(r)) goto error;
-                Value old = *slot;
-                *slot = r;
-                release(old);
-                if (!drop) PUSH(retain(r));
-                break;
-            }
-            if (pd->nkeys == 0 && pd->var.kind == VAR_GLOBAL && (ad->op == T_ASSIGN || IS_NUM(rhs))) {
-                Origin origin;
-                int failed;
-                Value *g = global_slot(I, code, ad->global, &failed);
-                if (failed) goto error;
-                if (!g || g->type == VAL_LENT || global_origin_ref(I, &pd->var, &origin) ||
-                    (ad->op != T_ASSIGN && !IS_NUM(*g)))
-                    goto assign_general;  /* errors and the rest: the general way */
-                if (ad->op == T_ASSIGN)  /* (a var holding a plain Number is a Number, or untyped) */
-                    r = IS_NUM(*g) && IS_NUM(rhs) ? rhs : keep_type(I, &pd->var, rhs);
-                else if (!IS_NUM(*g) || !num_op(compound_base(ad->op), g->as.number, rhs.as.number, &r))
-                    r = binary_op(I, compound_base(ad->op), *g, rhs);
-                if (IS_ERR(r)) goto error;
-                Value old = *g;
-                *g = r;
-                release(old);
-                if (!drop) PUSH(retain(r));
-                break;
-            }
-            if (pd->nkeys > 0 && fast_assign(I, pd, ad->op, &rhs)) {  /* xs[i] = v, p.x += 1, bodies[i].vx -= d */
-                pop_to(I, I->sp - pd->nkeys);  /* the keys */
-                if (!drop) PUSH(retain(rhs));
-                break;
-            }
-        assign_general: {
-            Place p;
-            take_place(I, pd, &p);
-            r = do_assign(I, ad->op, &p, rhs);
-            if (IS_ERR(r)) goto error;
-            if (drop) release(r);
-            else PUSH(r);
+        assign_with:  /* (OP_SET_LOCAL goes on here) */
+            if (op_assign(I, f, code, assign_at, assign_drop) < 0) goto error;
             break;
-        }
-        }
         case OP_IMPORT:
             if (do_import(I, AS_STRING(K(ARG_OF(in)))) < 0) goto error;
             break;
@@ -3370,7 +3504,7 @@ static Value execute(Interp *I) {
         case OP_DEF_PARAM: {
             int i = ARG_OF(in);
             Value v = POP();
-            if (!check_param(I, f->proto, f->name, i, &v, f->base + i)) {
+            if (!check_param(I, f->proto, lube_frame_name(f), i, &v, f->base + i)) {
                 release(v);
                 goto error;
             }
@@ -3402,7 +3536,7 @@ static Value execute(Interp *I) {
         case OP_NATIVE_LOOP: {  /* its machine code ran the loop (else, when it gave up, the bytecode runs it) */
             int skip = (int)*ip++;
             double unused;
-            int left = LUBE_MAX_FRAMES - I->depth < NATIVE_DEPTH ? LUBE_MAX_FRAMES - I->depth : NATIVE_DEPTH;
+            int left = LUBE_MAX_FRAMES - VM_DEPTH(I) < NATIVE_DEPTH ? LUBE_MAX_FRAMES - VM_DEPTH(I) : NATIVE_DEPTH;
             if (!I->dbg && !lube_natives[ARG_OF(in)].fnv(I, NULL, &unused, left)) ip = code->code + skip;
             break;
         }
@@ -3411,34 +3545,460 @@ static Value execute(Interp *I) {
             goto error;
             /* LCOV_EXCL_STOP */
         }
-        continue;
+        f->pc = ip;
+        return VM_NEXT;
 
     error:  /* find a catch in this frame or the ones it was called from */
-        for (;;) {
-            f = I->frame;
-            code = &f->proto->code;
-            int at = (int)(f->pc - code->code);
-            Handler *h = NULL;
-            for (int i = 0; i < code->nhandlers && !h; i++)  /* inner tries come first */
-                if (at >= code->handlers[i].start && at < code->handlers[i].end) h = &code->handlers[i];
-            if (h && !I->exiting) {  /* (exit(), in a host program: no catch stops it) */
-                pop_pending(I, f->pending);
-                pop_to(I, f->opbase + h->sp);
-                clear_slots(I, h->clear_from, f->proto->nslots - h->clear_from);
-                Value err = I->error_val;
-                I->error_val = NIL_VAL;
-                trace_reset(I);
-                if (h->catch_slot >= 0) set_slot(I, h->catch_slot, err);
-                else release(err);
-                ip = code->code + h->target;
-                break;
-            }
-            int entry = f->entry;
-            leave(I, ERR_VAL);
-            if (entry) return ERR_VAL;
-        }
+        return vm_unwind(I);
     }
 }
+#undef PUSH
+#undef POP
+#undef TOP
+#undef K
+#undef SWITCH_FRAME
+#undef JUMP_TO
+#undef JUMP_TO_WORD
+
+/* ----------------------------------------------------------------------
+ * execute(): the loop, in two tiers (see the VM_ switches in lube.h).
+ *
+ * vm_step() above runs any instruction, with the VM's state in the Interp.
+ * The loop here keeps that state in C locals instead: ip (the next code
+ * word), sp (the stack's top), base (the frame's first slot), consts and
+ * the frame f. It runs the common cases of the common instructions with
+ * those alone, and nothing here raises an error, runs the program's code
+ * through C or looks at the Interp's stack: an instruction that would is
+ * left untouched (`goto slow`), the locals are written back (SYNC), and
+ * vm_step runs it. So the Interp's own I->sp, I->frame and f->pc are stale
+ * while the loop runs, and right whenever anything can see them.
+ *
+ * An instruction here checks first and changes after: once it has popped,
+ * pushed, released or moved ip it must finish. While it runs, ip is its own
+ * first word (its other words are ip[1]...): it ends with NEXT(its length),
+ * or, after a jump, NEXT_AT().
+ *
+ * Between the two: an instruction too common to send through vm_step, but
+ * with work for the Interp's own stack or that can fail (a call the long
+ * way, an assignment into a container, indexing an Object), says SYNC(),
+ * calls what vm_step would (op_call, op_assign, index_get...), and reads
+ * the stack's top back (LOAD_SP) or the whole frame (LOAD_FRAME); when what
+ * it called raised an error, it goes to `raise` with the Interp's stack
+ * still holding what the instruction had not let go of.
+ * -------------------------------------------------------------------- */
+#if VM_REGS
+#define PUSH(v) (*sp++ = (v))
+#define POP() (*--sp)
+#define PEEK(n) (sp[-(n)])  /* PEEK(1) is the top */
+#define DROP(n) (sp -= (n))
+#define SP sp
+#define SET_SP(p) (sp = (p))
+#define BASE base
+#define K(i) (consts[i])
+#define SET_FRAME(nf) (f = (nf))
+#define SYNC_REGS() (I->frame = f, I->sp = (int)(sp - I->stack))
+#define LOAD_SP() (sp = I->stack + I->sp, CHECK_SYNCED(0))
+#define LOAD_REGS() (base = f->slots, consts = f->proto->code.consts, sp = I->stack + I->sp)
+#define CALL_REGS(d, slots_) (base = (slots_), consts = (d)->code.consts)
+#else
+#define PUSH(v) (I->stack[I->sp++] = (v))
+#define POP() (I->stack[--I->sp])
+#define PEEK(n) (I->stack[I->sp - (n)])
+#define DROP(n) (I->sp -= (n))
+#define SP (I->stack + I->sp)
+#define SET_SP(p) (I->sp = (int)((p) - I->stack))
+#define BASE (I->stack + f->base)
+#define K(i) (f->proto->code.consts[i])
+#define SET_FRAME(nf) (I->frame = f = (nf))
+#define SYNC_REGS() ((void)0)
+#define LOAD_SP() ((void)0)
+#define LOAD_REGS() ((void)0)
+#define CALL_REGS(d, slots_) ((void)0)
+#endif
+#define TOP PEEK(1)
+#define LOCAL(i) (BASE[i])
+#define CODE (&f->proto->code)
+
+#if VM_LAZY_PC
+#define SAVE_PC() (f->pc = ip)
+#define STEP_PC() ((void)0)
+#else
+#define SAVE_PC() ((void)0)
+#define STEP_PC() (f->pc = ip)  /* every instruction */
+#endif
+#ifdef VM_PC_CHECK
+#define CHECK_SYNCED(yes) (vm_synced = (yes))
+#else
+#define CHECK_SYNCED(yes) ((void)0)
+#endif
+#define SYNC() (SAVE_PC(), SYNC_REGS(), CHECK_SYNCED(1))
+#define LOAD_FRAME()                 \
+    do {                             \
+        f = I->frame;                \
+        ip = f->pc;                  \
+        LOAD_REGS();                 \
+        CHECK_SYNCED(0);             \
+    } while (0)
+
+/* A jump (see JUMP_ARG): ip becomes its target. */
+#if VM_REL_JUMP
+#define REL24(x) ((int)((x) ^ 0x800000) - 0x800000)
+#define GOTO_ARG(in) (ip += JUMP_REL(in))
+#define GOTO_WORD(w) (ip += REL24(w))  /* (w: an operand word that holds a JUMP_ARG) */
+#else
+#define GOTO_ARG(in) (ip = CODE->code + ARG_OF(in))
+#define GOTO_WORD(w) (ip = CODE->code + (int)(w))
+#endif
+
+#if VM_DBG_FOLD
+#define DBG_CHECK() ((void)0)  /* (while the debugger watches, the loop runs nothing itself) */
+#else
+#define DBG_CHECK() do { if (I->dbg) goto slow; } while (0)
+#endif
+#ifdef VM_STATS  /* a counting build: which instructions go the long way, and how many run here */
+static unsigned long vm_slow_count[256], vm_fast_count;
+static void vm_stats_print(void) {
+    static const char *const names[] = {
+#define LUBE_OP_NAME(op) #op,
+        LUBE_OPCODES(LUBE_OP_NAME)
+#undef LUBE_OP_NAME
+    };
+    unsigned long slow = 0;
+    for (int i = 0; i < OP_COUNT; i++) slow += vm_slow_count[i];
+    fprintf(stderr, "vm: %lu instructions in the loop, %lu the long way (%.1f%%)\n", vm_fast_count - slow, slow,
+            100.0 * (double)slow / (double)(vm_fast_count ? vm_fast_count : 1));
+    for (int i = 0; i < OP_COUNT; i++)
+        if (vm_slow_count[i]) fprintf(stderr, "  %-18s %lu\n", names[i], vm_slow_count[i]);
+}
+#define COUNT_FAST() (vm_fast_count++)
+#define COUNT_SLOW() (vm_slow_count[OP_OF(*ip)]++)
+#else
+#define COUNT_FAST() ((void)0)
+#define COUNT_SLOW() ((void)0)
+#endif
+
+/* The instructions the loop runs itself (the others always go the long way): interp_ops.h has their code. */
+#define VM_FAST_OPS(X)                                                                                               \
+    X(OP_CONST) X(OP_POP) X(OP_POPN) X(OP_LOCAL) X(OP_CAPTURE) X(OP_SELF) X(OP_GLOBAL) X(OP_GLOBAL_VALUE)            \
+    X(OP_DEF_LOCAL) X(OP_CLEAR) X(OP_NEED_VALUE) X(OP_LIST) X(OP_MAP) X(OP_CHECK_KEY) X(OP_BINARY) X(OP_BINARY2)     \
+    X(OP_CMP_JUMP) X(OP_SET_LOCAL) X(OP_NEG) X(OP_NOT) X(OP_JUMP) X(OP_JUMP_IF_FALSE) X(OP_AND) X(OP_OR) X(OP_LOOP)  \
+    X(OP_INDEX) X(OP_INDEX2) X(OP_FIELD_LOCAL) X(OP_FIELD) X(OP_CLOSURE) X(OP_CHECK_CALLABLE) X(OP_CALL)             \
+    X(OP_CALL_FN) X(OP_RETURN) X(OP_RETURN_NIL) X(OP_FOR_PREP) X(OP_FOR_NEXT) X(OP_WATCH_BEFORE) X(OP_WATCH_AFTER)   \
+    X(OP_ARG_DEFAULT) X(OP_PUSH_CHECK) X(OP_PUSH_DO) X(OP_INTERP) X(OP_METHOD_PREP) X(OP_INVOKE) X(OP_ASSIGN)        \
+    X(OP_ASSIGN_DROP) X(OP_THROW)
+
+/* The global r names when r's cache still holds: else NULL, and global_ref finds it (and may run code). */
+static inline Value *global_cached(Interp *I, const VarRef *r) {
+    ObjMap *g = I->globals;
+    int at = r->gslot - 1;
+    return at >= 0 && (size_t)at < g->used && g->entries[at].live && g->entries[at].key.as.obj == (Obj *)r->name
+               ? &g->entries[at].value : NULL;
+}
+
+/* What execute() returns when vm_step, op_return or vm_unwind says the frame it was entered for is done. */
+static Value vm_result(Interp *I, int st) {
+    Value r = ERR_VAL;
+    if (st == VM_DONE) {
+        r = I->ret_val;
+        I->ret_val = NIL_VAL;
+    }
+    return r;
+}
+
+/* How the loop goes from one instruction to the next: by tail calls, where the compiler can promise them and has
+ * a calling convention that leaves the VM's registers alone across the calls an instruction makes (clang's
+ * musttail and preserve_none); else by computed goto (GNU C); else by a switch (C99). The same code each way. */
+#if VM_TAILCALL && VM_THREADED && VM_REGS && VM_DBG_FOLD && defined(__clang__) && defined(__has_attribute)
+#if __has_attribute(musttail) && __has_attribute(preserve_none)  /* (gcc 15 has both too: not tried yet) */
+#define VM_TAIL 1
+#endif
+#endif
+#ifndef VM_TAIL
+#define VM_TAIL 0
+#endif
+
+#if VM_TAIL
+/* ---------- each instruction a function, which ends by calling the next one's ---------- */
+typedef struct VmTab VmTab;
+#define VM_CC __attribute__((preserve_none))
+#define VM_PARAMS Interp *I, Frame *f, const Instr *ip, Value *sp, Value *base, Value *consts, Instr in, const VmTab *tab
+#define VM_ARGS I, f, ip, sp, base, consts, in, tab
+typedef VM_CC Value VmOp(VM_PARAMS);
+struct VmTab {
+    VmOp *op[256];
+};
+#define VM_OP(op) static VM_CC Value vmop_##op(VM_PARAMS)
+#define VM_OP2(a, b) VM_OP(a)
+#define VM_PART(name) LUBE_NOINLINE static VM_CC Value vmpart_##name(VM_PARAMS)
+#define GO_PART(name) do { __attribute__((musttail)) return vmpart_##name(VM_ARGS); } while (0)
+#define RELEASE_AT(v)                                                \
+    do {                                                             \
+        if ((v).type == VAL_OBJ && --(v).as.obj->rc == 0) {          \
+            I->dead = (v).as.obj; /* (its last owner: freed there) */ \
+            __attribute__((musttail)) return vm_free_at(VM_ARGS);    \
+        }                                                            \
+        NEXT_AT();                                                   \
+    } while (0)
+#define NEXT_AT()                                                     \
+    do {                                                              \
+        in = *ip;                                                     \
+        STEP_PC();                                                    \
+        COUNT_FAST();                                                 \
+        __attribute__((musttail)) return tab->op[OP_OF(in)](VM_ARGS); \
+    } while (0)
+#define NEXT(n)                      \
+    do {                             \
+        ip += (n);                   \
+        NEXT_AT();                   \
+    } while (0)
+#define GO_SLOW() do { __attribute__((musttail)) return vm_slow(VM_ARGS); } while (0)
+#define GO_RAISE() do { __attribute__((musttail)) return vm_raise(VM_ARGS); } while (0)
+#define GO_CALLED(x)                                             \
+    do {                                                         \
+        in = (Instr)(x); /* (as op_call returned) */             \
+        __attribute__((musttail)) return vm_called(VM_ARGS);     \
+    } while (0)
+#define GO_RETURNED(x)                                           \
+    do {                                                         \
+        in = (Instr)(x); /* (as op_return returned) */           \
+        __attribute__((musttail)) return vm_returned(VM_ARGS);   \
+    } while (0)
+
+/* The instruction at ip, untouched, goes the long way. */
+LUBE_NOINLINE static VM_CC Value vm_slow(VM_PARAMS) {
+    COUNT_SLOW();
+    SYNC();
+    do {
+        int st = vm_step(I);
+        if (st != VM_NEXT) return vm_result(I, st);
+    } while (I->dbg);  /* (the debugger looks before each instruction: none are run here meanwhile) */
+    LOAD_FRAME();
+    NEXT_AT();
+}
+
+/* What the instruction at ip called raised an error (the Interp has the VM's state). */
+LUBE_NOINLINE static VM_CC Value vm_raise(VM_PARAMS) {
+    int st = vm_unwind(I);
+    if (st != VM_NEXT) return vm_result(I, st);
+    LOAD_FRAME();
+    NEXT_AT();
+}
+
+LUBE_NOINLINE static VM_CC Value vm_called(VM_PARAMS) {  /* (after op_call or op_invoke, whose answer is in `in`) */
+    int st = (int)in;
+    if (st < 0) GO_RAISE();
+    if (st) {  /* the call has a frame */
+        LOAD_FRAME();
+        NEXT_AT();
+    }
+    LOAD_SP();
+    NEXT(1);
+}
+
+LUBE_NOINLINE static VM_CC Value vm_returned(VM_PARAMS) {  /* (after op_return, whose answer is in `in`) */
+    int st = (int)in;
+    if (LUBE_LIKELY(st == VM_NEXT)) {
+        LOAD_FRAME();
+        NEXT_AT();
+    }
+    if (st == VM_RAISED) GO_RAISE();
+    return vm_result(I, st);
+}
+
+/* I->dead (an object with no owner left) is freed; then on to the instruction at ip. */
+LUBE_NOINLINE static VM_CC Value vm_free_at(VM_PARAMS) {
+    obj_destroy(I->dead);
+    NEXT_AT();
+}
+
+#include "interp_ops.h"
+
+#define vmop_OP_GLOBAL_VALUE vmop_OP_GLOBAL
+#define vmop_OP_ASSIGN_DROP vmop_OP_ASSIGN
+#define vmop_OP_OR vmop_OP_AND
+#define vmop_OP_CALL_FN vmop_OP_CALL
+#if !VM_SLIM_CALL
+#define vmop_OP_RETURN_NIL vmop_OP_RETURN
+#endif
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"  /* (a range in an initializer: GNU C, used only where it is one) */
+#pragma GCC diagnostic ignored "-Winitializer-overrides"
+static const VmTab vm_tab = {{
+    [0 ... 255] = vm_slow,
+#define LUBE_OP_FN(op) [op] = vmop_##op,
+    VM_FAST_OPS(LUBE_OP_FN)
+#undef LUBE_OP_FN
+}};
+#pragma GCC diagnostic pop
+
+/* Runs bytecode from I->frame until the entry frame it starts in returns,
+ * and returns that frame's result (or ERR_VAL). */
+static Value execute(Interp *I) {
+    Frame *f = I->frame;
+    if (!lube_stack_ok(I)) return leave(I, lube_error(I, "stack overflow: too much recursion"));
+    while (I->dbg) {  /* the debugger looks before each instruction: all of them go the long way */
+        int st = vm_step(I);
+        if (st != VM_NEXT) return vm_result(I, st);
+    }
+#ifdef VM_STATS
+    static int stats_on;
+    if (!stats_on) {
+        stats_on = 1;
+        atexit(vm_stats_print);
+    }
+#endif
+    const Instr *ip;
+    Value *sp, *base, *consts;
+    const VmTab *tab = &vm_tab;
+#ifdef VM_PC_CHECK
+    int was_synced = vm_synced;
+    LOAD_FRAME();
+    Value checked = tab->op[OP_OF(*ip)](I, f, ip, sp, base, consts, *ip, tab);
+    vm_synced = was_synced;  /* (whatever called this loop goes on where it was) */
+    return checked;
+#else
+    LOAD_FRAME();
+    Instr in = *ip;
+    STEP_PC();
+    COUNT_FAST();
+    return tab->op[OP_OF(in)](VM_ARGS);
+#endif
+}
+
+#else
+/* ---------- one function: each instruction a label (computed goto), or a case of a switch ---------- */
+#if VM_THREADED
+#define CASE(op) case op: L_##op
+#define NEXT_AT()                    \
+    do {                             \
+        in = *ip;                    \
+        STEP_PC();                   \
+        COUNT_FAST();                \
+        DBG_CHECK();                 \
+        goto *run_tab[OP_OF(in)];    \
+    } while (0)
+#else
+#define CASE(op) case op
+#define NEXT_AT() goto vm_next
+#endif
+#define NEXT(n)                      \
+    do {                             \
+        ip += (n);                   \
+        NEXT_AT();                   \
+    } while (0)
+#define VM_OP(op) CASE(op):
+#define VM_OP2(a, b) CASE(a): CASE(b):
+#define VM_PART(name) vmpart_##name:
+#define GO_PART(name) goto vmpart_##name
+#define RELEASE_AT(v)                \
+    do {                             \
+        release(v);                  \
+        NEXT_AT();                   \
+    } while (0)
+#define GO_SLOW() goto slow
+#define GO_RAISE() goto raise
+#define GO_CALLED(x)                 \
+    do {                             \
+        st = (x);                    \
+        goto called;                 \
+    } while (0)
+#define GO_RETURNED(x)               \
+    do {                             \
+        st = (x);                    \
+        goto returned;               \
+    } while (0)
+
+/* Runs bytecode from I->frame until the entry frame it starts in returns,
+ * and returns that frame's result (or ERR_VAL). */
+#if VM_THREADED
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"  /* (labels as values: GNU C, used only where it is one) */
+#if defined(__clang__)
+#pragma GCC diagnostic ignored "-Winitializer-overrides"
+#else
+#pragma GCC diagnostic ignored "-Woverride-init"
+#endif
+#endif
+static Value execute(Interp *I) {
+    Frame *f = I->frame;
+    if (!lube_stack_ok(I)) return leave(I, lube_error(I, "stack overflow: too much recursion"));
+    const Instr *ip;
+    Instr in = 0;
+    int st;
+#if VM_REGS
+    Value *sp, *base, *consts;
+#endif
+#if VM_THREADED
+    static const void *const run_tab[256] = {
+        [0 ... 255] = &&slow,
+#define LUBE_OP_LABEL(op) [op] = &&L_##op,
+        VM_FAST_OPS(LUBE_OP_LABEL)
+#undef LUBE_OP_LABEL
+    };
+#endif
+#ifdef VM_STATS
+    static int stats_on;
+    if (!stats_on) {
+        stats_on = 1;
+        atexit(vm_stats_print);
+    }
+#endif
+    LOAD_FRAME();
+    if (I->dbg) goto step;  /* the debugger looks before each instruction: all of them go the long way */
+    for (;;) {
+#if VM_THREADED
+        NEXT_AT();  /* (as every instruction here ends: the switch below is only its labels) */
+#else
+    vm_next:
+        in = *ip;
+        STEP_PC();
+        COUNT_FAST();
+        DBG_CHECK();
+#endif
+        switch ((OpCode)OP_OF(in)) {
+#include "interp_ops.h"
+        default:
+            goto slow;
+        }
+
+    called:  /* (after op_call or op_invoke) */
+        if (st < 0) goto raise;
+        if (st) {  /* the call has a frame */
+            LOAD_FRAME();
+            NEXT_AT();
+        }
+        LOAD_SP();
+        NEXT(1);
+
+    returned:  /* (after op_return) */
+        if (LUBE_LIKELY(st == VM_NEXT)) {
+            LOAD_FRAME();
+            NEXT_AT();
+        }
+        if (st != VM_RAISED) return vm_result(I, st);
+
+    raise:  /* what the instruction at ip called raised an error (the Interp has the VM's state) */
+        st = vm_unwind(I);
+        if (st != VM_NEXT) return vm_result(I, st);
+        LOAD_FRAME();
+        NEXT_AT();
+
+    slow:  /* the instruction at ip, untouched, goes the long way */
+        COUNT_SLOW();
+        SYNC();
+    step:
+        do {
+            st = vm_step(I);
+            if (st != VM_NEXT) return vm_result(I, st);
+        } while (I->dbg);  /* (the debugger looks before each instruction: none are run here meanwhile) */
+        LOAD_FRAME();
+    }
+}
+#if VM_THREADED
+#pragma GCC diagnostic pop
+#endif
+#endif  /* VM_TAIL */
+
 
 /* Calls a function or built-in from C with the argc arguments at
  * stack[base...], which the caller owns (and pops afterwards). (Callbacks
@@ -3454,6 +4014,7 @@ static Value call_value(Interp *I, Value callee, int argc, int base) {
                        ? push_frame(I, fn, d->name ? d->name->chars : "<lambda>", base, argc) : enter(I, fn, base, argc);
         if (!f) return ERR_VAL;
         f->entry = 1;
+        FRAME_SLOW_RET(f);
         f->this_locked = I->this_locked_next;  /* lube_call_method: `this` cannot change */
         I->this_locked_next = 0;
         return execute(I);
@@ -3467,30 +4028,14 @@ static Value call_value(Interp *I, Value callee, int argc, int base) {
 /* Runs top-level code (a script, a module or a hot reload) in an entry frame. */
 static Value run_top(Interp *I, FuncDecl *d) {
     int base = I->sp;
-    if (I->depth >= LUBE_MAX_FRAMES || base + d->nslots + d->code.maxstack > LUBE_STACK_MAX)
+    if (VM_DEPTH(I) >= LUBE_MAX_FRAMES || base + d->nslots + d->code.maxstack > LUBE_STACK_MAX)
         return lube_error(I, "stack overflow: too much recursion"); /* LCOV_EXCL_LINE: imports nest only so deep */
     for (int i = 0; i < d->nslots; i++) I->stack[base + i] = NIL_VAL;
     I->sp = base + d->nslots;
     Frame *f = new_frame(I);
-    f->prev = I->frame;
-    f->name = d->name->chars;
-    f->src = d->src;
-    f->line = 1;
-    f->base = base;
-    f->fn = NULL;
-    f->this_locked = 0;
-    f->proto = d;
-    f->pc = d->code.code;
-    f->argc = 0;
-    f->call_base = base;
-    f->pending = I->npending;
-    f->construct = 0;
+    frame_init(I, f, I->frame, NULL, d, d->name->chars, 1, base, 0, base, base + d->nslots);
     f->entry = 1;
-    f->block = 0;
-    f->opbase = base + d->nslots;
-    f->loans = NULL;
-    f->nloans = 0;
-    f->dbg_line = -1;
+    FRAME_SLOW_RET(f);
     I->frame = f;
     return execute(I);
 }
@@ -3789,7 +4334,8 @@ static Value package_member(Interp *I, Value pkgv, ObjString *name) {
 static int do_import(Interp *I, ObjString *rel) {
     StrBuf path;
     sb_init(&path);
-    lube_module_path(&path, I->frame->src ? I->frame->src->path : "", rel->chars);
+    Source *from = lube_frame_src(I->frame);
+    lube_module_path(&path, from ? from->path : "", rel->chars);
     Value key = OBJ_VAL(new_string(path.data, path.len));
     if (map_find(I->modules, key)) {  /* each file runs only once */
         release(key);

@@ -75,6 +75,51 @@ extern size_t lube_max_items, lube_max_bytes;  /* set once, before any isolate s
 #define LUBE_INLINE static inline
 #endif
 
+/* Which way a branch almost always goes (the compiler keeps the other way's work out of the way). */
+#if defined(__GNUC__) || defined(__clang__)
+#define LUBE_LIKELY(x) __builtin_expect(!!(x), 1)
+#define LUBE_UNLIKELY(x) __builtin_expect(!!(x), 0)
+#else
+#define LUBE_LIKELY(x) (x)
+#define LUBE_UNLIKELY(x) (x)
+#endif
+
+/* The VM's skeleton (interp.c), in steps that can each be turned off (-DVM_REGS=0 ...) to measure it alone:
+ *   VM_REGS       the stack pointer, the frame's slots and its constants in C locals, written back to the Interp
+ *                 only where something outside the loop can see them
+ *   VM_LAZY_PC    f->pc stored only where it can be seen (a call out, an error, the debugger), not per instruction
+ *   VM_DBG_FOLD   the debugger's check folded into dispatch (a table of its own; or a bit, for the switch)
+ *   VM_THREADED   each instruction jumps straight to the next one's code (GNU C's computed goto; else a switch)
+ *   VM_SLIM_CALL  a frame holds what cannot be worked out later; a plain call and its return run in line
+ *   VM_REL_JUMP   a jump's operand is "this instruction + n" (compile.c): the loop keeps no pointer to the code
+ *   VM_TAILCALL   each instruction is a function that ends by calling the next one's (where the compiler has
+ *                 guaranteed tail calls and a calling convention for it: clang's musttail and preserve_none) */
+#ifndef VM_REGS
+#define VM_REGS 1
+#endif
+#ifndef VM_LAZY_PC
+#define VM_LAZY_PC 1
+#endif
+#ifndef VM_DBG_FOLD
+#define VM_DBG_FOLD 1
+#endif
+#ifndef VM_THREADED
+#define VM_THREADED 1
+#endif
+#ifndef VM_SLIM_CALL
+#define VM_SLIM_CALL 1
+#endif
+#ifndef VM_REL_JUMP
+#define VM_REL_JUMP 1
+#endif
+#ifndef VM_TAILCALL
+#define VM_TAILCALL 1
+#endif
+#if VM_THREADED && !(defined(__GNUC__) || defined(__clang__))
+#undef VM_THREADED
+#define VM_THREADED 0               /* plain C99: the switch */
+#endif
+
 typedef struct Interp Interp;
 typedef struct Node Node;
 typedef struct FuncDecl FuncDecl;
@@ -583,7 +628,7 @@ void lube_numlist_store(Value *slot, int bools, void *a, int64_t n);
 extern const LubeNative lube_natives[];  /* (nativetab.c, or the native build's own) */
 extern const int lube_nnatives;
 
-typedef struct {
+typedef struct VarRef_ {
     ObjString *name;
     VarKind kind;
     int index;
@@ -624,21 +669,36 @@ typedef uint32_t Instr;
 #define OP_OF(i) ((int)((i) & 0xffu))
 #define ARG_OF(i) ((int)((i) >> 8))
 #define MAX_ARG 0xffffff
+/* A jump's operand: where it goes, as a code word's index, or (VM_REL_JUMP) as words from the jump's own first
+ * word, in 24 bits with a sign: JUMP_ARG encodes it, JUMP_REL reads it back. */
+#if VM_REL_JUMP
+#define JUMP_ARG(at, target) (((target) - (at)) & MAX_ARG)
+#define JUMP_REL(in) (((int)((in) >> 8) ^ 0x800000) - 0x800000)
+#else
+#define JUMP_ARG(at, target) (target)
+#endif
 #define MAX_PATH 16         /* the longest x.a[b].c path one assignment or & can change */
 
+/* The opcodes, as a list: the enum below, and the VM's table of where each one's code is (interp.c). */
+#define LUBE_OPCODES(X)                                                                                              \
+    X(OP_CONST) X(OP_POP) X(OP_POPN) X(OP_LOCAL) X(OP_CAPTURE) X(OP_SELF) X(OP_GLOBAL) X(OP_GLOBAL_VALUE)            \
+    X(OP_DEF_LOCAL) X(OP_DEF_GLOBAL) X(OP_CLEAR) X(OP_NEED_VALUE) X(OP_INTERP) X(OP_LIST) X(OP_TYPED_LIST)           \
+    X(OP_CHECK_ELEM) X(OP_MAP) X(OP_CHECK_KEY) X(OP_TYPED_MAP) X(OP_BINARY) X(OP_NEG) X(OP_NOT) X(OP_JUMP)           \
+    X(OP_JUMP_IF_FALSE) X(OP_AND) X(OP_OR) X(OP_LOOP) X(OP_IS_TAG) X(OP_IS_CLASS) X(OP_RANGE_START) X(OP_RANGE)      \
+    X(OP_INDEX) X(OP_FIELD) X(OP_CLOSURE) X(OP_CHECK_CALLABLE) X(OP_CALL) X(OP_CALL_PREP) X(OP_METHOD_PREP)          \
+    X(OP_SUPER_PREP) X(OP_INVOKE) X(OP_RETURN) X(OP_RETURN_NIL) X(OP_THROW) X(OP_FOR_PREP) X(OP_FOR_NEXT)            \
+    X(OP_WATCH_BEFORE) X(OP_WATCH_AFTER) X(OP_ASSIGN) X(OP_IMPORT) X(OP_CLASS_BEGIN) X(OP_CLASS_FIELD)               \
+    X(OP_CLASS_FIELD_SET) X(OP_CLASS_END) X(OP_ON) X(OP_LWATCH_BEFORE) X(OP_LWATCH_AFTER)                            \
+    X(OP_ASSIGN_DROP) X(OP_BINARY2) X(OP_CMP_JUMP) X(OP_SET_LOCAL) X(OP_CALL_FN) X(OP_INDEX2) X(OP_FIELD_LOCAL)      \
+    X(OP_ARG_DEFAULT) X(OP_DEF_PARAM) X(OP_PRINT_REPL)                                                               \
+    X(OP_HOT_KEEP) X(OP_IF_GLOBAL) X(OP_FAIL) X(OP_LAZY_GLOBAL) X(OP_IMPORT_PACKAGE)                                 \
+    X(OP_NATIVE_LOOP)  /* a top-level loop's machine code (lube --build --native): skips its bytecode when it ran */ \
+    X(OP_PUSH_CHECK) X(OP_PUSH_DO)  /* xs.push(v), xs a local List: appended without a call (see compile_method) */
+
 typedef enum {
-    OP_CONST, OP_POP, OP_POPN, OP_LOCAL, OP_CAPTURE, OP_SELF, OP_GLOBAL, OP_GLOBAL_VALUE,
-    OP_DEF_LOCAL, OP_DEF_GLOBAL, OP_CLEAR, OP_NEED_VALUE, OP_INTERP, OP_LIST, OP_TYPED_LIST,
-    OP_CHECK_ELEM, OP_MAP, OP_CHECK_KEY, OP_TYPED_MAP, OP_BINARY, OP_NEG, OP_NOT, OP_JUMP,
-    OP_JUMP_IF_FALSE, OP_AND, OP_OR, OP_LOOP, OP_IS_TAG, OP_IS_CLASS, OP_RANGE_START, OP_RANGE,
-    OP_INDEX, OP_FIELD, OP_CLOSURE, OP_CHECK_CALLABLE, OP_CALL, OP_CALL_PREP, OP_METHOD_PREP,
-    OP_SUPER_PREP, OP_INVOKE, OP_RETURN, OP_RETURN_NIL, OP_THROW, OP_FOR_PREP, OP_FOR_NEXT,
-    OP_WATCH_BEFORE, OP_WATCH_AFTER, OP_ASSIGN, OP_IMPORT, OP_CLASS_BEGIN, OP_CLASS_FIELD,
-    OP_CLASS_FIELD_SET, OP_CLASS_END, OP_ON, OP_LWATCH_BEFORE, OP_LWATCH_AFTER,
-    OP_ASSIGN_DROP, OP_BINARY2, OP_CMP_JUMP, OP_SET_LOCAL, OP_CALL_FN, OP_INDEX2, OP_FIELD_LOCAL, OP_ARG_DEFAULT, OP_DEF_PARAM, OP_PRINT_REPL,
-    OP_HOT_KEEP, OP_IF_GLOBAL, OP_FAIL, OP_LAZY_GLOBAL, OP_IMPORT_PACKAGE,
-    OP_NATIVE_LOOP,  /* a top-level loop's machine code (lube --build --native): skips its bytecode when it ran */
-    OP_PUSH_CHECK, OP_PUSH_DO,  /* xs.push(v), xs a local List: appended without a call (see compile_method) */
+#define LUBE_OP_ENUM(op) op,
+    LUBE_OPCODES(LUBE_OP_ENUM)
+#undef LUBE_OP_ENUM
     OP_COUNT
 } OpCode;
 
@@ -808,6 +868,11 @@ struct FuncDecl {
     unsigned char plain_method;  /* a method whose other parameters are like that: OP_INVOKE's fast path */
     unsigned char plain_ctor;    /* a constructor whose parameters are like that: started without enter() too */
     const LubeNative *native;    /* compiled to machine code (lube --build --native), or NULL */
+    /* (interp.c, worked out at the function's first call: 0 before) what OP_CALL's plain call checks */
+    int fast_argc;          /* nparams + 1 when a call with every argument needs nothing checked, about them or about
+                               what it returns (plain, no type written, no machine code); else -1 */
+    int fast_margc;         /* the same, for a method called on an instance (plain_method) */
+    int frame_need;         /* nslots + code.maxstack: the stack a call must find room for */
     Code code;              /* its bytecode (compile.c) */
 };
 
@@ -901,6 +966,39 @@ typedef struct {
     Place place;                    /* SELF_LEND: the receiver's place */
 } PendingCall;
 
+#define DBG_NO_LINE 0               /* Frame.dbg_line before the debugger has seen the frame (lines start at 1) */
+
+#if VM_SLIM_CALL
+typedef struct Frame {              /* one active call (or script) */
+    struct Frame *prev;
+    ObjFunction *fn;                /* NULL for top-level code */
+    FuncDecl *proto;                /* the code it runs (its name, source and first line are the frame's) */
+    const Instr *pc;                /* the call it waits for; for the newest frame, where it was when something
+                                       could last see it (execute() keeps it in a local meanwhile) */
+    Value *slots;                   /* &I->stack[base] */
+    /* (what a plain call starts as nothing: three stores) */
+    struct Loan *loans;             /* what the call lent with &, returned when it ends */
+    const struct VarRef_ *lent;     /* x.method(...), started in execute()'s loop: the caller's local x, whose value
+                                       is this frame's `this` and goes back when it ends (no Loan for it) */
+    int nloans;
+    int dbg_line;                   /* the line the debugger last saw this frame on (DBG_NO_LINE: none yet) */
+    unsigned char this_locked;      /* a method called on a value that cannot change */
+    unsigned char construct;        /* a constructor: the call's result is `this` */
+    unsigned char entry;            /* called from C: return there when done */
+    unsigned char block;            /* an `on` block running on its function's frame (same base) */
+    unsigned char slow_ret;         /* its return has more to do than give the slots back (see OP_RETURN): 1, or
+                                       2 when that is only giving `lent` back */
+    unsigned char unused[3];
+    int base;                       /* first stack slot of this frame */
+    int opbase;                     /* where its operand stack starts */
+    int argc;                       /* arguments given (the rest take their defaults) */
+    int call_base;                  /* the caller's stack top before the callee was pushed */
+    int pending;                    /* pending calls below this frame */
+    /* (set once, when its chunk of frames is made: a frame's place never changes) */
+    int index;                      /* how many frames are below it */
+    unsigned char last;             /* no frame can follow it in line: its chunk ends, or calls are as deep as they go */
+} Frame;
+#else
 typedef struct Frame {              /* one active call (or script) */
     struct Frame *prev;
     const char *name;
@@ -918,10 +1016,18 @@ typedef struct Frame {              /* one active call (or script) */
     unsigned char entry;            /* called from C: return there when done */
     unsigned char block;            /* an `on` block running on its function's frame (same base) */
     int opbase;                     /* where its operand stack starts */
-    int dbg_line;                   /* the line the debugger last saw this frame on (-1: none yet) */
+    int dbg_line;                   /* the line the debugger last saw this frame on (DBG_NO_LINE: none yet) */
     struct Loan *loans;             /* what the call lent with &, returned when it ends */
     int nloans;
+    Value *slots;                   /* &I->stack[base] */
+    int index;                      /* (set once, with its chunk) how many frames are below it */
+    unsigned char last;             /* (set once) no frame can follow it in line */
 } Frame;
+#endif
+/* Frames in use: the newest one's place says (the Interp keeps no count of its own). */
+#define VM_DEPTH(I) ((I)->frame ? (I)->frame->index + 1 : 0)
+const char *lube_frame_name(Frame *f);  /* (interp.c) the function's name, as tracebacks show it */
+Source *lube_frame_src(Frame *f);
 
 #define LUBE_STACK_MAX (1 << 20)
 #ifndef LUBE_STACK_SIZE
@@ -935,7 +1041,6 @@ struct Interp {
     int this_locked_next;           /* passed from a method call to the new frame */
     struct FrameChunk **chunks;     /* frames live here, in blocks that never move */
     int nchunks;
-    int depth;                      /* frames in use */
     PendingCall *pending;           /* calls whose arguments are being evaluated */
     int npending, cap_pending;
     struct Loan **loan_pool;        /* spare loan arrays (room for 4), to reuse */
@@ -976,7 +1081,8 @@ struct Interp {
     ObjString *chars[256];          /* cached one-byte strings */
     struct { const char *at; ObjString *s; } key_cache[64];  /* (plugins' keys, by their address: object_get's) */
 
-    Value ret_val;                  /* value carried by a `return` */
+    Value ret_val;                  /* the result of the frame execute() was entered for (see vm_step) */
+    Obj *dead;                      /* (execute's loop) an object whose last owner let go, on its way to be freed */
     Value error_val;                /* value carried by a raised error */
     int error_line;
     Source *error_src;

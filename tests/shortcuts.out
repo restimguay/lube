@@ -80,3 +80,4 @@ error: fixed(): digits must be between 0 and 20
 [2, ["<w1", "w2!", "<w1", "!", "<", "w10!", "<w10", 1, 1, 2, 3, true, "w1x"], [1, 2, 10, 20], [1, 2, 3, "w1"]]
 error: unsupported operand types for '<': str and Number
 0
+[[1, "too big: 5", "too big: 7"], 14, [1, 5, 1, 7]]

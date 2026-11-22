@@ -214,6 +214,7 @@ printf 'import shapes.Point\nlet p = Point(1, 2)\nprint(p)\n' >"$TMP/uses_shapes
 feed "debugger: expressions see the file's imports" 'n\np Point(3, 4)\np p.x\nc\n' env LUBE_PATH="$SHAPES" "$LUBE" --debug "$TMP/uses_shapes.lube"
 feed "debugger: no more commands runs the program on" 'b 13\nc\n' "$LUBE" --debug "$D"
 feed "debugger: in an on block in a function" 'b 7\nc\nlocals\np gain * bonus + score\nbt\nup\nlocals\nn\nn\nn\nn\nc\n' "$LUBE" --debug tests/cli/debug_on.lube
+feed "debugger: every kind of instruction, one at a time" 'c\n' "$LUBE" --debug tests/cli/debug_ops.lube
 run "debugger without a file" "$LUBE" --debug
 
 # ---- hot reload ----

@@ -566,3 +566,23 @@ show(fn() {
   for x in [1, 2] { let y = x + "s" }
   return 0
 })
+
+// a method that changes its receiver (a local, lent to it) and fails partway: the receiver keeps what was done
+class Acc {
+  var n = 0
+  var log = []
+  fn add_or_fail(x) {
+    this.n += x
+    this.log.push(x)
+    if x > 1 { throw "too big: {x}" }
+    return this.n
+  }
+}
+fn lent_and_failed() {
+  var acc = Acc()
+  var seen = [acc.add_or_fail(1)]
+  try { acc.add_or_fail(5) } catch e { seen.push(e) }
+  try { seen.push(acc.add_or_fail(1) + acc.add_or_fail(7)) } catch e { seen.push(e) }
+  return [seen, acc.n, acc.log]
+}
+print(lent_and_failed())
