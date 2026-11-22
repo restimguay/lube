@@ -46,4 +46,6 @@ fn Todos() component {
 let app = App()  // App({host: "0.0.0.0"}) to be reached from other machines
 app.page("/", fn(req) => Todos(), {title: "To do", styles: ["/assets/app.css"]})
 app.static("/assets", "examples/web/public")  // (run from Lube's folder)
-app.serve(8080)
+var port = 8080
+if len(args) > 0 { port = num(args[0]) }  // (lube examples/web/todo.lube 3000: another port; 0, any free one)
+app.serve(port)

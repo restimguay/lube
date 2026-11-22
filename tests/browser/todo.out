@@ -1,0 +1,64 @@
+{
+ "steps": {
+  "styled": true,
+  "start": {
+   "items": [],
+   "left": "0 left",
+   "clearDisabled": true
+  },
+  "added": {
+   "items": [
+    "milk",
+    "eggs",
+    "bread",
+    "<b>bold</b>"
+   ],
+   "left": "4 left",
+   "clearDisabled": true,
+   "formCleared": true,
+   "bold": 0
+  },
+  "filtered": {
+   "items": [
+    "bread"
+   ],
+   "left": "4 left",
+   "clearDisabled": true,
+   "sameField": true,
+   "focused": true,
+   "value": "brea",
+   "caret": 4
+  },
+  "checked": {
+   "items": [
+    "milk [done]",
+    "eggs",
+    "bread",
+    "<b>bold</b>"
+   ],
+   "left": "3 left",
+   "clearDisabled": false,
+   "checkbox": true,
+   "sameElement": true
+  },
+  "removed": {
+   "items": [
+    "milk [done]",
+    "eggs",
+    "<b>bold</b>"
+   ],
+   "left": "2 left",
+   "clearDisabled": false
+  },
+  "clearedDone": {
+   "items": [
+    "eggs",
+    "<b>bold</b>"
+   ],
+   "left": "2 left",
+   "clearDisabled": true
+  }
+ },
+ "closedWhenServerStops": true,
+ "console": []
+}

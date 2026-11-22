@@ -106,6 +106,12 @@ plugins/web$(PLUGIN_EXT): $(wildcard src/plugins/web/*.c)
 web-client:
 	python3 src/plugins/web/client.py
 
+# The web plugin's pages in a real browser (needs Node 22+ and Chrome or Chromium; without them it says so and
+# passes). make browser BROWSER_LUBE=./lube-check runs them on the checking build.
+BROWSER_LUBE ?= ./lube
+browser: all
+	@node tests/browser/run.mjs $(BROWSER_LUBE) $(BROWSER_FLAGS)
+
 plugins:
 	mkdir -p plugins
 
@@ -164,4 +170,4 @@ pgo: all
 clean:
 	rm -rf build plugins lube lube.exe liblube.a lube-check lube-check.dSYM lube-tsan lube-tsan.dSYM
 
-.PHONY: all lib test check tsan coverage install clean pgo web-client
+.PHONY: all lib test check tsan coverage install clean pgo web-client browser

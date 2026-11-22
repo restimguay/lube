@@ -11,11 +11,18 @@
   // Events go out one at a time, at most one every 60 ms (the server allows 20 a second): an input's latest value
   // replaces one still waiting, so typing fast sends what was typed, not every key.
   var queue = [], timer = 0, sent = 0, replies = 0, submitAt = 0, submitted = null, forced = null;
+  // data-busy is on the root while an event waits to go or for its answer (for CSS, and for tests: once it is
+  // gone, the page shows what the server last said).
+  function busy() {
+    if (queue.length || sent > replies) root.setAttribute('data-busy', '');
+    else root.removeAttribute('data-busy');
+  }
   function send(m) {
     if (m.e === 'input') {
       for (var i = 0; i < queue.length; i++) if (queue[i].e === 'input' && queue[i].h === m.h) { queue[i] = m; return; }
     }
     queue.push(m);
+    busy();
     if (!timer) flush();
   }
   function flush() {
@@ -26,6 +33,7 @@
     ws.send(JSON.stringify(out));
     sent++;
     if (m.form) { submitAt = sent; submitted = m.form; }  // its answer sets the form's fields, even the one with focus
+    busy();
     timer = setTimeout(flush, 60);
   }
   ws.onopen = flush;
@@ -141,6 +149,7 @@
       }
     }
     forced = null;
+    busy();
     if (d.error) console.error('lube:', d.error);
   };
   ws.onclose = function () { root.setAttribute('data-closed', ''); };

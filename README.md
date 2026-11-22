@@ -26,6 +26,7 @@ make test       # runs the test suite
 make check      # runs it again with memory sanitizers and a leak check
 make coverage   # measures test coverage (needs clang's llvm-cov); fails below 100%
 make tsan       # runs the suite with ThreadSanitizer (data races between isolates)
+make browser    # runs the web plugin's pages in headless Chrome (needs Node 22+ and Chrome)
 tests/soak/run.sh   # runs everything for an hour, watching memory and speed (see Testing)
 make pgo        # builds lube twice, the second time laid out by how the first one ran (needs clang): 5-15% faster
 make install    # copies lube to /usr/local/bin and its plugins to /usr/local/lib/lube (PREFIX=...)
@@ -1140,14 +1141,14 @@ app.serve(8080)                                    // until a handler calls app.
 
 - **Views.** `div(attributes?, children...)`, and the same for `p`, `span`, `a`, `button`, `form`, `ul`, `li`, `table`, `h1` to `h6` and the rest of HTML's elements. `<input>` is `field()`, because `input` is Lube's own. `el("svg", ...)` makes any other element. A child is text, a Number, a Node, a component (its view), a List of those, or nothing. Attributes are text, Numbers or Bools (`true` gives the attribute alone, `false` leaves it out). `html(view)` gives the HTML as text.
 - **Lists.** `key:` on a list's items (`li({key: item.id}, ...)`) lets the page move them as the list changes, instead of rewriting them.
-- **In the browser.** The page's script, about 4 KB, makes the page match each new view in place, changing only what differs. Focus, the caret and what's being typed stay as they are. A field takes the server's value when that value changes, but not while someone types in it, unless its form was just sent: so a form whose view leaves its fields empty clears after it is sent. Events go one at a time, at most one every 60 ms. A field's latest value replaces one still waiting, so typing fast sends what was typed, not every key. When the server goes away, the page's root gets `data-closed`, for a style to show it.
+- **In the browser.** The page's script, under 5 KB, makes the page match each new view in place, changing only what differs. Focus, the caret and what's being typed stay as they are. A field takes the server's value when that value changes, but not while someone types in it, unless its form was just sent: so a form whose view leaves its fields empty clears after it is sent. Events go one at a time, at most one every 60 ms. A field's latest value replaces one still waiting, so typing fast sends what was typed, not every key. While an event waits to go or for its answer, the page's root has `data-busy`. When the server goes away, it gets `data-closed`. Both are there for styles to show.
 - **Handlers.** `onclick`, `ondblclick`, `oninput`, `onchange`, `onsubmit`, `onkeydown`, `onkeyup`, `onfocus`, `onblur`, `onmouseenter` and `onmouseleave` take a function: a component's handler, or a closure. `input` and `change` give it the element's value (a Bool for a checkbox), `submit` the form's fields as an object, and the key events the key's name. The other events give nothing.
 - **Pages.** `app.page(path, fn(req), {title, styles, scripts}?)` serves what `fn` gives, a component or a view, as a page. A page with a component or handlers is live: it keeps its component until its browser tab goes, and then runs its `on leave` blocks. `styles` and `scripts` are paths on the site.
 - **Other routes.** `app.get`, `post`, `put`, `patch` and `delete` take `fn(req)`. It returns text (`text/plain`), `Bytes`, a view (HTML), nothing (204), or `{status, body, type, headers}`. Paths take `:name` for one part and `*rest` at the end for the rest. The request is `{method, path, params, query, headers, body, text, form, ip}`: `body` is its `Bytes`, `text` the same as text, and `form` a urlencoded form's fields.
 - **Static files.** `app.static(prefix, folder)` serves the folder's files under `prefix`, with their content types.
 - **Serving.** `app.serve(port?)` serves until `app.stop()`. `app.start(port)` listens (port 0 picks a free one, and `start` returns it) and `app.step(seconds)` serves what has come, so a program can serve from its own loop. All of it runs on the program's thread, inside `step()`. `app.pages()` counts the live pages. Errors go to standard error, as `web: GET /path: what happened`.
 
-`examples/web/todo.lube` is a whole app: a to-do list with items that are components of their own, a filter that updates as you type, and a stylesheet. Run `lube examples/web/todo.lube` in Lube's folder, then open http://localhost:8080/.
+`examples/web/todo.lube` is a whole app: a to-do list with items that are components of their own, a filter that updates as you type, and a stylesheet. Run `lube examples/web/todo.lube` in Lube's folder, then open http://localhost:8080/. (`lube examples/web/todo.lube 3000` serves on port 3000.)
 
 The policy is on from the start. `App({policy: {...}})` loosens a rule by name, and an unknown name is an error, so a typo can't weaken one:
 
@@ -1546,6 +1547,7 @@ Lube is written in C, and its plugins read files from anywhere (models, arrays, 
 - **Memory.** `make check` runs the suite on a build with AddressSanitizer and UndefinedBehaviorSanitizer. That build also fails if any object is still alive at exit, in the main program or in any isolate.
 - **Threads.** `make tsan` runs it with ThreadSanitizer, which reports any data race: between isolates, and in the thread pool that `array`, `nn`, `learn` and `llm` share.
 - **Coverage.** `make coverage` builds with clang's source-based coverage, runs the suite, and fails unless every line and every function of the interpreter and its plugins ran. The few defensive lines that no program can reach are marked `LCOV_EXCL_LINE` (or sit between `LCOV_EXCL_START` and `LCOV_EXCL_STOP`), and the report counts them.
+- **In a browser.** `make browser` runs the web plugin's pages in headless Chrome, driven by `tests/browser/run.mjs` over the DevTools protocol. Each case starts an app on a free port (the example app, and `tests/browser/keys.lube`), uses it as a person would, and compares what the page shows, and its console, with a `.out` file. It checks that typing fast keeps focus, the caret and every letter, that list items moving with `key:` keep their elements, that a form clears after it is sent, that markup someone types stays text, and that the page shows when the server goes. The steps wait for `data-busy` to go, not for a fixed time. With `BROWSER_LUBE=./lube-check`, they run on the checking build, and the keys app, stopped by its `/stop` route, must end without a leak. It needs Node 22 or later and Chrome or Chromium (`CHROME=` names one). Without them it says so and passes, because it is not part of `make test`.
 - **Fuzzing.** The interpreter has been fuzzed with tens of thousands of malformed and adversarial programs.
 
 ### On every pull request
@@ -1554,7 +1556,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs:
 
 | job | what it runs |
 |---|---|
-| Linux, with gcc and with clang | the build with every warning an error, `make test`, `make check`, `make tsan`, a real window (X11 under Xvfb), a static binary |
+| Linux, with gcc and with clang | the build with every warning an error, `make test`, `make check`, `make tsan`, `make browser` on both builds, a real window (X11 under Xvfb), a static binary |
 | macOS | `make test`, `make check`, `make coverage`, a real Cocoa window, a universal binary |
 | Windows (MSYS2, gcc) | `make test`, a real Win32 window, the release zip |
 | Android | the template in `mobile/android`, built with Gradle, and its native part again with every warning an error |
