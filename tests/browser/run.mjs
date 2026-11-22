@@ -168,7 +168,11 @@ try {
 } finally {
   chrome.kill();
   if (chrome.pid) await new Promise(ok => chrome.exitCode !== null ? ok() : chrome.on('exit', ok));
-  rmSync(profile, { recursive: true, force: true });
+  try {  // (Chrome's last processes may still be writing there: tried again, and not a failure if it stays)
+    rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  } catch (e) {
+    console.log(`(could not remove ${profile}: ${e.code})`);
+  }
 }
 console.log(`browser tests: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

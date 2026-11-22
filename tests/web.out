@@ -129,6 +129,8 @@ slow body: HTTP/1.1 408 Request Timeout
 idle: HTTP/1.1 200 OK true
 after a quiet while: 0 false
 trickle: HTTP/1.1 408 Request Timeout
+a last answer: HTTP/1.1 400 Bad Request false
+then: 0 false
 -- connections
 a third from one address: true true false
 HTTP/1.1 200 OK
@@ -158,16 +160,16 @@ web: GET /extra: an answer has no 'color' (it has status, body, type and headers
 /extra HTTP/1.1 500 Internal Server Error 500 Internal Server Error
 web: GET /component: a component is a page: serve it with app.page()
 /component HTTP/1.1 500 Internal Server Error 500 Internal Server Error
-web: GET /throws: tests/web.lube:311: the database is down: password=hunter2
+web: GET /throws: tests/web.lube:318: the database is down: password=hunter2
 /throws HTTP/1.1 500 Internal Server Error 500 Internal Server Error
 web: GET /bad: a view shows text, a Number, a Node, a component, a List of those, or nothing, but an Object is not one
 /bad HTTP/1.1 500 Internal Server Error 500 Internal Server Error
 web: GET /handler: <button onclick=...>: a handler works only in a page (app.page)
 /handler HTTP/1.1 500 Internal Server Error 500 Internal Server Error
 theme=dark; Path=/ /elsewhere
-web: GET /throws: tests/web.lube:327: the database is down
+web: GET /throws: tests/web.lube:334: the database is down
 HTTP/1.1 500 Internal Server Error | 500 Internal Server Error
-tests/web.lube:327: the database is down
+tests/web.lube:334: the database is down
 -- static
 HTTP/1.1 200 OK text/plain; charset=utf-8 12 no-cache hello, file
 text/css; charset=utf-8 5
@@ -261,8 +263,8 @@ HTTP/1.1 101 Switching Protocols s3pPLMBiTxaQ9kYGzzhZRbK+xOo= websocket
 ["{\"v\":2,\"html\":\"<div><p>count: 2 </p><button data-on-click=\"ID\">+1</button><input data-on-input=\"ID\"><button data-on-click=\"ID\">fail</button><form data-on-submit=\"ID\"></form></div>\"}"]
 ["{\"v\":3,\"html\":\"<div><p>count: 2 typed &lt;b&gt;</p><button data-on-click=\"ID\">+1</button><input data-on-input=\"ID\"><button data-on-click=\"ID\">fail</button><form data-on-submit=\"ID\"></form></div>\"}"]
 ["{\"v\":4,\"html\":\"<div><p>count: 2 {name: &quot;ada&quot;}</p><button data-on-click=\"ID\">+1</button><input data-on-input=\"ID\"><button data-on-click=\"ID\">fail</button><form data-on-submit=\"ID\"></form></div>\"}"]
-web: an event: tests/web.lube:492: a handler failed
-["{\"v\":4,\"error\":\"tests/web.lube:492: a handler failed\"}"]
+web: an event: tests/web.lube:499: a handler failed
+["{\"v\":4,\"error\":\"tests/web.lube:499: a handler failed\"}"]
 ["pong hi"]
 ["{\"v\":5,\"html\":\"<div><p>count: 3 {name: &quot;ada&quot;}</p><button data-on-click=\"ID\">+1</button><input data-on-input=\"ID\"><button data-on-click=\"ID\">fail</button><form data-on-submit=\"ID\"></form></div>\"}"]
 []
@@ -378,8 +380,8 @@ bad JSON "\: ["close 1008"] false
 a counter leaves at 1
 bad JSON {"a\u0000":1}: ["close 1008"] false
 ["{\"v\":2,\"html\":\"<div><p>count: 1 &quot;\\\\/\\u0008\\u000c\\n\\u000d\\u0009Aé€😀</p><button data-on-click=\"ID\">+1</button><input data-on-input=\"ID\"><button data-on-click=\"ID\">fail</button><form data-on-submit=\"ID\"></form></div>\"}"]
-web: an event: tests/web.lube:491: 'said' is a str, so it cannot hold a List: a var keeps the type it starts with
-["{\"v\":2,\"error\":\"tests/web.lube:491: 'said' is a str, so it cannot hold a List: a var keeps the type it starts with\"}"]
+web: an event: tests/web.lube:498: 'said' is a str, so it cannot hold a List: a var keeps the type it starts with
+["{\"v\":2,\"error\":\"tests/web.lube:498: 'said' is a str, so it cannot hold a List: a var keeps the type it starts with\"}"]
 web: a page sent events too fast (policy events_per_second: 1)
 a counter leaves at 3
 too fast: ["{\"v\":2,\"html\":\"<div><p>count: 2 </p><button data-on-click=\"ID\">+1</button><input data-on-input=\"ID\"><button data-on-click=\"ID\">fail</button><form data-on-submit=\"ID\"></form></div>\"}", "{\"v\":3,\"html\":\"<div><p>count: 3 </p><button data-on-click=\"ID\">+1</button><input data-on-input=\"ID\"><button data-on-click=\"ID\">fail</button><form data-on-submit=\"ID\"></form></div>\"}", "close 1008"]
@@ -393,14 +395,14 @@ a counter leaves at 7
 then dropped: false 1
 a counter leaves at 7
 a counter leaves at 1
-web: GET /fails: tests/web.lube:507: the page failed
+web: GET /fails: tests/web.lube:514: the page failed
 HTTP/1.1 500 Internal Server Error 500 Internal Server Error
-tests/web.lube:507: the page failed
+tests/web.lube:514: the page failed
 web: GET /badview: a view shows text, a Number, a Node, a component, a List of those, or nothing, but an Object is not one
 HTTP/1.1 500 Internal Server Error 1
-web: GET /fails: tests/web.lube:662: the page failed
+web: GET /fails: tests/web.lube:669: the page failed
 HTTP/1.1 500 Internal Server Error | 500 Internal Server Error
-web: an event: tests/web.lube:492: a handler failed
+web: an event: tests/web.lube:499: a handler failed
 ["{\"v\":1,\"error\":\"the server could not handle that event\"}"]
 a closure ran
 ["{\"v\":1}"]
@@ -469,15 +471,15 @@ error: start(): there is no address "not.a.host.invalid" to listen on
 error: start(): cannot listen on 127.0.0.1 port PORT (is it in use?)
 error: start(): the app is serving already, at port PORT
 error: step() takes the seconds to wait, not a str
-web: GET /serve: tests/web.lube:762: step(): the app is serving already (a handler cannot serve)
+web: GET /serve: tests/web.lube:769: step(): the app is serving already (a handler cannot serve)
 HTTP/1.1 500 Internal Server Error | 500 Internal Server Error
-web: GET /route: tests/web.lube:763: get(): an app's routes are set before it serves, not while it does
+web: GET /route: tests/web.lube:770: get(): an app's routes are set before it serves, not while it does
 HTTP/1.1 500 Internal Server Error | 500 Internal Server Error
 1
 a counter leaves at 1
 HTTP/1.1 200 OK 0 0
 false
-web: GET /serve: tests/web.lube:762: step(): the app is serving already (a handler cannot serve)
+web: GET /serve: tests/web.lube:769: step(): the app is serving already (a handler cannot serve)
 HTTP/1.1 500 Internal Server Error | 500 Internal Server Error
 App(not started)
 HTTP/1.1 200 OK 0
@@ -496,11 +498,11 @@ HTTP/1.1 429 Too Many Requests 10 status 429
 HTTP/1.1 599  10 status 599
 web: GET /style: <div style=...>: the page's CSP blocks inline styles: use a class and a stylesheet (app.page(..., {styles: [...]})), or App({policy: {inline_styles: true}})
 HTTP/1.1 500 Internal Server Error
-web: a view: tests/web.lube:815: division by zero
+web: a view: tests/web.lube:822: division by zero
 ["{\"v\":1,\"error\":\"the server could not handle that event\"}"]
-web: a page's leave: tests/web.lube:814: it will not leave quietly
+web: a page's leave: tests/web.lube:821: it will not leave quietly
 0
 true 127
-web: a page's leave: tests/web.lube:814: it will not leave quietly
+web: a page's leave: tests/web.lube:821: it will not leave quietly
 a lazy reader is dropped: true false
 and one that has gone: true

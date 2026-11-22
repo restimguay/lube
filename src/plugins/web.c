@@ -45,8 +45,8 @@
 #define _WIN32_WINNT 0x0600  /* WSAPoll, inet_ntop: Windows Vista and later */
 #endif
 #define _CRT_RAND_S  /* rand_s: the system's random numbers */
-#elif !defined(__APPLE__) && !defined(_POSIX_C_SOURCE)
-#define _POSIX_C_SOURCE 200809L  /* getaddrinfo, poll, realpath, O_NOFOLLOW under -std=c99 */
+#elif !defined(__APPLE__) && !defined(_XOPEN_SOURCE)
+#define _XOPEN_SOURCE 700  /* getaddrinfo, poll, O_NOFOLLOW under -std=c99 (POSIX 2008), and realpath (X/Open's) */
 #endif
 #if defined(__APPLE__) && !defined(_DARWIN_C_SOURCE)
 #define _DARWIN_C_SOURCE  /* arc4random_buf */
@@ -70,6 +70,7 @@ typedef SOCKET Sock;
 typedef WSAPOLLFD PollFd;
 #define BAD_SOCK INVALID_SOCKET
 #define close_sock closesocket
+#define SHUT_SEND SD_SEND
 #define sys_poll(fds, n, ms) WSAPoll((fds), (ULONG)(n), (ms))
 #define net_errno() WSAGetLastError()
 #define E_AGAIN(e) ((e) == WSAEWOULDBLOCK)
@@ -88,6 +89,7 @@ typedef int Sock;
 typedef struct pollfd PollFd;
 #define BAD_SOCK (-1)
 #define close_sock close
+#define SHUT_SEND SHUT_WR
 #define sys_poll(fds, n, ms) poll((fds), (nfds_t)(n), (ms))
 #define net_errno() errno
 #define E_AGAIN(e) ((e) == EAGAIN || (e) == EWOULDBLOCK)
@@ -194,6 +196,7 @@ typedef struct Conn {
     double sent_at;        /* when its answer last made progress */
     int idle;              /* C_HEAD: between requests */
     int eof;               /* it closed its side */
+    int shut;              /* C_CLOSING: its answer has gone, and our side is closed (it lingers, reading) */
     double ping_at;        /* C_WS */
     size_t head_len;       /* C_BODY: the head's bytes (and its empty line) */
     Req req;
@@ -754,6 +757,7 @@ static void respond_status(App *a, Conn *c, int status, const char *extra) {
     respond(a, c, status, "text/plain; charset=utf-8", body, (size_t)n, extra);
 }
 
+#define LINGER 1.0  /* seconds a connection with a last answer waits, reading, for its client to close */
 static void fail_request(App *a, Conn *c, int status) {
     c->keep = 0;
     respond_status(a, c, status, NULL);
@@ -1843,8 +1847,18 @@ static void conn_timers(App *a, Conn *c, double now) {
         c->state = C_DEAD;
         return;
     }
-    if (c->state == C_CLOSING) {
-        if (!c->out.n && !c->file) c->state = C_DEAD;
+    if (c->state == C_CLOSING) {  /* a last answer (an error): closed once it has gone */
+        if (c->out.n || c->file) return;
+        if (c->eof || (c->shut && now >= c->deadline)) {
+            c->state = C_DEAD;
+        } else if (!c->shut) {
+            /* Not at once: closing with what it sent still unread resets the connection, and a reset can throw
+             * away the answer before the client reads it (Windows does). So our side closes, and what still
+             * comes is read and dropped, until it closes too or a second has gone. */
+            shutdown(c->fd, SHUT_SEND);
+            c->shut = 1;
+            c->deadline = now + LINGER;
+        }
         return;
     }
     if (c->state == C_WS) {
@@ -1874,7 +1888,7 @@ static double next_time(App *a, double now, double until) {
     for (int i = 0; i < a->nconns; i++) {
         const Conn *c = a->conns[i];
         if (c->out.n || c->file) t = fmin(t, c->sent_at + a->pol.header_timeout);
-        if (c->state == C_HEAD || c->state == C_BODY || c->state == C_WS) t = fmin(t, c->deadline);
+        if (c->state == C_HEAD || c->state == C_BODY || c->state == C_WS || c->shut) t = fmin(t, c->deadline);
         if (c->state == C_WS) t = fmin(t, c->ping_at);
     }
     for (int i = 0; i < a->npages; i++)
@@ -1925,7 +1939,10 @@ static LubeValue app_step(LubeVM *vm, App *a, double wait) {
     for (int i = 0; i < a->nconns; i++) conn_timers(a, a->conns[i], now);
     for (int i = a->nconns - 1; i >= 0; i--) {
         Conn *c = a->conns[i];
-        if (c->state != C_DEAD) continue;
+        if (c->state != C_DEAD) {
+            if (c->shut && c->page) drop_page(vm, a, c->page);  /* (a WebSocket that lingers: its page has gone) */
+            continue;
+        }
         a->conns[i] = a->conns[--a->nconns];
         Page *p = c->page;
         conn_free(c);
