@@ -102,6 +102,10 @@ plugins/learn$(PLUGIN_EXT): $(wildcard src/plugins/learn/*.c) src/plugins/array.
 plugins/llm$(PLUGIN_EXT): $(wildcard src/plugins/llm/*.c) src/plugins/array.h
 plugins/web$(PLUGIN_EXT): $(wildcard src/plugins/web/*.c)
 
+# The page script: client.c is made from client.js (needs python3; only after changing client.js).
+web-client:
+	python3 src/plugins/web/client.py
+
 plugins:
 	mkdir -p plugins
 
@@ -160,4 +164,4 @@ pgo: all
 clean:
 	rm -rf build plugins lube lube.exe liblube.a lube-check lube-check.dSYM lube-tsan lube-tsan.dSYM
 
-.PHONY: all lib test check tsan coverage install clean pgo
+.PHONY: all lib test check tsan coverage install clean pgo web-client

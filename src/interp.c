@@ -1810,9 +1810,13 @@ static Value run_block_args(Interp *I, int i, const Value *argv) {
         return lube_error(I, "%s() is already running: it cannot call itself", d->name->chars);
     }
     for (int k = 0; k < od->nuses; k++)
-        if (IS_NIL(I->stack[base + od->uses[k].slot]))
+        if (IS_NIL(I->stack[base + od->uses[k].slot])) {
+            if (od->kind != ON_WATCH)  /* (a component's: its body may not have set it yet) */
+                return lube_error(I, "%s() cannot run now: '%s' has no value yet (the body sets it later), or it is "
+                                     "lent out with & to a call that has not returned", d->name->chars, od->uses[k].name->chars);
             return lube_error(I, "the '%s' block cannot run now: '%s' is lent out with & to a call that has not returned",
                               d->name->chars, od->uses[k].name->chars);
+        }
     if (VM_DEPTH(I) >= LUBE_MAX_FRAMES || I->sp + d->code.maxstack > LUBE_STACK_MAX)
         return lube_error(I, "stack overflow: too much recursion");
     Value r = NIL_VAL;

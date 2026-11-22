@@ -231,3 +231,33 @@ fn Tree(depth) component {
   return depth
 }
 print(Tree(0).grow().grow().view(), Tree(5).view())
+
+// a component's lets are worked out again with each view (its vars are its state, made once)
+fn Basket() component {
+  var prices = [3]
+  fn add(p) { prices.push(p) }
+  let total = sum(prices)
+  let label = "{len(prices)} for {total}"
+  return label
+}
+let basket = Basket()
+print(basket.view())
+basket.add(4)
+print(basket.view())
+
+// its handlers see each other, in any order, and the body can call one written after it
+fn Ordered() component {
+  var log = str[]
+  start()
+  fn start() { step("one") }
+  fn step(s) { log.push(s) }
+  return log
+}
+print(Ordered().view())
+fn Early2() component {
+  early()
+  var x = 1
+  fn early() { x += 1 }
+  return x
+}
+try { Early2() } catch e { print(e) }

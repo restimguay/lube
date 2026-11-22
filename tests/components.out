@@ -43,3 +43,7 @@ error: this Scoped has left: it has no view
 error: stack overflow: too much recursion
 done
 2 5
+1 for 3
+2 for 7
+["one"]
+early() cannot run now: 'x' has no value yet (the body sets it later), or it is lent out with & to a call that has not returned

@@ -104,6 +104,7 @@ feed "script from standard input" 'print("from stdin", args)\n' "$LUBE" - a b
 
 # ---- checking without running ----
 run "check a good file" "$LUBE" --check examples/shapes.lube
+run "check the web example" "$LUBE" --check examples/web/todo.lube
 run "check a file with an error" "$LUBE" --check tests/syntax_error.lube
 feed "check standard input" '#strict\nfn f(x) {}\nprint("never runs")\n' "$LUBE" --check -
 feed "check runs nothing" 'print("never runs")\n' "$LUBE" --check -

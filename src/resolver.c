@@ -79,6 +79,8 @@ typedef struct {
     ObjMap *pkg_names;         /* names the package's files declare (NULL if not found) */
     ObjMap *own;               /* names this file declares at the top level */
     ObjMap *aliases;           /* imported names -> the globals they are */
+    ObjString **view_lets;     /* a component's lets, worked out with its view: only the view sees them */
+    int nview_lets, in_view;
 } Resolver;
 
 static void resolve(Resolver *R, Node *n);
@@ -519,9 +521,38 @@ static void resolve_component(Resolver *R, FuncDecl *d) {
     if (!last || last->kind != N_RETURN || !last->as.expr)
         rerror(R, last ? last->line : d->line,
                "a component's body ends with 'return' and the view it shows, like 'return div(...)'");
+    /* its lets (not vars, not fns) go with the view: worked out again, in order, before each view */
+    int nlets = 0, kept = 0;
+    for (int i = 0; i < stmts->count - 1; i++)
+        nlets += stmts->items[i]->kind == N_LET && !stmts->items[i]->as.let.is_fn && !stmts->items[i]->as.let.is_var;
+    Node *view_block = tree_node(R, N_BLOCK, last->line);
+    NodeList *vl = &view_block->as.block.stmts;
+    vl->items = arena_alloc(R->tree, sizeof(Node *) * (size_t)(nlets + 1));
+    vl->cap = nlets + 1;
+    ObjString **names = nlets ? arena_alloc(R->tmp, sizeof(ObjString *) * (size_t)nlets) : NULL;
     for (int i = 0; i < stmts->count; i++) {
         Node *s = stmts->items[i];
-        if (s == last) {  /* return view: a block of its own, run by c.view() */
+        if (s != last && s->kind == N_LET && !s->as.let.is_fn && !s->as.let.is_var) {
+            names[vl->count] = s->as.let.var.name;
+            vl->items[vl->count++] = s;
+        } else {
+            stmts->items[kept++] = s;
+        }
+    }
+    stmts->count = kept;
+    for (int i = 0; i < stmts->count; i++) {  /* every handler's name, first: the handlers see each other */
+        Node *s = stmts->items[i];
+        if (s->kind == N_LET && s->as.let.is_fn)
+            bind(&s->as.let.var, declare(R, s->as.let.var.name, s->line, 0, ORIGIN_FN), 0, ORIGIN_FN);
+    }
+    vl->items[vl->count++] = last;
+    ObjString **saved_lets = R->view_lets;
+    int saved_nlets = R->nview_lets;
+    R->view_lets = names;
+    R->nview_lets = nlets;
+    for (int i = 0; i < stmts->count; i++) {
+        Node *s = stmts->items[i];
+        if (s == last) {  /* its lets, and return view: a block of its own, run by c.view() */
             FuncDecl *v = arena_alloc(R->tree, sizeof(FuncDecl));
             memset(v, 0, sizeof *v);
             v->name = lube_intern(R->I, "view", 4);
@@ -529,10 +560,12 @@ static void resolve_component(Resolver *R, FuncDecl *d) {
             v->src = d->src;
             v->strict = d->strict;
             v->defaults = d->defaults;  /* (none are read: it has no parameters) */
-            v->body = block_of(R, s);
+            v->body = view_block;
             Node *on = tree_node(R, N_ON, s->line);
             on->as.on.func = v;
+            R->in_view = 1;
             on->as.on.desc = component_block(R, v, ON_VIEW);
+            R->in_view = 0;
             stmts->items[i] = on;
         } else if (s->kind == N_LET && s->as.let.is_fn) {  /* fn toggle() { ... }: a handler */
             FuncDecl *h = s->as.let.value->as.func;
@@ -549,9 +582,7 @@ static void resolve_component(Resolver *R, FuncDecl *d) {
                 h->body = block_of(R, ret);
                 h->is_arrow = 0;
             }
-            VarRef *v = &s->as.let.var;
-            bind(v, declare(R, v->name, s->line, 0, ORIGIN_FN), 0, ORIGIN_FN);
-            Node *on = tree_node(R, N_ON, s->line);
+            Node *on = tree_node(R, N_ON, s->line);  /* (its name was declared above) */
             on->as.on.func = h;
             on->as.on.desc = component_block(R, h, ON_HANDLER);
             s->as.let.value = on;
@@ -569,6 +600,17 @@ static void resolve_component(Resolver *R, FuncDecl *d) {
                                        "at the top level of the file", s->as.on.items[k].name->chars);
         }
     }
+    R->view_lets = saved_lets;
+    R->nview_lets = saved_nlets;
+    Node **rest = arena_alloc(R->tmp, sizeof(Node *) * (size_t)stmts->count);  /* the handlers are made first, so the */
+    int nrest = 0;                                                              /* body can call one written after it */
+    kept = 0;
+    for (int i = 0; i < stmts->count; i++) {
+        Node *s = stmts->items[i];
+        if (s->kind == N_LET && s->as.let.is_fn == 2) stmts->items[kept++] = s;
+        else rest[nrest++] = s;
+    }
+    for (int i = 0; i < nrest; i++) stmts->items[kept++] = rest[i];
 }
 
 /* Long chains like 1 + 1 + ... build deep trees without deep nesting in
@@ -617,6 +659,10 @@ static void resolve_node(Resolver *R, Node *n) {
     case N_VAR: {
         ObjString *name = n->as.var.name;
         n->as.var = lookup(R, R->fn, name, 1);
+        for (int i = 0; n->as.var.kind == VAR_GLOBAL && !R->in_view && i < R->nview_lets; i++)
+            if (R->view_lets[i] == name)
+                rerror(R, n->line, "'%s' is a let of the component, worked out again with each view: only the view sees "
+                                   "it (make it a var to keep it, or work it out where it is needed)", name->chars);
         if (n->as.var.kind == VAR_GLOBAL && !strcmp(name->chars, "this"))
             rerror(R, n->line, "'this' can only be used inside a class's methods and constructor");
         break;
@@ -826,6 +872,8 @@ int resolve_program(Interp *I, Node *program, Source *src, Arena *tree) {
     R.ns = src->package;
     R.pkg_names = NULL;
     R.own = new_map();
+    R.view_lets = NULL;
+    R.nview_lets = R.in_view = 0;
     R.aliases = new_map();
     if (setjmp(R.jb) != 0) {
         release(OBJ_VAL(R.own));
@@ -882,6 +930,8 @@ int resolve_debug(Interp *I, FuncDecl *d, Source *src, Arena *tree, Source *home
     R.ns = home ? home->package : NULL;
     R.pkg_names = NULL;
     R.own = new_map();
+    R.view_lets = NULL;
+    R.nview_lets = R.in_view = 0;
     R.aliases = new_map();
     if (setjmp(R.jb) != 0) {
         release(OBJ_VAL(R.own));

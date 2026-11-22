@@ -618,7 +618,7 @@ A block inside a function runs on that function's own frame. It reads and change
 
 ### Components: `fn ... component`
 
-A component is a function whose frame outlives its call. Its `var`s are its state, the `fn`s in its body are its handlers, its `on` blocks are its effects, and what it returns is its view. The body runs once, when the component is made. The view is worked out again each time it's asked for, from the state as it is then:
+A component is a function whose frame outlives its call. Its `var`s are its state, the `fn`s in its body are its handlers, its `on` blocks are its effects, and what it returns is its view. The body runs once, when the component is made. The view is worked out again each time it's asked for, from the state as it is then, and so are the component's `let`s:
 
 ```lube
 fn Card(title) component {
@@ -631,19 +631,21 @@ fn Card(title) component {
     clicks += 1
   }
   fn add(n) => clicks += n
-  return {title: title, open: open, clicks: clicks, onclick: toggle}
+  let label = "{title} ({clicks})"                 // a let: worked out again with each view
+  return {title: label, open: open, clicks: clicks, onclick: toggle}
 }
 
 let c = Card("Lube")
 c.toggle()                 // open: true
-print(c.view())            // {title: "Lube", open: true, clicks: 1, onclick: <handler toggle>}
+print(c.view())            // {title: "Lube (1)", open: true, clicks: 1, onclick: <handler toggle>}
 let h = c.toggle           // a handler is a function: kept, passed on, called later
 h()                        // open: false
 print(c.add(10))           // 12
 c.leave()                  // Lube leaves
 ```
 
-- A handler runs on the component's frame, as an `on` block in a function does, so it changes the component's vars themselves. A closure gets copies and can't. A handler can call the component's other handlers, and the body can call them too.
+- A handler runs on the component's frame, as an `on` block in a function does, so it changes the component's vars themselves. A closure gets copies and can't. A handler can call the component's other handlers, wherever they are written, and the body can call them too.
+- A `let` at the top of the body belongs to the view: it is worked out again, in order, before each view. So `let total = sum(prices)` is always up to date. Only the view sees it: a handler, an effect, or the body itself that uses one is an error. A value they need is a `var`, or is worked out where it is used.
 - `c.view()` runs the `return` expression again. `c.name(...)` calls a handler, and `c.name` is the handler as a function. A view that holds a handler, like `onclick: toggle` above, is how a page calls back into its component: the `web` plugin serves components as pages (see Web pages below).
 - `c.leave()` runs its `on leave` blocks; after that, its view and handlers are gone. Leaving twice does nothing.
 - A component can hold other components in its vars, a list of them for instance, and its handlers can call theirs.
@@ -1137,11 +1139,15 @@ app.serve(8080)                                    // until a handler calls app.
 ```
 
 - **Views.** `div(attributes?, children...)`, and the same for `p`, `span`, `a`, `button`, `form`, `ul`, `li`, `table`, `h1` to `h6` and the rest of HTML's elements. `<input>` is `field()`, because `input` is Lube's own. `el("svg", ...)` makes any other element. A child is text, a Number, a Node, a component (its view), a List of those, or nothing. Attributes are text, Numbers or Bools (`true` gives the attribute alone, `false` leaves it out). `html(view)` gives the HTML as text.
+- **Lists.** `key:` on a list's items (`li({key: item.id}, ...)`) lets the page move them as the list changes, instead of rewriting them.
+- **In the browser.** The page's script, about 4 KB, makes the page match each new view in place, changing only what differs. Focus, the caret and what's being typed stay as they are. A field takes the server's value when that value changes, but not while someone types in it, unless its form was just sent: so a form whose view leaves its fields empty clears after it is sent. Events go one at a time, at most one every 60 ms. A field's latest value replaces one still waiting, so typing fast sends what was typed, not every key. When the server goes away, the page's root gets `data-closed`, for a style to show it.
 - **Handlers.** `onclick`, `ondblclick`, `oninput`, `onchange`, `onsubmit`, `onkeydown`, `onkeyup`, `onfocus`, `onblur`, `onmouseenter` and `onmouseleave` take a function: a component's handler, or a closure. `input` and `change` give it the element's value (a Bool for a checkbox), `submit` the form's fields as an object, and the key events the key's name. The other events give nothing.
 - **Pages.** `app.page(path, fn(req), {title, styles, scripts}?)` serves what `fn` gives, a component or a view, as a page. A page with a component or handlers is live: it keeps its component until its browser tab goes, and then runs its `on leave` blocks. `styles` and `scripts` are paths on the site.
 - **Other routes.** `app.get`, `post`, `put`, `patch` and `delete` take `fn(req)`. It returns text (`text/plain`), `Bytes`, a view (HTML), nothing (204), or `{status, body, type, headers}`. Paths take `:name` for one part and `*rest` at the end for the rest. The request is `{method, path, params, query, headers, body, text, form, ip}`: `body` is its `Bytes`, `text` the same as text, and `form` a urlencoded form's fields.
 - **Static files.** `app.static(prefix, folder)` serves the folder's files under `prefix`, with their content types.
 - **Serving.** `app.serve(port?)` serves until `app.stop()`. `app.start(port)` listens (port 0 picks a free one, and `start` returns it) and `app.step(seconds)` serves what has come, so a program can serve from its own loop. All of it runs on the program's thread, inside `step()`. `app.pages()` counts the live pages. Errors go to standard error, as `web: GET /path: what happened`.
+
+`examples/web/todo.lube` is a whole app: a to-do list with items that are components of their own, a filter that updates as you type, and a stylesheet. Run `lube examples/web/todo.lube` in Lube's folder, then open http://localhost:8080/.
 
 The policy is on from the start. `App({policy: {...}})` loosens a rule by name, and an unknown name is an error, so a typo can't weaken one:
 

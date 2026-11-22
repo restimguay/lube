@@ -262,7 +262,7 @@ HTTP/1.1 101 Switching Protocols s3pPLMBiTxaQ9kYGzzhZRbK+xOo= websocket
 ["{\"v\":3,\"html\":\"<div><p>count: 2 typed &lt;b&gt;</p><button data-on-click=\"ID\">+1</button><input data-on-input=\"ID\"><button data-on-click=\"ID\">fail</button><form data-on-submit=\"ID\"></form></div>\"}"]
 ["{\"v\":4,\"html\":\"<div><p>count: 2 {name: &quot;ada&quot;}</p><button data-on-click=\"ID\">+1</button><input data-on-input=\"ID\"><button data-on-click=\"ID\">fail</button><form data-on-submit=\"ID\"></form></div>\"}"]
 web: an event: tests/web.lube:492: a handler failed
-["{\"error\":\"tests/web.lube:492: a handler failed\"}"]
+["{\"v\":4,\"error\":\"tests/web.lube:492: a handler failed\"}"]
 ["pong hi"]
 ["{\"v\":5,\"html\":\"<div><p>count: 3 {name: &quot;ada&quot;}</p><button data-on-click=\"ID\">+1</button><input data-on-input=\"ID\"><button data-on-click=\"ID\">fail</button><form data-on-submit=\"ID\"></form></div>\"}"]
 []
@@ -379,7 +379,7 @@ a counter leaves at 1
 bad JSON {"a\u0000":1}: ["close 1008"] false
 ["{\"v\":2,\"html\":\"<div><p>count: 1 &quot;\\\\/\\u0008\\u000c\\n\\u000d\\u0009Aé€😀</p><button data-on-click=\"ID\">+1</button><input data-on-input=\"ID\"><button data-on-click=\"ID\">fail</button><form data-on-submit=\"ID\"></form></div>\"}"]
 web: an event: tests/web.lube:491: 'said' is a str, so it cannot hold a List: a var keeps the type it starts with
-["{\"error\":\"tests/web.lube:491: 'said' is a str, so it cannot hold a List: a var keeps the type it starts with\"}"]
+["{\"v\":2,\"error\":\"tests/web.lube:491: 'said' is a str, so it cannot hold a List: a var keeps the type it starts with\"}"]
 web: a page sent events too fast (policy events_per_second: 1)
 a counter leaves at 3
 too fast: ["{\"v\":2,\"html\":\"<div><p>count: 2 </p><button data-on-click=\"ID\">+1</button><input data-on-input=\"ID\"><button data-on-click=\"ID\">fail</button><form data-on-submit=\"ID\"></form></div>\"}", "{\"v\":3,\"html\":\"<div><p>count: 3 </p><button data-on-click=\"ID\">+1</button><input data-on-input=\"ID\"><button data-on-click=\"ID\">fail</button><form data-on-submit=\"ID\"></form></div>\"}", "close 1008"]
@@ -401,9 +401,9 @@ HTTP/1.1 500 Internal Server Error 1
 web: GET /fails: tests/web.lube:662: the page failed
 HTTP/1.1 500 Internal Server Error | 500 Internal Server Error
 web: an event: tests/web.lube:492: a handler failed
-["{\"error\":\"the server could not handle that event\"}"]
+["{\"v\":1,\"error\":\"the server could not handle that event\"}"]
 a closure ran
-[]
+["{\"v\":1}"]
 -- policy
 default-src 'self' https://cdn.example | true
 an origin the policy names: HTTP/1.1 101 Switching Protocols
@@ -497,7 +497,7 @@ HTTP/1.1 599  10 status 599
 web: GET /style: <div style=...>: the page's CSP blocks inline styles: use a class and a stylesheet (app.page(..., {styles: [...]})), or App({policy: {inline_styles: true}})
 HTTP/1.1 500 Internal Server Error
 web: a view: tests/web.lube:815: division by zero
-["{\"error\":\"the server could not handle that event\"}"]
+["{\"v\":1,\"error\":\"the server could not handle that event\"}"]
 web: a page's leave: tests/web.lube:814: it will not leave quietly
 0
 true 127

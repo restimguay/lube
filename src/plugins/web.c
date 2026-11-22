@@ -1175,33 +1175,7 @@ static void pump(Conn *c) {
  * Pages
  * ==================================================================== */
 
-/* The page script: it sends the page's events to its handlers, and shows the view it gets back. */
-static const char CLIENT_JS[] =
-    "(function(){\n"
-    "var root=document.getElementById('lube');\n"
-    "if(!root||!root.getAttribute('data-page'))return;\n"
-    "var version=+root.getAttribute('data-version');\n"
-    "var ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/_lube/ws?page='+root.getAttribute('data-page'));\n"
-    "var own=['focus','blur','mouseenter','mouseleave'];\n"
-    "['click','dblclick','input','change','submit','keydown','keyup','focus','blur','mouseenter','mouseleave'].forEach(function(e){\n"
-    "  var alone=own.indexOf(e)>=0;\n"
-    "  root.addEventListener(e,function(ev){\n"
-    "    var t=ev.target;\n"
-    "    if(!alone)t=t.closest?t.closest('[data-on-'+e+']'):null;\n"
-    "    if(!t||!t.getAttribute||!t.getAttribute('data-on-'+e)||!root.contains(t))return;\n"
-    "    var m={v:version,h:t.getAttribute('data-on-'+e)};\n"
-    "    if(e==='submit'){ev.preventDefault();m.a={};new FormData(t).forEach(function(v,k){if(typeof v==='string')m.a[k]=v;});}\n"
-    "    else if(e==='input'||e==='change')m.a=t.type==='checkbox'?t.checked:t.value;\n"
-    "    else if(e==='keydown'||e==='keyup')m.a=ev.key;\n"
-    "    else if(e==='click'&&t.tagName==='A')ev.preventDefault();\n"
-    "    if(ws.readyState===1)ws.send(JSON.stringify(m));\n"
-    "  },alone);\n"
-    "});\n"
-    "ws.onmessage=function(m){var d=JSON.parse(m.data);\n"
-    "  if(typeof d.html==='string'){version=d.v;root.innerHTML=d.html;}\n"
-    "  else if(d.error)console.error('lube:',d.error);};\n"
-    "ws.onclose=function(){root.setAttribute('data-closed','');};\n"
-    "})();\n";
+#include "web/client.c"
 
 static Page *find_page(App *a, const char *token) {
     for (int i = 0; i < a->npages; i++)
@@ -1366,22 +1340,22 @@ static void ws_close(Conn *c, int code) {
 
 static void ws_send(Conn *c, const char *json, size_t n) { ws_frame(c, 1, json, n); }
 
-static void ws_view(Page *p) {
+/* The answer to an event: one for each, so the page's script knows which is which. {"v": the view's version} (and
+ * "html": the view, if it is new or the page's is old; "error": what went wrong, if something did). */
+static void ws_reply(App *a, Page *p, int html, const char *error) {
     Buf m = {0};
-    buf_fmt(&m, "{\"v\":%d,\"html\":", p->version);
-    buf_json(&m, p->html.p ? p->html.p : "", p->html.n);
+    buf_fmt(&m, "{\"v\":%d", p->version);
+    if (html) {
+        buf_str(&m, ",\"html\":");
+        buf_json(&m, p->html.p ? p->html.p : "", p->html.n);
+    }
+    if (error) {
+        const char *say = a->dev ? error : "the server could not handle that event";
+        buf_str(&m, ",\"error\":");
+        buf_json(&m, say, strlen(say));
+    }
     buf_add(&m, "}", 1);
     ws_send(p->ws, m.p, m.n);
-    buf_free(&m);
-}
-
-static void ws_error(App *a, Conn *c, const char *text) {
-    Buf m = {0};
-    buf_str(&m, "{\"error\":");
-    const char *say = a->dev ? text : "the server could not handle that event";
-    buf_json(&m, say, strlen(say));
-    buf_add(&m, "}", 1);
-    ws_send(c, m.p, m.n);
     buf_free(&m);
 }
 
@@ -1412,7 +1386,7 @@ static void ws_event(LubeVM *vm, App *a, Conn *c, const char *msg, size_t n) {
     }
     if (lube->number(v) != p->version) {  /* it saw an older view: it gets the one there is */
         lube->release(ev);
-        ws_view(p);
+        ws_reply(a, p, 1, NULL);
         return;
     }
     const char *id = lube->str(h, NULL);
@@ -1432,11 +1406,12 @@ static void ws_event(LubeVM *vm, App *a, Conn *c, const char *msg, size_t n) {
     LubeValue r = lube->call(vm, handler, has_arg, has_arg ? &arg : NULL);
     lube->release(handler);
     lube->release(ev);
-    char text[1024];
+    char text[1024], why[1024];
+    const char *error = NULL;
     if (lube->failed(r)) {
-        lube->take_error(vm, text, sizeof text);
-        log_line("an event: %s", text);
-        if (c->state == C_WS) ws_error(a, c, text);
+        lube->take_error(vm, why, sizeof why);
+        log_line("an event: %s", why);
+        error = why;
     } else {
         lube->release(r);
     }
@@ -1447,14 +1422,13 @@ static void ws_event(LubeVM *vm, App *a, Conn *c, const char *msg, size_t n) {
     if (page_render(vm, a, p, text, sizeof text)) {
         p->html = before;
         log_line("a view: %s", text);
-        ws_error(a, c, text);
+        ws_reply(a, p, 0, text);
         return;
     }
     int same = before.n == p->html.n && (!before.n || !memcmp(before.p, p->html.p, before.n));
     buf_free(&before);
-    if (same) return;
-    p->version++;
-    ws_view(p);
+    if (!same) p->version++;
+    ws_reply(a, p, !same, error);
 }
 
 /* The frames that have come, in c->in. */
@@ -1673,9 +1647,12 @@ static void dispatch(LubeVM *vm, App *a, Conn *c, const char *body, double now) 
         return;
     }
     if (r->nsegs >= 1 && !strcmp(r->segs[0], RESERVED)) {
-        if (r->nsegs == 2 && !strcmp(r->segs[1], "web.js") && (r->method & (M_GET | M_HEAD)))
-            respond(a, c, 200, "text/javascript; charset=utf-8", CLIENT_JS, sizeof CLIENT_JS - 1, "Cache-Control: no-cache\r\n");
-        else if (r->nsegs == 2 && !strcmp(r->segs[1], "ws"))
+        if (r->nsegs == 2 && !strcmp(r->segs[1], "web.js") && (r->method & (M_GET | M_HEAD))) {
+            Buf js = {0};
+            for (int i = 0; CLIENT_JS[i]; i++) buf_str(&js, CLIENT_JS[i]);
+            respond(a, c, 200, "text/javascript; charset=utf-8", js.p, js.n, "Cache-Control: no-cache\r\n");
+            buf_free(&js);
+        } else if (r->nsegs == 2 && !strcmp(r->segs[1], "ws"))
             ws_upgrade(vm, a, c, now);
         else
             respond_status(a, c, 404, NULL);

@@ -475,3 +475,15 @@ fn Card() component {
 import web.div
 fn div() => 1
 print(div())
+### a component's let in a handler
+fn Card() component {
+  let shown = 1
+  fn f() => shown
+  return shown
+}
+### a component's let in its body
+fn Card() component {
+  let shown = 1
+  var copy = shown
+  return copy
+}

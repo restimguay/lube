@@ -299,7 +299,7 @@ static void render_attrs(Render *r, const Node *n) {
             return;
         }
         buf_add(&r->out, " ", 1);
-        buf_str(&r->out, name);
+        buf_str(&r->out, strcmp(name, "key") ? name : "data-key");  /* key: matches a list's items as they move */
         if (k == LUBE_BOOL) continue;  /* true: the attribute alone */
         char num[64];
         size_t len;

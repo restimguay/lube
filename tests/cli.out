@@ -118,6 +118,8 @@ from stdin ["a", "b"]
 [exit 0]
 --- check a good file
 [exit 0]
+--- check the web example
+[exit 0]
 --- check a file with an error
 tests/syntax_error.lube:2:16: syntax error: expected ')' to close the parameter list but found '{'
     2 | fn broken(a, b {
@@ -2128,4 +2130,12 @@ program:3: error: a component's 'on' blocks watch its own vars, and 'score' is a
 --- an import of one name, which the file declares too
 program:1: error: 'div' is imported from web, and this file declares a 'div' too
     1 | import web.div
+[exit 65]
+--- a component's let in a handler
+program:3: error: 'shown' is a let of the component, worked out again with each view: only the view sees it (make it a var to keep it, or work it out where it is needed)
+    3 |   fn f() => shown
+[exit 65]
+--- a component's let in its body
+program:3: error: 'shown' is a let of the component, worked out again with each view: only the view sees it (make it a var to keep it, or work it out where it is needed)
+    3 |   var copy = shown
 [exit 65]
