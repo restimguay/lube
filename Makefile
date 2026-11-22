@@ -107,10 +107,10 @@ web-client:
 	python3 src/plugins/web/client.py
 
 # The web plugin's pages in a real browser (needs Node 22+ and Chrome or Chromium; without them it says so and
-# passes). make browser BROWSER_LUBE=./lube-check runs them on the checking build.
+# passes). make browser BROWSER_LUBE=./lube-check runs them on the checking build (with make check's options).
 BROWSER_LUBE ?= ./lube
 browser: all
-	@node tests/browser/run.mjs $(BROWSER_LUBE) $(BROWSER_FLAGS)
+	@ASAN_OPTIONS=detect_leaks=0:detect_stack_use_after_return=0 node tests/browser/run.mjs $(BROWSER_LUBE) $(BROWSER_FLAGS)
 
 plugins:
 	mkdir -p plugins
