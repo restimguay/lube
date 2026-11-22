@@ -1,0 +1,857 @@
+// The plugin web: pages over HTTP, and the policy that keeps them safe. Each rule of the policy has a request
+// here that breaks it (an attack), and what the server does about it.
+import web.*
+import net
+
+// A file's own names hide those import web.* brings: this file's get(), header() and b are its own.
+var b = "this file's b"
+print(b, html(p("web's p")))
+
+// ---- a client, by hand: the server runs in this thread, in app.step() ----
+var app = App()
+var port = 0
+fn use(a) {
+  app = a
+  port = a.port()
+  if port == 0 { port = a.start(0) }
+}
+fn done(b: Bytes) {  // a whole answer: its head, and as much body as Content-Length says
+  let s = b.decode()
+  let at = index_of(s, "\r\n\r\n")
+  if at < 0 { return false }
+  let cl = index_of(s, "Content-Length: ")
+  if cl < 0 { return true }
+  let rest = slice(s, cl + 16, len(s))
+  let n = num(slice(rest, 0, index_of(rest, "\r\n")))
+  return len(b) >= at + 4 + n
+}
+fn drain(c, whole = true) {  // what comes on c: until a whole answer has (or, for frames, until it goes quiet), c closes, or time is up
+  var got = Bytes()
+  var tries = 0
+  var quiet = 0
+  while tries < 300 {
+    var wait_here = 0.002
+    if app.port() > 0 {  // (a handler may have stopped it)
+      app.step(0.002)
+      wait_here = 0
+    }
+    let more = c.receive(wait_here)
+    got += more
+    if not c.is_open() or (whole and done(got)) { break }
+    quiet += 1
+    if len(more) > 0 or len(got) == 0 { quiet = 0 }
+    if not whole and quiet >= 15 { break }
+    tries += 1
+  }
+  return got
+}
+fn wait(seconds) {
+  let until = now() + seconds
+  while now() < until { app.step(0.005) }
+}
+fn ask(raw) {
+  let c = net.tcp_connect("127.0.0.1", port)
+  c.send(raw)
+  let got = drain(c).decode()
+  c.close()
+  return got
+}
+fn get(path, more = "") => ask("GET {path} HTTP/1.1\r\nHost: localhost\r\n{more}Connection: close\r\n\r\n")
+fn status(r) {
+  if len(r) == 0 { return "(closed)" }
+  return split(r, "\r\n")[0]
+}
+fn body(r) => slice(r, index_of(r, "\r\n\r\n") + 4, len(r))
+fn header(r, name) {
+  for line in split(slice(r, 0, index_of(r, "\r\n\r\n")), "\r\n") {
+    if starts_with(lower(line), lower(name) + ": ") { return slice(line, len(name) + 2, len(line)) }
+  }
+  return "(none)"
+}
+fn show(r) { print(status(r), "|", trim(body(r))) }
+
+// ---- routes ----
+print("-- routes")
+let a1 = App()
+a1.get("/", fn(req) => "home")
+a1.get("/hello/:name", fn(req) => "hello {req.params.name}")
+a1.get("/files/*rest", fn(req) => "rest: {req.params.rest}")
+a1.get("/slash/", fn(req) => "with a slash")
+a1.get("/query", fn(req) => "{req.query} {req.path} {req.method}")
+a1.get("/headers", fn(req) => "{req.headers["x-one"]} {req.headers["cookie"]} {req.ip}")
+a1.post("/form", fn(req) => "{req.form} {req.text} {len(req.body)}")
+a1.post("/bytes", fn(req) => req.body)
+a1.put("/thing/:id", fn(req) => {status: 201, body: "made {req.params.id}", headers: {"X-Made": "yes"}})
+a1.patch("/thing/:id", fn(req) => {body: div(p("patched"))})
+a1.delete("/thing/:id", fn(req) => print("deleted", req.params.id))  // nothing: 204
+a1.get("/json", fn(req) => {type: "application/json", body: "[1,2]"})
+a1.get("/view", fn(req) => div({class: "x"}, h1("A <view>")))
+a1.get("/status", fn(req) => {status: 418})
+use(a1)
+show(get("/"))
+show(get("/hello/ada%20lovelace"))
+show(get("/hello/a%2Fb"))       // %2F stays inside its part
+show(get("/hello"))             // no :name: no route
+show(get("/hello/"))
+show(get("/files/a/b/c.txt"))
+show(get("/files/"))
+show(get("/slash/"))
+show(get("/slash"))
+show(get("/query?a=1&b=two+words&c=%26&flag"))
+show(get("/headers", "X-One: first\r\nX-One: second\r\nCookie: a=1\r\nCookie: b=2\r\n"))
+show(ask("POST /form HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 17\r\nConnection: close\r\n\r\nname=ada&n=1+2%21"))
+let bytes = ask("POST /bytes HTTP/1.1\r\nHost: localhost\r\nContent-Length: 3\r\nConnection: close\r\n\r\nabc")
+print(status(bytes), header(bytes, "Content-Type"), body(bytes))
+let made = ask("PUT /thing/7 HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+print(status(made), header(made, "X-Made"), body(made))
+show(ask("PATCH /thing/7 HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"))
+let gone = ask("DELETE /thing/7 HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+print(status(gone), header(gone, "Content-Length"), header(gone, "Content-Type"))
+let js = get("/json")
+print(status(js), header(js, "Content-Type"), body(js))
+let view = get("/view")
+print(status(view), header(view, "Content-Type"), body(view))
+show(get("/status"))
+let nope = ask("POST /hello/x HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+print(status(nope), header(nope, "Allow"))
+let opts = ask("OPTIONS /thing/1 HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+print(status(opts), header(opts, "Allow"))
+show(get("/nowhere"))
+let head = ask("HEAD /hello/x HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+print(status(head), header(head, "Content-Length"), len(body(head)))
+show(ask("GET /hello/old HTTP/1.0\r\n\r\n"))  // HTTP/1.0 needs no Host
+
+// one connection, several requests (keep-alive), and requests sent together (pipelined)
+let kc = net.tcp_connect("127.0.0.1", port)
+kc.send("GET /hello/one HTTP/1.1\r\nHost: localhost\r\n\r\n")
+let k1 = drain(kc).decode()
+kc.send("GET /hello/two HTTP/1.1\r\nHost: localhost\r\n\r\nGET /hello/three HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+let k2 = drain(kc, false).decode()
+print(status(k1), header(k1, "Connection"), len(split(k2, "HTTP/1.1 200")) - 1, contains(k2, "hello two"), contains(k2, "hello three"), kc.is_open())
+kc.close()
+let k10 = net.tcp_connect("127.0.0.1", port)
+k10.send("GET /hello/a HTTP/1.0\r\nConnection: keep-alive\r\n\r\n")
+let k10r = drain(k10).decode()
+print(status(k10r), header(k10r, "Connection"), k10.is_open())
+k10.close()
+
+// ---- the names it answers to: addresses, localhost, and policy hosts (not a name made to lead here: DNS rebinding) ----
+print("-- hosts")
+for host in ["localhost", "LocalHost:8080", "127.0.0.1", "127.0.0.1:80", "10.1.2.3:8080", "[::1]:8080", "[::1]",
+             "evil.example", "evil.example:8080", "localhost.evil.example", "1.2.3", "[::1", "[::1]x"] {
+  print(host + ":", status(ask("GET /hello/x HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n")))
+}
+let named = App({policy: {hosts: ["Example.com"]}})
+named.get("/", fn(req) => "ok")
+use(named)
+print("a name of policy hosts:", status(ask("GET / HTTP/1.1\r\nHost: example.COM\r\nConnection: close\r\n\r\n")),
+      status(ask("GET / HTTP/1.1\r\nHost: www.example.com\r\nConnection: close\r\n\r\n")))
+let anyhost = App({policy: {hosts: ["*"]}})
+anyhost.get("/", fn(req) => "ok")
+use(anyhost)
+print("any:", status(ask("GET / HTTP/1.1\r\nHost: whatever.example\r\nConnection: close\r\n\r\n")))
+use(a1)
+
+// ---- what changes things comes from this site's pages, not another site's (cross-site request forgery) ----
+print("-- forgery")
+fn post_from(more) => status(ask("POST /form HTTP/1.1\r\nHost: localhost:{port}\r\n{more}Content-Length: 0\r\nConnection: close\r\n\r\n"))
+print("no Origin (not a browser):", post_from(""))
+print("this site:", post_from("Origin: http://localhost:{port}\r\n"))
+print("another site:", post_from("Origin: http://evil.example\r\n"))
+print("an opaque origin:", post_from("Origin: null\r\n"))
+print("cross-site, no Origin:", post_from("Sec-Fetch-Site: cross-site\r\n"))
+print("same-site:", post_from("Sec-Fetch-Site: same-origin\r\n"))
+print("GET from another site:", status(ask("GET /hello/x HTTP/1.1\r\nHost: localhost\r\nOrigin: http://evil.example\r\nConnection: close\r\n\r\n")))
+let trusting = App({policy: {origins: ["https://app.example"]}})
+trusting.post("/", fn(req) => "ok")
+use(trusting)
+print("a site the policy names:", status(ask("POST / HTTP/1.1\r\nHost: localhost\r\nOrigin: https://app.example\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")))
+use(a1)
+
+// ---- every answer carries the policy's headers ----
+print("-- headers")
+let h = get("/")
+for name in ["Content-Security-Policy", "X-Content-Type-Options", "Referrer-Policy", "Cross-Origin-Opener-Policy",
+             "Cross-Origin-Resource-Policy", "X-Frame-Options", "Cache-Control", "Server"] {
+  print(name + ":", header(h, name))
+}
+print(header(get("/nowhere"), "X-Frame-Options"))
+
+// ---- reading requests strictly: what a lenient server (or a proxy in front of it) might read differently ----
+print("-- strict")
+fn refused(name, request) { print(name + ":", status(ask(request))) }
+refused("bare LF", "GET / HTTP/1.1\nHost: x\n\n")
+refused("CR alone", "GET / HTTP/1.1\r\nHost: x\rX: y\r\n\r\n")
+refused("folded header", "GET / HTTP/1.1\r\nHost: localhost\r\nX-A: one\r\n two\r\n\r\n")
+refused("space before colon", "GET / HTTP/1.1\r\nHost: localhost\r\nContent-Length : 5\r\n\r\nhello")
+refused("no colon", "GET / HTTP/1.1\r\nHost: localhost\r\nJunk\r\n\r\n")
+refused("empty name", "GET / HTTP/1.1\r\nHost: localhost\r\n: y\r\n\r\n")
+refused("two lengths", "POST /form HTTP/1.1\r\nHost: localhost\r\nContent-Length: 3\r\nContent-Length: 3\r\n\r\nabc")
+refused("length and chunked", "POST /form HTTP/1.1\r\nHost: localhost\r\nContent-Length: 3\r\nTransfer-Encoding: chunked\r\n\r\nabc")
+refused("chunked", "POST /form HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\n")
+refused("signed length", "POST /form HTTP/1.1\r\nHost: localhost\r\nContent-Length: +3\r\n\r\nabc")
+refused("length with a space", "POST /form HTTP/1.1\r\nHost: localhost\r\nContent-Length: 1 2\r\n\r\nabc")
+refused("empty length", "POST /form HTTP/1.1\r\nHost: localhost\r\nContent-Length: \r\n\r\n")
+refused("huge length", "POST /form HTTP/1.1\r\nHost: localhost\r\nContent-Length: 99999999999999999999999\r\n\r\n")
+refused("body too big", "POST /form HTTP/1.1\r\nHost: localhost\r\nContent-Length: 1048577\r\n\r\n")
+refused("no host", "GET / HTTP/1.1\r\n\r\n")
+refused("two hosts", "GET / HTTP/1.1\r\nHost: localhost\r\nHost: y\r\n\r\n")
+refused("odd host", "GET / HTTP/1.1\r\nHost: localhost/y\r\n\r\n")
+refused("NUL", "GET / HTTP/1.1\r\nHost: localhost\r\nX: a\u{0}b\r\n\r\n")
+refused("control character", "GET / HTTP/1.1\r\nHost: localhost\r\nX: a\u{1}b\r\n\r\n")
+refused("absolute URL", "GET http://x/ HTTP/1.1\r\nHost: localhost\r\n\r\n")
+refused("asterisk", "OPTIONS * HTTP/1.1\r\nHost: localhost\r\n\r\n")
+refused("HTTP/2.0", "GET / HTTP/2.0\r\nHost: localhost\r\n\r\n")
+refused("HTTP/1.1x", "GET / HTTP/1.1x\r\nHost: localhost\r\n\r\n")
+refused("not HTTP", "GET / FTP/1.1\r\nHost: localhost\r\n\r\n")
+refused("no version", "GET /\r\nHost: localhost\r\n\r\n")
+refused("no target", "GET\r\nHost: localhost\r\n\r\n")
+refused("odd method", "G(T / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+refused("empty method", " / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+refused("unknown method", "BREW / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+refused("dot dot", "GET /hello/../secret HTTP/1.1\r\nHost: localhost\r\n\r\n")
+refused("dot", "GET /./hello/x HTTP/1.1\r\nHost: localhost\r\n\r\n")
+refused("escaped dot dot", "GET /hello/%2e%2E/secret HTTP/1.1\r\nHost: localhost\r\n\r\n")
+refused("backslash", "GET /hello\\x HTTP/1.1\r\nHost: localhost\r\n\r\n")
+refused("escaped NUL", "GET /hello/a%00b HTTP/1.1\r\nHost: localhost\r\n\r\n")
+refused("bad escape", "GET /hello/a%zz HTTP/1.1\r\nHost: localhost\r\n\r\n")
+refused("short escape", "GET /hello/a%2 HTTP/1.1\r\nHost: localhost\r\n\r\n")
+refused("not UTF-8", "GET /hello/a%ff HTTP/1.1\r\nHost: localhost\r\n\r\n")
+refused("overlong UTF-8", "GET /hello/%c0%af HTTP/1.1\r\nHost: localhost\r\n\r\n")
+refused("bad query", "GET /query?a=%zz HTTP/1.1\r\nHost: localhost\r\n\r\n")
+refused("fragment", "GET /hello/x#y HTTP/1.1\r\nHost: localhost\r\n\r\n")
+refused("odd expect", "POST /form HTTP/1.1\r\nHost: localhost\r\nExpect: tea\r\nContent-Length: 1\r\n\r\nx")
+refused("URL too long", "GET /" + "a" * 8200 + " HTTP/1.1\r\nHost: localhost\r\n\r\n")
+refused("head too big", "GET / HTTP/1.1\r\nHost: localhost\r\nX: " + "a" * 17000 + "\r\n\r\n")
+refused("head too big, unfinished", "GET / HTTP/1.1\r\nHost: localhost\r\nX: " + "a" * 17000)
+var many = ""
+for i in 0..101 { many += "X-{i}: y\r\n" }
+refused("too many headers", "GET / HTTP/1.1\r\nHost: localhost\r\n{many}\r\n")
+print("UTF-8 path:", trim(body(get("/hello/%E2%9D%A4"))))
+let cont = net.tcp_connect("127.0.0.1", port)  // Expect: 100-continue: the server says go on, then answers
+cont.send("POST /form HTTP/1.1\r\nHost: localhost\r\nExpect: 100-continue\r\nContent-Length: 3\r\nConnection: close\r\n\r\n")
+let go_on = drain(cont, false).decode()
+cont.send("a=b")
+print(trim(go_on), "|", status(drain(cont).decode()))
+cont.close()
+
+// ---- time limits: a client too slow to send its request cannot hold a connection (slowloris) ----
+print("-- time")
+let quick = App({policy: {header_timeout: 0.05, body_timeout: 0.05, keep_alive: 0.5}})
+quick.get("/", fn(req) => "ok")
+use(quick)
+let slow = net.tcp_connect("127.0.0.1", port)
+slow.send("GET / HTTP/1.1\r\nHost: localhost\r\n")  // ... and nothing more
+wait(0.1)
+print("slow head:", status(drain(slow).decode()), slow.is_open())
+slow.close()
+let silent = net.tcp_connect("127.0.0.1", port)  // says nothing at all
+wait(0.1)
+print("silent:", status(drain(silent).decode()))
+silent.close()
+let slow_body = net.tcp_connect("127.0.0.1", port)
+slow_body.send("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\n\r\nabc")
+wait(0.1)
+print("slow body:", status(drain(slow_body).decode()))
+slow_body.close()
+let idle = net.tcp_connect("127.0.0.1", port)
+idle.send("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+print("idle:", status(drain(idle).decode()), idle.is_open())
+wait(0.6)
+print("after a quiet while:", len(drain(idle)), idle.is_open())  // closed, with no answer
+idle.close()
+let trickle = net.tcp_connect("127.0.0.1", port)  // more bytes do not buy more time
+for i in 0..6 {
+  trickle.send("X")
+  wait(0.02)
+}
+print("trickle:", status(drain(trickle).decode()))
+trickle.close()
+
+// ---- how many connections ----
+print("-- connections")
+let few = App({policy: {max_per_ip: 2}})
+few.get("/", fn(req) => "ok")
+use(few)
+let c1 = net.tcp_connect("127.0.0.1", port)
+let c2 = net.tcp_connect("127.0.0.1", port)
+let c3 = net.tcp_connect("127.0.0.1", port)
+wait(0.02)
+c3.receive(0.05)
+print("a third from one address:", c1.is_open(), c2.is_open(), c3.is_open())
+c1.send("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+print(status(drain(c1).decode()))
+for c in [c1, c2, c3] { c.close() }
+let fewer = App({policy: {max_connections: 1}})
+fewer.get("/", fn(req) => "ok")
+use(fewer)
+let d1 = net.tcp_connect("127.0.0.1", port)
+let d2 = net.tcp_connect("127.0.0.1", port)
+wait(0.02)
+d2.receive(0.05)
+print("past max_connections:", d1.is_open(), d2.is_open())
+d1.close()
+d2.close()
+
+// ---- what a handler may answer: not the policy's headers, nor a header that breaks a line ----
+print("-- answers")
+let ans = App()
+ans.get("/csp", fn(req) => {body: "x", headers: {"Content-Security-Policy": "default-src *"}})
+ans.get("/frames", fn(req) => {body: "x", headers: {"x-frame-options": "ALLOWALL"}})
+ans.get("/length", fn(req) => {body: "x", headers: {"Content-Length": "100"}})
+ans.get("/split", fn(req) => {body: "x", headers: {"X-A": "1\r\nSet-Cookie: evil=1"}})
+ans.get("/name", fn(req) => {body: "x", headers: {"X A": "1"}})
+ans.get("/value", fn(req) => {body: "x", headers: {"X-A": 1}})
+ans.get("/headers", fn(req) => {body: "x", headers: [1]})
+ans.get("/type", fn(req) => {body: "x", headers: {"Content-Type": "text/html"}})
+ans.get("/badtype", fn(req) => {body: "x", type: "text/html\r\nX: y"})
+ans.get("/status", fn(req) => {status: 99})
+ans.get("/extra", fn(req) => {body: "x", color: "red"})
+ans.get("/component", fn(req) => {body: Shown()})
+ans.get("/throws", fn(req) { throw "the database is down: password=hunter2" })
+ans.get("/bad", fn(req) => [{a: 1}])
+ans.get("/handler", fn(req) => button({onclick: fn() => 1}, "x"))
+ans.get("/cookie", fn(req) => {body: "x", headers: {"Set-Cookie": "theme=dark; Path=/"}})
+ans.get("/redirect", fn(req) => {status: 303, headers: {Location: "/elsewhere"}})
+fn Shown() component {
+  return p("shown")
+}
+use(ans)
+for path in ["/csp", "/frames", "/length", "/split", "/name", "/value", "/headers", "/type", "/badtype", "/status",
+             "/extra", "/component", "/throws", "/bad", "/handler"] {
+  let r = get(path)
+  print(path, status(r), trim(body(r)))
+}
+print(header(get("/cookie"), "Set-Cookie"), header(get("/redirect"), "Location"))
+let devved = App({dev: true})  // dev: the error, in the answer too
+devved.get("/throws", fn(req) { throw "the database is down" })
+use(devved)
+show(get("/throws"))
+
+// ---- static files: the folder's files, and nothing else ----
+print("-- static")
+let files = App()
+files.static("/assets/", "tests/web/public")
+files.get("/assets/made", fn(req) => "a route after it")
+use(files)
+let f1 = get("/assets/hello.txt")
+print(status(f1), header(f1, "Content-Type"), header(f1, "Content-Length"), header(f1, "Cache-Control"), trim(body(f1)))
+print(header(get("/assets/app.css"), "Content-Type"), header(get("/assets/sub/deep.txt"), "Content-Length"))
+let empty = get("/assets/empty.bin")
+print(status(empty), header(empty, "Content-Type"), header(empty, "Content-Length"))
+let fh = ask("HEAD /assets/hello.txt HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+print(status(fh), header(fh, "Content-Length"), len(body(fh)))
+for path in ["/assets/nope.txt", "/assets/sub", "/assets/sub/", "/assets/.env", "/assets/.hidden/x.txt",
+             "/assets/../outside.txt", "/assets/%2e%2e/outside.txt", "/assets/sub%2F..%2F..%2Foutside.txt",
+             "/assets/..%5Coutside.txt", "/assets/C:%5Cwindows", "/assets", "/assets/", "/assets/made"] {
+  print(path, status(get(path)))
+}
+show(ask("POST /assets/hello.txt HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"))
+let big_files = App()  // a file bigger than one piece goes out in pieces
+big_files.static("/", "tests/web")
+use(big_files)
+write_file("tests/web/big.bin", "x" * 300000)
+let bc = net.tcp_connect("127.0.0.1", port)
+bc.send("GET /big.bin HTTP/1.1\r\nHost: localhost\r\n\r\nGET /outside.txt HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+let both = drain(bc, false).decode()
+print(status(both), header(both, "Content-Length"), len(both) > 300000, contains(both, "outside\n"))
+bc.close()
+let fall = App()
+fall.static("/assets/", "tests/web/public")
+fall.get("/assets/made", fn(req) => "a route after it")
+use(fall)
+show(get("/assets/made"))
+
+// ---- views as HTML: escaped, and only what the helpers make ----
+print("-- html")
+print(html(div({class: "a\"b<", id: 5, hidden: true, title: false}, "x < y & \"z\" 'w'", 3, [p("one"), [span("two")]])))
+print(html(raw("<b>as it is</b>")), html("text"), html([1, 2]), div("x"), raw("y"))
+print(html(ul(li("a"), li("b"))), html(br()), html(field({type: "checkbox", checked: true})))
+print(html(el("svg", {viewBox: "0 0 1 1"}, el("circle", {r: 1}))), html(el("My-Tag", "x")))
+for url in ["https://example.com/a?b=1&c=2", "http://x", "mailto:a@b.c", "tel:+1", "/path", "path/x:y", "#top", "?q=1",
+            "", "javascript:alert(1)", "JaVaScRiPt:alert(1)", " javascript:alert(1)", "java\tscript:alert(1)",
+            "java\nscript:x", "\u{1}javascript:x", "data:text/html,<script>", "vbscript:x", "x:y", "file:///etc/passwd",
+            "aaaaaaaaaaaaaaaaaaaaaaaa:x"] {
+  print(repr(url), html(a({href: url}, "x")))
+}
+print(html(img({src: "data:image/png;base64,AAAA"})), html(form({action: "javascript:x"})), html(a({title: "javascript:x"})))
+fn tries(f) {
+  try { print(f()) } catch e { print("error:", e) }
+}
+tries(fn() => div({onclick: "alert(1)"}))
+tries(fn() => div({onfoo: fn() => 1}))
+tries(fn() => div({"data-on-click": "1"}))
+tries(fn() => div({"data-lube": "1"}))
+tries(fn() => el("iframe", {srcdoc: "<script>x</script>"}))
+tries(fn() => div({"x y": 1}))
+tries(fn() => div({"1x": 1}))
+tries(fn() => div({title: [1]}))
+tries(fn() => div({class: "a"}, {tag: "script", text: "x"}))  // data cannot become markup
+tries(fn() => div(true))
+tries(fn() => br("x"))
+tries(fn() => el("SCRIPT", "x"))
+tries(fn() => el("style", "x"))
+tries(fn() => el("body"))
+tries(fn() => el("1x"))
+tries(fn() => el("a b"))
+tries(fn() => el(1))
+tries(fn() => el("averyveryveryveryveryveryveryveryveryverylongtagname"))
+tries(fn() => raw(1))
+tries(fn() => html(div({style: "color: red"})))
+tries(fn() => html(button({onclick: fn() => 1})))
+tries(fn() => html({a: 1}))
+fn Deep(n) component {
+  return Deep(n + 1)
+}
+tries(fn() => html(Deep(0)))
+fn Bad() component {
+  return p(1 / 0 + undefined_thing())
+}
+tries(fn() => html(Bad()))
+fn Nested() component {
+  var n = 1
+  return div(Shown(), p("{n}"))
+}
+print(html(Nested()))
+
+// ---- pages: a component's view, live over a WebSocket ----
+print("-- pages")
+fn between(s, x, y) {
+  let at = index_of(s, x)
+  if at < 0 { return "" }
+  let rest = slice(s, at + len(x), len(s))
+  return slice(rest, 0, index_of(rest, y))
+}
+fn ids(s) {  // the handler ids in a view, in order
+  var out = str[]
+  for part in slice(split(s, "data-on-"), 1) { out.push(between(part, "=\"", "\"")) }
+  return out
+}
+fn masked(s, ids) {  // the ids hidden (they are random), and a view as HTML again (from JSON)
+  var out = s
+  for id in ids { out = replace(out, id, "ID") }
+  for pair in [["\\u003c", "<"], ["\\u003e", ">"], ["\\u0026", "&"], ["\\\"", "\""]] { out = replace(out, pair[0], pair[1]) }
+  return out
+}
+fn open_page(path, more = "") {  // GET the page: {html, token, cookie, ids}
+  let r = ask("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{more}Connection: close\r\n\r\n")
+  return {status: status(r), html: body(r), token: between(r, "data-page=\"", "\""), cookie: between(r, "lube_session=", ";"),
+          ids: ids(body(r)), set_cookie: header(r, "Set-Cookie")}
+}
+fn upgrade(token, more) => "GET /_lube/ws?page={token} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n{more}\r\n"
+fn connect(pg, more = "") {  // the page's WebSocket: {conn, answer}
+  let c = net.tcp_connect("127.0.0.1", port)
+  c.send(upgrade(pg.token, "Origin: http://127.0.0.1:{port}\r\nCookie: lube_session={pg.cookie}\r\n" + more))
+  return {conn: c, answer: drain(c).decode(), ids: pg.ids}
+}
+fn frame(op, data: Bytes, fin = true) {  // a frame from a browser: masked (with a key of zeros, so the data stays as it is)
+  var first = op
+  if fin { first = op + 128 }
+  if len(data) < 126 { return Bytes([first, 128 + len(data), 0, 0, 0, 0]) + data }
+  let n = len(data)
+  if n < 65536 { return Bytes([first, 254, floor(n / 256), n % 256, 0, 0, 0, 0]) + data }
+  return Bytes([first, 255, 0, 0, 0, 0, 0, floor(n / 65536), floor(n / 256) % 256, n % 256, 0, 0, 0, 0]) + data
+}
+fn text(s) => frame(1, Bytes(s))
+fn frames(b: Bytes) {  // the frames from the server: "op: text"
+  var out = str[]
+  var i = 0
+  while i + 2 <= len(b) {
+    let op = b[i] % 16
+    var n = b[i + 1]
+    var k = i + 2
+    if n == 126 {
+      n = b[i + 2] * 256 + b[i + 3]
+      k = i + 4
+    }
+    if op == 8 and n >= 2 { out.push("close {b[k] * 256 + b[k + 1]}") }
+    else if op == 8 { out.push("close") }
+    else if op == 9 { out.push("ping") }
+    else if op == 10 { out.push("pong {b.slice(k, k + n).decode()}") }
+    else { out.push(b.slice(k, k + n).decode()) }
+    i = k + n
+  }
+  return out
+}
+fn talk(ws, data: Bytes) {  // sends, and gives what comes back
+  ws.conn.send(data)
+  var out = str[]
+  for f in frames(drain(ws.conn, false)) { out.push(masked(f, ws.ids)) }
+  return out
+}
+fn event(pg, v, k, arg = "") {
+  if arg == "" { return text("\{\"v\":{v},\"h\":\"{pg.ids[k]}\"\}") }
+  return text("\{\"v\":{v},\"h\":\"{pg.ids[k]}\",\"a\":{arg}\}")
+}
+
+fn Counter(start) component {
+  var n = start
+  var said = ""
+  fn add() { n += 1 }
+  fn named(x) { said = x }
+  fn fails() { throw "a handler failed" }
+  fn submit(fields) { said = "{fields}" }
+  on leave { print("a counter leaves at", n) }
+  return div(p("count: {n} {said}"), button({onclick: add}, "+1"), field({oninput: named}),
+             button({onclick: fails}, "fail"), form({onsubmit: submit}))
+}
+fn start_of(req) {
+  if has(req.query, "start") { return num(req.query.start) }
+  return 1
+}
+let pages = App({dev: true})
+pages.page("/", fn(req) => Counter(start_of(req)), {title: "A <counter>", styles: ["/assets/app.css"],
+           scripts: ["/assets/more.js"]})
+pages.page("/static", fn(req) => div(p("no handlers: no script")))
+pages.page("/closure", fn(req) => button({onclick: fn() => print("a closure ran")}, "x"))
+pages.page("/fails", fn(req) { throw "the page failed" })
+pages.page("/badview", fn(req) => {a: 1})
+use(pages)
+let pg = open_page("/")
+print(pg.status, len(pg.token), len(pg.cookie), len(pg.ids), pages.pages())
+print(pg.set_cookie == "lube_session={pg.cookie}; Path=/; HttpOnly; SameSite=Strict")
+print(masked(replace(pg.html, pg.token, "TOKEN"), pg.ids))
+for k in 0..len(pg.ids) {
+  print(len(pg.ids[k]), pg.ids[k] != pg.ids[(k + 1) % len(pg.ids)])
+}
+let hp = ask("HEAD / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")  // HEAD: no one sees the page, so it leaves
+print(status(hp), len(body(hp)), pages.pages())
+let st = open_page("/static")
+print(st.status, st.token == "", st.set_cookie, contains(st.html, "web.js"), pages.pages())
+let js = get("/_lube/web.js")
+print(status(js), header(js, "Content-Type"), contains(body(js), "WebSocket"))
+print(status(get("/_lube/nothing")), status(ask("POST /_lube/web.js HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")))
+let again = open_page("/", "Cookie: lube_session={pg.cookie}\r\n")  // the same session: no new cookie
+print(again.cookie == "", again.set_cookie, again.token != pg.token, pages.pages())
+
+// its WebSocket, and events
+let ws = connect(pg)
+print(status(ws.answer), header(ws.answer, "Sec-WebSocket-Accept"), header(ws.answer, "Upgrade"))
+print(talk(ws, event(pg, 1, 0)))                           // click: +1, a new view (2)
+print(talk(ws, event(pg, 1, 0)))                           // an old version: the view there is, again
+print(talk(ws, event(pg, 2, 1, "\"typed <b>\"")))            // input: its value
+print(talk(ws, event(pg, 3, 3, "\{\"name\":\"ada\"\}")))       // submit: the form's fields
+print(talk(ws, event(pg, 4, 2)))                           // a handler's error: said (dev), and the page goes on
+print(talk(ws, frame(9, Bytes("hi"))))                     // ping: pong
+print(talk(ws, frame(1, Bytes("\{\"v\":4,"), false) + frame(0, Bytes("\"h\":\"{pg.ids[0]}\"\}"))))  // in two parts
+print(talk(ws, frame(10, Bytes(""))))                       // a pong: nothing
+print(talk(ws, frame(8, Bytes([3, 232]))), ws.conn.is_open()) // close: closed back
+print(pages.pages())
+ws.conn.close()
+
+// what a page's WebSocket must have: the page's site, its secret and its session
+fn refusal(name, pg, more) {
+  let c = net.tcp_connect("127.0.0.1", port)
+  c.send(upgrade(pg.token, more))
+  print(name + ":", status(drain(c).decode()))
+  c.close()
+}
+let p2 = open_page("/")
+let good = "Origin: http://127.0.0.1:{port}\r\nCookie: lube_session={p2.cookie}\r\n"
+refusal("no origin", p2, "Cookie: lube_session={p2.cookie}\r\n")
+refusal("another site", p2, "Origin: http://evil.example\r\nCookie: lube_session={p2.cookie}\r\n")
+refusal("https origin", p2, "Origin: https://127.0.0.1:{port}\r\nCookie: lube_session={p2.cookie}\r\n")
+refusal("a site that ends the same", p2, "Origin: http://x127.0.0.1:{port}\r\nCookie: lube_session={p2.cookie}\r\n")
+refusal("no cookie", p2, "Origin: http://127.0.0.1:{port}\r\n")
+refusal("another session", p2, "Origin: http://127.0.0.1:{port}\r\nCookie: lube_session={pg.cookie}\r\n")
+refusal("a cookie not well made", p2, "Origin: http://127.0.0.1:{port}\r\nCookie: lube_session=ZZ{slice(p2.cookie, 2)}\r\n")
+refusal("no such page", {token: "0" * 32}, good)
+refusal("no page", {token: ""}, good)
+refusal("two versions", p2, good + "Sec-WebSocket-Version: 8\r\n")
+refusal("two origins", p2, good + "Origin: http://evil.example\r\n")
+let c4 = net.tcp_connect("127.0.0.1", port)
+c4.send("GET /_lube/ws?page={p2.token} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 7\r\n{good}\r\n")
+let a4 = drain(c4).decode()
+print("an old version:", status(a4), header(a4, "Sec-WebSocket-Version"))
+c4.close()
+for bad in [["no key", "Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\n"],
+            ["a bad key", "Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: short==\r\n"],
+            ["a key not base64", "Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZ!==\r\n"],
+            ["no upgrade", "Connection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"],
+            ["not to websocket", "Upgrade: h2c\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"],
+            ["no Connection: upgrade", "Upgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"]] {
+  let c = net.tcp_connect("127.0.0.1", port)
+  c.send("GET /_lube/ws?page={p2.token} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{bad[1]}{good}\r\n")
+  print(bad[0] + ":", status(drain(c).decode()))
+  c.close()
+}
+let c5 = net.tcp_connect("127.0.0.1", port)
+c5.send("POST /_lube/ws?page={p2.token} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nContent-Length: 0\r\n{good}\r\n")
+print("POST:", status(drain(c5).decode()))
+c5.close()
+let w2 = connect(p2)
+print("its own:", status(w2.answer))
+refusal("a second one", p2, good)
+w2.conn.close()
+
+// a page's WebSocket breaking the protocol, or the policy: closed, with the reason
+fn breaks(name, data: Bytes) {
+  let p = open_page("/")
+  let w = connect(p)
+  print(name + ":", talk(w, data), w.conn.is_open())
+  w.conn.close()
+}
+breaks("not masked", Bytes([129, 2]) + Bytes("hi"))
+breaks("an extension", Bytes([129 + 64, 128, 0, 0, 0, 0]))
+breaks("binary", frame(2, Bytes("x")))
+breaks("an unknown opcode", frame(3, Bytes("x")))
+breaks("a long ping", frame(9, Bytes("x" * 126)))
+breaks("a ping in parts", frame(9, Bytes("x"), false))
+breaks("a part of nothing", frame(0, Bytes("x")))
+breaks("a new message inside one", frame(1, Bytes("\{"), false) + frame(1, Bytes("\}")))
+breaks("not UTF-8", frame(1, Bytes([255])))
+breaks("not JSON", text("hello"))
+breaks("JSON, but not an event", text("[1, 2]"))
+breaks("an event with more", text("\{\"v\":1,\"h\":\"x\",\"z\":1\}"))
+breaks("an event with no version", text("\{\"h\":\"x\"\}"))
+breaks("an event with no handler", text("\{\"v\":1\}"))
+breaks("an event with a number for its handler", text("\{\"v\":1,\"h\":5\}"))
+breaks("a handler that is not there", text("\{\"v\":1,\"h\":\"0123456789abcdef\"\}"))
+breaks("trailing junk", text("\{\"v\":1,\"h\":\"x\"\} x"))
+breaks("too deep", text("\{\"v\":1,\"h\":\"x\",\"a\":[[[[[1]]]]]\}"))
+breaks("too big", frame(1, Bytes("x" * 70000)))
+breaks("too big, in parts", frame(1, Bytes("x" * 40000), false) + frame(0, Bytes("x" * 40000)))
+breaks("a close with no code", frame(8, Bytes("")))
+for bad in ["\"\\x\"", "\"\\u12\"", "\"\\ud800\"", "\"\\udc00\"", "\"\\ud800\\u0041\"", "\"a\u{1}\"", "\"open", "tru", "-",
+            "1e999x", "\{\"a\" 1\}", "\{1:1\}", "\{\"a\":1,\}", "[1,]", "[1 2]", "\"\\", "\{\"a\\u0000\":1\}"] {
+  breaks("bad JSON " + bad, text("\{\"v\":1,\"h\":\"x\",\"a\":{bad}\}"))
+}
+let pj = open_page("/")  // JSON that is well made: its handler gets it
+let wj = connect(pj)
+print(talk(wj, event(pj, 1, 1, "\"\\\"\\\\\\/\\b\\f\\n\\r\\t\\u0041\\u00e9\\u20ac\\ud83d\\ude00\"")))
+print(talk(wj, event(pj, 2, 1, "  [ 1 , -2.5e1 , true , false , \{ \} , [ ] , \{\"k\":\"v\"\} ]  ")))
+wj.conn.close()
+
+// too many events: the page is cut off
+let fast = App({policy: {events_per_second: 1, event_burst: 2}})
+fast.page("/", fn(req) => Counter(1))
+use(fast)
+let pf = open_page("/")
+let wf = connect(pf)
+print("too fast:", talk(wf, event(pf, 1, 0) + event(pf, 2, 0) + event(pf, 3, 0)))
+wf.conn.close()
+wait(0.01)
+
+// a page whose WebSocket never comes, and a quiet one: they leave
+let brief = App({policy: {page_wait: 0.5, ws_idle: 0.2, max_pages: 2}})
+brief.page("/", fn(req) => Counter(7))
+use(brief)
+open_page("/")
+print("pages:", brief.pages())
+wait(0.6)
+print("pages:", brief.pages())
+let pb = open_page("/")
+let pc = open_page("/")
+print("past max_pages:", open_page("/").status)
+let wb = connect(pb)
+wait(0.1)
+print("a quiet WebSocket is pinged:", "ping" in frames(wb.conn.receive(0.05)))
+wait(0.25)
+wb.conn.receive(0.05)
+print("then dropped:", wb.conn.is_open(), brief.pages())
+wb.conn.close()
+wait(0.6)
+
+// pages that fail
+use(pages)
+let fp = ask("GET /fails HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+print(status(fp), trim(body(fp)))
+print(status(get("/badview")), pages.pages())
+let quiet = App()  // not dev: no error in the answer, nor in the page
+quiet.page("/", fn(req) => Counter(1))
+quiet.page("/fails", fn(req) { throw "the page failed" })
+use(quiet)
+show(get("/fails"))
+let pq = open_page("/")
+let wq = connect(pq)
+print(talk(wq, event(pq, 1, 2)))
+wq.conn.close()
+use(pages)
+let pcl = open_page("/closure")
+let wcl = connect(pcl)
+print(talk(wcl, event(pcl, 1, 0)))  // a closure as a handler: it runs, and the view is the same (nothing sent)
+wcl.conn.close()
+
+// ---- loosening the policy: by name only ----
+print("-- policy")
+let loose = App({policy: {csp: "default-src 'self' https://cdn.example", secure_cookies: true, origins: ["https://other.example"]}})
+loose.page("/", fn(req) => Counter(1))
+use(loose)
+let lp = open_page("/")
+print(header(get("/"), "Content-Security-Policy"), "|", lp.set_cookie == "lube_session={lp.cookie}; Path=/; HttpOnly; SameSite=Strict; Secure")
+let lc = net.tcp_connect("127.0.0.1", port)
+lc.send(upgrade(lp.token, "Origin: https://other.example\r\nCookie: lube_session={lp.cookie}\r\n"))
+print("an origin the policy names:", status(drain(lc).decode()))
+lc.close()
+let styled = App({policy: {inline_styles: true}})
+styled.get("/", fn(req) => div({style: "color: red"}, "red"))
+use(styled)
+let sr = get("/")
+print(header(sr, "Content-Security-Policy"))
+print(trim(body(sr)))
+let proxied = App({trust_proxy: true})  // behind a proxy: its address and scheme come from the proxy's headers
+proxied.get("/ip", fn(req) => req.ip)
+proxied.page("/", fn(req) => Counter(1))
+use(proxied)
+print(trim(body(get("/ip", "X-Forwarded-For: 203.0.113.9, 198.51.100.7\r\n"))), trim(body(get("/ip"))))
+let pp = open_page("/", "X-Forwarded-Proto: https\r\n")
+print(contains(pp.set_cookie, "; Secure"))
+let ppc = net.tcp_connect("127.0.0.1", port)
+ppc.send(upgrade(pp.token, "Origin: https://127.0.0.1:{port}\r\nCookie: lube_session={pp.cookie}\r\nX-Forwarded-Proto: https\r\n"))
+print("https, through the proxy:", status(drain(ppc).decode()))
+ppc.close()
+let direct = App()  // not behind a proxy: its headers say nothing
+direct.get("/ip", fn(req) => req.ip)
+use(direct)
+print(trim(body(get("/ip", "X-Forwarded-For: 203.0.113.9\r\n"))))
+for opts in [{policy: {max_body: -1}}, {policy: {max_body: 1.5}}, {policy: {header_timeout: "10"}}, {policy: {max_bodyy: 1}},
+             {policy: {csp: 1}}, {policy: {csp: "a\nb"}}, {policy: {inline_styles: "yes"}}, {policy: {origins: "x"}},
+             {policy: {origins: ["x.example"]}}, {policy: {origins: ["https://x.example/path"]}}, {policy: {hosts: "x"}},
+             {policy: {hosts: ["x.example:80"]}}, {policy: {hosts: [""]}}, {policy: {hosts: [1]}}, {policy: 1}, {host: 1},
+             {host: ""}, {dev: 1}, {trust_proxy: "yes"}, {color: "red"}] {
+  tries(fn() => App(opts))
+}
+tries(fn() => App(1))
+let tight = App({policy: {header_timeout: 1.5, max_body: 10}})
+tight.post("/", fn(req) => "ok")
+use(tight)
+print(status(ask("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 11\r\n\r\n")))
+
+// ---- using an app wrongly ----
+print("-- errors")
+let e = App()
+print(e, e.port(), e.pages())
+tries(fn() => e.get("users", fn(req) => 1))
+tries(fn() => e.get(1, fn(req) => 1))
+tries(fn() => e.get("/a//b", fn(req) => 1))
+tries(fn() => e.get("/_lube/x", fn(req) => 1))
+tries(fn() => e.get("/a/../b", fn(req) => 1))
+tries(fn() => e.get("/:", fn(req) => 1))
+tries(fn() => e.get("/*rest/more", fn(req) => 1))
+tries(fn() => e.get("/a?b", fn(req) => 1))
+tries(fn() => e.get("/a", "not a function"))
+tries(fn() => e.page("/a", 1))
+tries(fn() => e.page("/a", fn(req) => 1, 1))
+tries(fn() => e.page("/a", fn(req) => 1, {color: 1}))
+tries(fn() => e.page("/a", fn(req) => 1, {title: 1}))
+tries(fn() => e.page("/a", fn(req) => 1, {styles: "x.css"}))
+tries(fn() => e.page("/a", fn(req) => 1, {styles: ["https://cdn.example/x.css"]}))
+tries(fn() => e.page("/a", fn(req) => 1, {scripts: ["//evil.example/x.js"]}))
+tries(fn() => e.page("/a", fn(req) => 1, {scripts: ["/a\".js"]}))
+tries(fn() => e.page(1, fn(req) => 1))
+tries(fn() => e.static("/a/:x", "tests/web/public"))
+tries(fn() => e.static("/a", "tests/web/nowhere"))
+tries(fn() => e.static("/a", "tests/web/outside.txt"))
+tries(fn() => e.static("/a", 1))
+tries(fn() => e.static("a", "tests/web/public"))
+tries(fn() => e.step())
+tries(fn() => e.start(1.5))
+tries(fn() => e.start("80"))
+tries(fn() => e.start(70000))
+tries(fn() => App({host: "not.a.host.invalid"}).start(0))
+let taken = App()
+let tp = taken.start(0)
+fn tries_at(f, p) {
+  try { f() } catch e { print("error:", replace(str(e), str(p), "PORT")) }
+}
+tries_at(fn() => App().start(tp), tp)
+tries_at(fn() => taken.start(0), tp)
+tries(fn() => taken.step("x"))
+taken.step(-1)
+let inner = App()
+inner.get("/serve", fn(req) => inner.step())
+inner.get("/route", fn(req) => inner.get("/more", fn(r) => 1))
+inner.get("/stop", fn(req) {
+  inner.stop()
+  return "stopping"
+})
+inner.page("/", fn(req) => Counter(1))
+use(inner)
+show(get("/serve"))
+show(get("/route"))
+let ip = open_page("/")
+print(inner.pages())
+let iws = connect(ip)
+print(status(get("/stop")), inner.port(), inner.pages())
+iws.conn.receive(0.2)
+print(iws.conn.is_open())
+iws.conn.close()
+let restart = inner.start(0)  // it can start again
+port = restart
+show(get("/serve"))
+inner.stop()
+inner.stop()
+print(inner)
+
+// app.serve(): until a handler stops it
+fn feed(p) {  // (in an isolate: a client of the app that serve() runs)
+  let c = net.tcp_connect("127.0.0.1", p, 5)
+  c.send("GET /stop HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+  var got = Bytes()
+  while c.is_open() { got += c.receive(5) }
+  return status(got.decode())
+}
+let served = App({host: "127.0.0.1"})
+served.get("/stop", fn(req) {
+  served.stop()
+  return "bye"
+})
+let sp = served.start(0)
+let feeder = spawn(feed, sp)
+served.serve()
+print(feeder.join(), served.port())
+
+
+// ---- the rest ----
+print("-- more")
+let more = App()
+more.get("/s/:n", fn(req) => {status: num(req.params.n), body: "status {req.params.n}"})
+more.get("/style", fn(req) => div({style: "color: red"}))
+more.get("/big", fn(req) => "x" * 8000000)
+fn Grumpy() component {
+  var n = 0
+  fn add() { n += 1 }
+  on leave { throw "it will not leave quietly" }
+  return div(p(10 / (1 - n)), "y" * 70000 * (1 - n), button({onclick: add}, "+"))  // a big view, then none
+}
+more.page("/grumpy", fn(req) => Grumpy())
+use(more)
+print(replace(str(more), str(port), "PORT"))
+for n in [301, 302, 304, 307, 308, 401, 409, 415, 422, 429, 599] {
+  let r = get("/s/{n}")
+  print(status(r), header(r, "Content-Length"), trim(body(r)))
+}
+print(status(get("/style")))
+let gp = open_page("/grumpy")
+let gw = connect(gp)
+gw.conn.send(event(gp, 1, 0))  // the view fails now: said, and the page keeps the view it had
+var gf = frames(drain(gw.conn, false))
+print(gf)
+gw.conn.close()
+wait(0.02)
+print(more.pages())
+let big_page = open_page("/grumpy")  // a view of more than 64 KB, in a frame of its own size
+let bw = connect(big_page)
+bw.conn.send(text("\{\"v\":0,\"h\":\"x\"\}"))
+let bf = drain(bw.conn, false)
+print(len(bf) > 70000, bf[1])
+bw.conn.close()
+wait(0.02)
+
+// a client that does not read what it asked for: dropped, once its answer stops going (and one that has gone)
+let reader = App({policy: {header_timeout: 0.1}})
+reader.get("/big", fn(req) => "x" * 8000000)
+use(reader)
+let lazy = net.tcp_connect("127.0.0.1", port)
+lazy.send("GET /big HTTP/1.1\r\nHost: localhost\r\n\r\n")
+wait(0.3)
+var lazy_got = 0
+for i in 0..50 { lazy_got += len(lazy.receive(0.01)) }
+print("a lazy reader is dropped:", lazy_got < 8000000, lazy.is_open())
+lazy.close()
+let gone_reader = net.tcp_connect("127.0.0.1", port)
+gone_reader.send("GET /big HTTP/1.1\r\nHost: localhost\r\n\r\n")
+wait(0.02)
+gone_reader.close()
+wait(0.05)
+print("and one that has gone:", reader.port() > 0)

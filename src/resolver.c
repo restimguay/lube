@@ -230,7 +230,8 @@ static void resolve_import(Resolver *R, Node *n) {
         if (!names) rerror(R, n->line, "cannot find package %s (in the program's folder or LUBE_PATH, or as a plugin)", dotted->chars);
         for (size_t i = 0; i < names->used; i++) {
             ObjString *name = AS_STRING(names->entries[i].key);
-            if (name->chars[0] != '_')
+            Value own;  /* (a name this file declares is its own: it hides the package's) */
+            if (name->chars[0] != '_' && !(map_get(R->own, OBJ_VAL(name), &own) && IS_NUM(own)))
                 map_set(R->aliases, retain(OBJ_VAL(name)), retain(OBJ_VAL(lube_global_key(R->I, dotted, name))));
         }
         n->as.import.pkg = dotted;
@@ -253,6 +254,10 @@ static void resolve_import(Resolver *R, Node *n) {
     if (!names) rerror(R, n->line, "cannot find package %s (in the program's folder or LUBE_PATH, or as a plugin)", pkg->chars);
     if (name->chars[0] == '_') rerror(R, n->line, "'%s' is private to package %s", name->chars, pkg->chars);
     if (!map_get(names, OBJ_VAL(name), NULL)) rerror(R, n->line, "package %s has no '%s'", pkg->chars, name->chars);
+    ObjString *as = n->as.import.alias ? n->as.import.alias : name;
+    Value own;
+    if (map_get(R->own, OBJ_VAL(as), &own) && IS_NUM(own))
+        rerror(R, n->line, "'%s' is imported from %s, and this file declares a '%s' too", as->chars, pkg->chars, as->chars);
     map_set(R->aliases, retain(OBJ_VAL(n->as.import.alias ? n->as.import.alias : name)),
             retain(OBJ_VAL(lube_global_key(R->I, pkg, name))));
     n->as.import.pkg = pkg;
@@ -829,9 +834,6 @@ int resolve_program(Interp *I, Node *program, Source *src, Arena *tree) {
         return 0;
     }
     NodeList *stmts = &program->as.block.stmts;
-    if (!R.ns && I->main_aliases)  /* the main namespace keeps its imports (from one REPL line to the next) */
-        for (size_t i = 0; i < I->main_aliases->used; i++)
-            map_set(R.aliases, retain(I->main_aliases->entries[i].key), retain(I->main_aliases->entries[i].value));
     for (int i = 0; i < stmts->count; i++) {  /* the names this file declares */
         Node *s = stmts->items[i];
         ObjString *name = s->kind == N_LET ? s->as.let.var.name : s->kind == N_CLASS ? s->as.klass.var.name : NULL;
@@ -839,6 +841,11 @@ int resolve_program(Interp *I, Node *program, Source *src, Arena *tree) {
         int fn = s->kind == N_LET && s->as.let.is_fn && !map_get(R.own, OBJ_VAL(name), NULL);  /* 2: a fn (declared once) */
         map_set(R.own, retain(OBJ_VAL(name)), NUM_VAL(fn ? 2 : 1));
     }
+    if (!R.ns && I->main_aliases)  /* the main namespace keeps its imports (from one REPL line to the next), but for
+                                      the names this line declares anew */
+        for (size_t i = 0; i < I->main_aliases->used; i++)
+            if (!map_get(R.own, I->main_aliases->entries[i].key, NULL))
+                map_set(R.aliases, retain(I->main_aliases->entries[i].key), retain(I->main_aliases->entries[i].value));
     if (R.ns) R.pkg_names = package_names(&R, R.ns, 1);
     for (int i = 0; i < stmts->count; i++)  /* imports first: they decide what names mean */
         if (stmts->items[i]->kind == N_IMPORT && stmts->items[i]->as.import.dotted) resolve_import(&R, stmts->items[i]);

@@ -471,3 +471,7 @@ fn Card() component {
   on score { }
   return score
 }
+### an import of one name, which the file declares too
+import web.div
+fn div() => 1
+print(div())

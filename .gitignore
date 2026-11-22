@@ -8,3 +8,4 @@ lube-tsan
 lube-tsan.dSYM/
 /plugins/
 /liblube.a
+tests/web/big.bin

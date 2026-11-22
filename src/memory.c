@@ -195,6 +195,7 @@ void obj_destroy(Obj *first) {
             ObjComponent *c = (ObjComponent *)o;
             for (int i = 0; c->slots && i < c->decl->nslots; i++) drop(&fl, c->slots[i]);
             for (int i = 0; i < c->nblocks; i++) drop(&fl, c->blocks[i].token);
+            drop(&fl, OBJ_VAL(c->fn));
             free(c->slots);
             free(c->types);
             free(c->blocks);

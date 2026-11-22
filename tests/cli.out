@@ -1,3 +1,6 @@
+--- web: serve(port)
+web: serving at http://127.0.0.1:PORT/
+HTTP/1.1 200 OK App(not started)
 --- version
 lube 0.1.0
 [exit 0]
@@ -1227,7 +1230,7 @@ error: cannot index into a Counter
 error: cannot index into a Counter
 [exit 0]
 --- plugin: made for a later Lube
-lube: plugin 'old' needs a newer Lube (it was made for plugin API 3; this Lube has 2)
+lube: plugin 'old' needs a newer Lube (it was made for plugin API 4; this Lube has 3)
 <eval>:1: error: cannot load plugin old (see above)
     1 | import old
 [exit 65]
@@ -2121,4 +2124,8 @@ program:2: error: 'on leave' takes no (old, new): nothing changes
 --- component: on a global
 program:3: error: a component's 'on' blocks watch its own vars, and 'score' is a global: watch it at the top level of the file
     3 |   on score { }
+[exit 65]
+--- an import of one name, which the file declares too
+program:1: error: 'div' is imported from web, and this file declares a 'div' too
+    1 | import web.div
 [exit 65]

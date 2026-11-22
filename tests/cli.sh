@@ -59,6 +59,16 @@ if [ "$SECTION" = os ]; then
     if [ "$OS" != Windows ]; then  # (Windows always says where lube is)
         run "build when lube cannot find itself" perl -e 'exec {shift} "no-such-lube", @ARGV' "$ABS" --build "$TMP/tool.lube" -o "$TMP/x"
     fi
+    if [ "$OS" != Windows ]; then  # (links on Windows need an administrator)
+        mkdir -p "$TMP/site/public" "$TMP/site/secret"
+        printf 'inside\n' >"$TMP/site/public/ok.txt"
+        printf 'secret\n' >"$TMP/site/secret/key.txt"
+        ln -s ../secret/key.txt "$TMP/site/public/link.txt"
+        ln -s ../secret "$TMP/site/public/dir"
+        ln -s ok.txt "$TMP/site/public/inside-link.txt"
+        ln -s public "$TMP/site/root"
+        run "web: static files are not links" "$LUBE" tests/cli/web_links.lube "$TMP/site/public" "$TMP/site/root"
+    fi
     if [ "$OS" != Windows ]; then  # (MSYS2's kill cannot send Ctrl-C to a Windows program)
         printf 'var i = 0\nwhile true {\n  i += 1\n}\n' >"$TMP/spin.lube"
         printf 'c\np i > 0\nq\n' >"$TMP/spin.cmds"
@@ -74,6 +84,10 @@ if [ "$SECTION" = os ]; then
     fi
     exit 0
 fi
+
+# ---- the web plugin's serve(): it says where it serves (the port differs from run to run) ----
+echo "--- web: serve(port)"
+"$LUBE" tests/cli/web_serve.lube 2>&1 | sed -E 's/:[0-9]+\//:PORT\//'
 
 # ---- flags ----
 run "version" "$LUBE" --version

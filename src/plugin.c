@@ -424,6 +424,7 @@ static LubeValue api_call(LubeVM *vm, LubeValue fn, int argc, const LubeValue *a
 static LubeValue api_call_method(LubeVM *vm, LubeValue obj, const char *name, int argc, const LubeValue *argv) {
     Interp *I = (Interp *)vm;
     Value v = V(obj);
+    if (IS_COMPONENT(v)) return L(lube_component_call(I, v, lube_intern(I, name, strlen(name)), argc, (Value *)argv));
     ObjClass *c = IS_INSTANCE(v) ? AS_MAP(v)->klass : IS_FOREIGN(v) ? AS_FOREIGN(v)->klass : NULL;
     Value m = c ? lube_find_method(c, lube_intern(I, name, strlen(name))) : NIL_VAL;
     if (IS_NIL(m)) return L(lube_error(I, "%s has no method '%s'", a_type(v), name));
@@ -472,6 +473,8 @@ static void *api_function_data(LubeVM *vm) {
 }
 static void api_format_number(double x, char *buf, size_t size) { format_number(buf, size, x); }
 
+static int api_take_error(LubeVM *vm, char *buf, size_t size) { return lube_take_error((Interp *)vm, buf, size); }
+
 static const LubeAPI API = {
     LUBE_PLUGIN_API, sizeof(LubeAPI),
     api_function, api_type, api_method, api_constructor,
@@ -485,6 +488,7 @@ static const LubeAPI API = {
     api_function_data,
     api_operator, api_range, api_provide, api_require, api_constant, api_property,
     api_call, api_call_method, api_failed, api_object_keys,
+    api_take_error,
 };
 
 const LubeAPI *lube_plugin_api(void) { return &API; }

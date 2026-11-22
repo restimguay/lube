@@ -224,3 +224,10 @@ fn deeper(c, n) {
 }
 tries(fn() => deeper(mn, 0))
 print("done")
+
+// a component that makes more of itself (a tree): in its view and handlers, its name means it too
+fn Tree(depth) component {
+  fn grow() => Tree(depth + 1)
+  return depth
+}
+print(Tree(0).grow().grow().view(), Tree(5).view())

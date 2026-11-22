@@ -644,7 +644,7 @@ c.leave()                  // Lube leaves
 ```
 
 - A handler runs on the component's frame, as an `on` block in a function does, so it changes the component's vars themselves. A closure gets copies and can't. A handler can call the component's other handlers, and the body can call them too.
-- `c.view()` runs the `return` expression again. `c.name(...)` calls a handler, and `c.name` is the handler as a function. A view that holds a handler, like `onclick: toggle` above, is how a page calls back into its component.
+- `c.view()` runs the `return` expression again. `c.name(...)` calls a handler, and `c.name` is the handler as a function. A view that holds a handler, like `onclick: toggle` above, is how a page calls back into its component: the `web` plugin serves components as pages (see Web pages below).
 - `c.leave()` runs its `on leave` blocks; after that, its view and handlers are gone. Leaving twice does nothing.
 - A component can hold other components in its vars, a list of them for instance, and its handlers can call theirs.
 - A handler doesn't keep its component alive: once nothing else holds the component, calling the handler is an error. So a component can keep its own handlers in its vars with no cycle, and with no garbage collector nothing is left over.
@@ -748,9 +748,9 @@ print(m(10, "USD").to("PHP", 58.25))   // ₱582.50
 - The currencies are ISO 4217's, with their decimals (JPY and KRW have none, BHD, KWD and JOD three). `add_currency("BTC", "₿", 8)` adds one of one's own: a code, a symbol and its decimals.
 - An amount holds up to 2⁶³ of its smallest unit (92 quadrillion dollars); a result past that is an error, as is money that is nan or infinite.
 
-### Plugins: files, sockets, sound, graphics, maths and machine learning
+### Plugins: files, sockets, sound, graphics, maths, machine learning and web pages
 
-Some of Lube comes as plugins: packages written in C, loaded when a program imports them, so a program that uses none of them doesn't load them. `make` builds those that come with Lube into `plugins/` next to `lube`: `fs` for files and folders, `net` for sockets, `audio` for sound and `gfx` for graphics; `math`, `cmath`, `statistics` and `random`, Python's modules of those names; and `array`, `nn`, `learn` and `llm`, which do what numpy, PyTorch, scikit-learn and llama.cpp do. They are imported as any package is:
+Some of Lube comes as plugins: packages written in C, loaded when a program imports them, so a program that uses none of them doesn't load them. `make` builds those that come with Lube into `plugins/` next to `lube`: `fs` for files and folders, `net` for sockets, `audio` for sound and `gfx` for graphics; `math`, `cmath`, `statistics` and `random`, Python's modules of those names; `array`, `nn`, `learn` and `llm`, which do what numpy, PyTorch, scikit-learn and llama.cpp do; and `web` for web pages. They are imported as any package is:
 
 ```lube
 import fs.*                // open, exists, list_dir...: their names, bare
@@ -1107,6 +1107,55 @@ print(q.generate("<|im_start|>user\nName three colors of the rainbow.<|im_end|>\
 - Speed, against llama-cpp-python 0.3 (llama.cpp's C++ underneath) on an M5, with the same files: TinyLlama 1.1B Q4_K_M generates 85 tokens a second to its 111 and reads a prompt at 307 to its 491; Qwen2.5 0.5B Q4_K_M generates 109 to its 163; stories15M about 2,000 to 3,100. A model in numpy (its weights in float32, products by Accelerate) generates 15 tokens a second with TinyLlama, and 700 with stories15M.
 - Left out: GPUs, the architectures beyond those above (Gemma 2 and 3, Phi-2, mixtures of experts such as Mixtral), the formats Q2_K, Q3_K and the IQ ones, Hugging Face's own checkpoints (safetensors: convert them with llama.cpp's `convert_hf_to_gguf.py`), chat templates (write the prompt as the model expects it), and YaRN's long contexts.
 
+### Web pages: `web`
+
+Pages made of components, served by Lube itself over HTTP, safe by default. A page's view is HTML from the server. Its handlers stay on the server: the page's small script sends each event over a WebSocket, the handler runs, and the page gets the new view.
+
+```lube
+import web.*
+
+fn Todos() component {
+  var items = str[]
+  fn add(fields) {                                 // submit: the form's fields
+    if trim(fields.item) != "" { items.push(trim(fields.item)) }
+  }
+  fn clear() { items = str[] }
+  return main(
+    h1("To do ({len(items)})"),
+    form({onsubmit: add}, field({name: "item"}), button("Add")),
+    ul(items.map(fn(item) => li(item))),           // text is escaped: "<b>" shows as <b>
+    button({onclick: clear, disabled: len(items) == 0}, "Clear")
+  )
+}
+
+let app = App()                                    // 127.0.0.1 unless told otherwise
+app.page("/", fn(req) => Todos(), {title: "To do", styles: ["/assets/app.css"]})
+app.get("/hello/:name", fn(req) => "hello {req.params.name}")
+app.post("/api/echo", fn(req) => {status: 201, type: "application/json", body: req.text})
+app.static("/assets", "public")
+app.serve(8080)                                    // until a handler calls app.stop()
+```
+
+- **Views.** `div(attributes?, children...)`, and the same for `p`, `span`, `a`, `button`, `form`, `ul`, `li`, `table`, `h1` to `h6` and the rest of HTML's elements. `<input>` is `field()`, because `input` is Lube's own. `el("svg", ...)` makes any other element. A child is text, a Number, a Node, a component (its view), a List of those, or nothing. Attributes are text, Numbers or Bools (`true` gives the attribute alone, `false` leaves it out). `html(view)` gives the HTML as text.
+- **Handlers.** `onclick`, `ondblclick`, `oninput`, `onchange`, `onsubmit`, `onkeydown`, `onkeyup`, `onfocus`, `onblur`, `onmouseenter` and `onmouseleave` take a function: a component's handler, or a closure. `input` and `change` give it the element's value (a Bool for a checkbox), `submit` the form's fields as an object, and the key events the key's name. The other events give nothing.
+- **Pages.** `app.page(path, fn(req), {title, styles, scripts}?)` serves what `fn` gives, a component or a view, as a page. A page with a component or handlers is live: it keeps its component until its browser tab goes, and then runs its `on leave` blocks. `styles` and `scripts` are paths on the site.
+- **Other routes.** `app.get`, `post`, `put`, `patch` and `delete` take `fn(req)`. It returns text (`text/plain`), `Bytes`, a view (HTML), nothing (204), or `{status, body, type, headers}`. Paths take `:name` for one part and `*rest` at the end for the rest. The request is `{method, path, params, query, headers, body, text, form, ip}`: `body` is its `Bytes`, `text` the same as text, and `form` a urlencoded form's fields.
+- **Static files.** `app.static(prefix, folder)` serves the folder's files under `prefix`, with their content types.
+- **Serving.** `app.serve(port?)` serves until `app.stop()`. `app.start(port)` listens (port 0 picks a free one, and `start` returns it) and `app.step(seconds)` serves what has come, so a program can serve from its own loop. All of it runs on the program's thread, inside `step()`. `app.pages()` counts the live pages. Errors go to standard error, as `web: GET /path: what happened`.
+
+The policy is on from the start. `App({policy: {...}})` loosens a rule by name, and an unknown name is an error, so a typo can't weaken one:
+
+- **Strict requests.** Lines end with CRLF. There's no space before a header's colon and no folded header, one `Host` and one `Content-Length` of digits, no `Transfer-Encoding`, and no `..` or `.` in a path. %-escapes must be well formed and the text UTF-8. These are the gaps that request smuggling and path tricks use.
+- **Limits.** 16 KB of head, 100 headers, an 8 KB URL and a 1 MB body. A client has 10 seconds for a head, 30 for a body, and 5 idle between requests. There are 512 connections in all and 64 from one address. A client that stops reading its answer is dropped. Policy: `max_header`, `max_headers`, `max_url`, `max_body`, `header_timeout`, `body_timeout`, `keep_alive`, `max_connections`, `max_per_ip`.
+- **Security headers.** Every answer carries a Content-Security-Policy (scripts, styles and images from the site only, no inline code, no framing by other sites), `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, Cross-Origin-Opener-Policy, Cross-Origin-Resource-Policy and `X-Frame-Options: DENY`. A handler can't set these, nor a header that holds a line break. Policy: `csp`, and `inline_styles: true` for `style="..."`, which is refused otherwise.
+- **Escaping.** Text and attribute values are escaped, and only `raw(html)` goes out as it is. Nodes come from the helpers alone, so data such as a request's JSON can't become markup. `<script>`, `<style>` and `<base>` are refused. `on...` attributes take functions, never code. URLs in `href`, `src`, `action` and the like keep only `http:`, `https:`, `mailto:`, `tel:` and paths on the site: `javascript:`, `data:` and the rest become `about:invalid#refused`.
+- **Static files.** A static file comes from its folder only: no `..`, no names that start with `.` (such as `.env` or `.git`), no symbolic links, and no folder listings.
+- **WebSockets.** A page's WebSocket must come from the page's own site (`Origin`), name the page's secret, and carry the session's cookie, which is `HttpOnly` and `SameSite=Strict`. Handler ids are secret per page. Events are limited to 20 a second (bursts of 50) and 64 KB each, and a socket that breaks the protocol is closed. Policy: `origins` (other sites allowed, such as `["https://example.com"]`), `events_per_second`, `event_burst`, `max_message`, `ws_idle`, `max_pages`, `page_wait`, `secure_cookies`.
+- **Host names.** The server answers to addresses (`127.0.0.1`, `[::1]`, `10.0.0.5`), to `localhost`, and to the names in policy `hosts` (such as `["example.com"]`, or `["*"]` for any). Any other `Host` gets 421. A page of another site whose name was made to lead here (DNS rebinding) gets nothing.
+- **Forgery.** A POST, PUT, PATCH or DELETE from a page of another site gets 403. That covers an `Origin` that isn't this site's or one of policy `origins`, and `Sec-Fetch-Site: cross-site`. Clients that aren't browsers send neither header, and pass.
+- **Errors.** A handler's error answers a bare `500 Internal Server Error`. The error itself goes to the log, and to the browser only with `App({dev: true})`.
+- **TLS and proxies.** The server listens on `127.0.0.1` unless `App({host: "0.0.0.0"})` says otherwise. It doesn't speak TLS: put it behind a proxy that does, and say `trust_proxy: true`. Then `req.ip` comes from `X-Forwarded-For`, and `X-Forwarded-Proto: https` makes the cookie `Secure`. Without `trust_proxy`, those headers mean nothing.
+
 ### Writing a plugin
 
 A plugin is a shared library with one entry point. It includes `lube_plugin.h` (in Lube's `src/`), which is all it needs: everything goes through the API table that Lube passes it, so it links against no part of Lube.
@@ -1147,6 +1196,7 @@ print(maths.twice(21))   // 42
 - The entry point runs once per process; its functions can run in any isolate, so shared state goes under a lock (`lube->lock_new()`). `LUBE_PLUGIN_API` is the version of the API the plugin was made for: a newer Lube loads it, and an older one says it needs a newer Lube.
 - Version 2 of the API added what Arrays and Tensors needed. `lube->op(type, "+", fn)` gives a type an operator: `+ - * / % ** @`, the comparisons, `"neg"`, `"[]"` and `"[]="` (indexing, with several indexes as several arguments), `"len"` (and with `"[]"`, `for x in t`), `"copy"` (which makes `x[i] = v` copy a shared object first, as lists do), and `+= -= *= /= %=` in place when nothing else holds the object. `lube->property(type, "shape", fn)` makes `x.shape` work, `lube->constant(plugin, "pi", 3.14...)` gives the package a Number, and `lube->range(v, ...)` reads a range. `lube->call(vm, f, argc, argv)` and `lube->call_method(vm, obj, "forward", ...)` call back into Lube (`lube->failed(r)` says whether that raised an error), and `lube->object_keys(vm, obj)` lists an object's keys.
 - One plugin can use another's: `lube->provide(plugin, &table)` gives other plugins a table of the plugin's own, and `lube->require(plugin, "array")` loads that plugin and returns its table (`src/plugins/array.h` is array's: `nn` makes and reads Arrays through it). A program built with `lube --build` takes along the plugins its plugins require.
+- Version 3 added `lube->take_error(vm, buf, size)`: it catches the error a `call` failed with, as text (`file:line: message`), so a plugin can carry on (the web plugin answers 500 and goes on serving). `call_method` reaches a component's handlers, `view` and `leave` too.
 - `src/lube_plugin.h` describes every function, and Lube's own plugins (`src/plugins/fs.c`, `net.c`, `audio.c`, `gfx.c` and the rest) are complete examples; `tests/plugins/vec.c` uses every part of version 2.
 
 ### Errors
@@ -1220,6 +1270,7 @@ print(size(p), geometry.area(p), p is geo.Point)
 
 - Packages are found from the main program's folder, then from the folders listed in `LUBE_PATH` (separated by `:`, or `;` on Windows). Importing anything from a package loads its whole folder, once.
 - Inside a package, a name means: an imported name, else one of the package's own, else a built-in. So a package can define its own `len` without affecting anyone else.
+- A file's own top-level names come before those of `import x.*`: with `import web.*`, a file's own `header` or `var b` is its own, and `web.header` is still there by name. Importing one name the file declares too (`import web.div` next to `fn div()`) is an error.
 - `import "file"` still works as before: a file without a package line shares the importer's names. A file that has one keeps its names to itself, however it is imported.
 - Package imports go at the top level of a file. A missing package or name, a private name, or a file in a package's folder whose package line disagrees, is an error before the program runs.
 - Isolates, hot reload and `lube --build` all handle packages: a built executable carries the package files it uses.

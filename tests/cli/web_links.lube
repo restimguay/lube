@@ -1,0 +1,19 @@
+// The web plugin's static files and symbolic links (made by cli.sh): none is followed, in or out of the folder.
+import web.*
+import net
+let app = App()
+app.static("/", args[0])
+app.static("/root", args[1])  // the folder itself may be a link: it is where it leads
+let port = app.start(0)
+for path in ["/ok.txt", "/link.txt", "/dir/key.txt", "/inside-link.txt", "/root/ok.txt"] {
+  let c = net.tcp_connect("127.0.0.1", port)
+  c.send("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+  var got = Bytes()
+  var n = 0
+  while c.is_open() and n < 500 {
+    app.step(0.002)
+    got += c.receive(0)
+    n += 1
+  }
+  print(path, split(got.decode(), "\r\n")[0])
+}

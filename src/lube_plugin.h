@@ -46,8 +46,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define LUBE_PLUGIN_API 2  /* this header's version; later ones only add to LubeAPI (2: operators, ranges,
-                              plugins that use each other) */
+#define LUBE_PLUGIN_API 3  /* this header's version; later ones only add to LubeAPI (2: operators, ranges,
+                              plugins that use each other; 3: take_error) */
 
 #ifdef _WIN32
 #define LUBE_PLUGIN_EXPORT __declspec(dllexport)
@@ -190,6 +190,12 @@ typedef struct LubeAPI {
     int (*failed)(LubeValue v);
     /* An object's (or Map's) keys, in order, as a new List; NULL's List (empty) for anything else. */
     LubeValue (*object_keys)(LubeVM *vm, LubeValue object);
+
+    /* --- version 3 --- */
+    /* Catches the error a call (or call_method) failed with, so the plugin can go on: it writes what the error
+     * says into buf, as "file:line: message" when Lube code raised it, and returns snprintf's count. The error
+     * is then gone: the plugin returns a value of its own, not the failed one. */
+    int (*take_error)(LubeVM *vm, char *buf, size_t size);
 } LubeAPI;
 
 #ifdef __cplusplus

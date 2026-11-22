@@ -808,6 +808,7 @@ void lube_cell_release(CompCell *cell);  /* (interp.c) */
 typedef struct ObjComponent {
     Obj obj;
     FuncDecl *decl;
+    struct ObjFunction *fn; /* the function that made it (its blocks' frames run as it: its name means it) */
     CompCell *cell;
     Value *slots;           /* its frame's slots, while no block of it runs (the stack has them meanwhile) */
     TypeDesc *types;        /* ...and the types its vars keep (Interp.decl) */
@@ -1310,6 +1311,10 @@ void register_reflection(Interp *I);
 int lube_run_source(Interp *I, Source *src, int repl);
 int lube_run_file(Interp *I, const char *path);
 Value lube_call(Interp *I, Value fn, int argc, Value *argv);
+/* The error raised, as text ("file:line: message"), and gone (plugins' take_error). */
+int lube_take_error(Interp *I, char *buf, size_t size);
+/* c.name(argv...) for a component c: its view, leave or a handler (plugins' call_method). */
+Value lube_component_call(Interp *I, Value c, ObjString *name, int argc, Value *argv);
 Value lube_throw(Interp *I, Value v);
 Value lube_error(Interp *I, const char *fmt, ...);
 void lube_define(Interp *I, const char *name, Value v);

@@ -8,6 +8,13 @@ lube: the executable would replace 'noext': name it with -o
 --- build when lube cannot find itself
 lube: cannot build: cannot read the lube executable itself (run lube with its full path)
 [exit 70]
+--- web: static files are not links
+/ok.txt HTTP/1.1 200 OK
+/link.txt HTTP/1.1 404 Not Found
+/dir/key.txt HTTP/1.1 404 Not Found
+/inside-link.txt HTTP/1.1 404 Not Found
+/root/ok.txt HTTP/1.1 200 OK
+[exit 0]
 --- debugger: Ctrl-C pauses a running program
 Lube debugger: h lists the commands (Ctrl-C pauses the program)
    at <script> (TMP/spin.lube:N)

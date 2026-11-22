@@ -1870,9 +1870,11 @@ void lube_cell_release(CompCell *cell) {
     if (--cell->rc == 0) free(cell);
 }
 
-static ObjComponent *new_component(FuncDecl *d) {
+static ObjComponent *new_component(ObjFunction *fn) {
     ObjComponent *c = (ObjComponent *)alloc_object(sizeof(ObjComponent), OBJ_COMPONENT);
-    c->decl = d;
+    c->decl = fn->decl;
+    c->fn = fn;
+    retain(OBJ_VAL(fn));
     c->cell = xmalloc(sizeof(CompCell));
     c->cell->rc = 1;
     c->cell->comp = c;
@@ -1931,7 +1933,7 @@ static Frame *component_enter(Interp *I, ObjComponent *c) {
     I->stack[base + d->comp_slot] = retain(OBJ_VAL(c));
     I->sp = base + d->nslots;
     Frame *f = new_frame(I);
-    frame_init(I, f, I->frame, NULL, d, d->name->chars, d->line, base, 0, base, base + d->nslots);
+    frame_init(I, f, I->frame, c->fn, d, d->name->chars, d->line, base, 0, base, base + d->nslots);
     f->entry = 1;
     FRAME_SLOW_RET(f);
     I->frame = f;
@@ -2088,6 +2090,31 @@ static Value component_method(Interp *I, ObjComponent *c, ObjString *name) {
     ObjNative *n = new_native(od ? od->func->name->chars : name->chars, n_component_method, 1, -1, 0);
     n->od = od;
     return OBJ_VAL(n);
+}
+
+int lube_take_error(Interp *I, char *buf, size_t size) {
+    Value e = I->error_val;
+    I->error_val = NIL_VAL;
+    ObjString *msg = IS_TEXT(e) ? (ObjString *)retain(OBJ_VAL(text_of(e))).as.obj : value_repr(e);
+    Source *src = I->error_src;
+    int n = src ? snprintf(buf, size, "%s:%d: %s", src->path, I->error_line, msg->chars)
+                : snprintf(buf, size, "%s", msg->chars);
+    release(OBJ_VAL(msg));
+    release(e);
+    trace_reset(I);
+    return n;
+}
+
+Value lube_component_call(Interp *I, Value c, ObjString *name, int argc, Value *argv) {
+    Value m = component_method(I, AS_COMPONENT(c), name);
+    if (IS_ERR(m)) return m;
+    Value small[8], *args = argc < 8 ? small : xmalloc(sizeof(Value) * (size_t)(argc + 1));
+    args[0] = c;
+    if (argc) memcpy(args + 1, argv, sizeof(Value) * (size_t)argc);
+    Value r = lube_call(I, m, argc + 1, args);
+    if (args != small) free(args);
+    release(m);
+    return r;
 }
 
 static PendingCall *new_pending(Interp *I) {
@@ -3730,7 +3757,7 @@ LUBE_NOINLINE static int vm_step(Interp *I) {
             break;
         }
         case OP_COMPONENT_BEGIN: {  /* fn ... component: the component, in its hidden slot while its body runs */
-            ObjComponent *c = new_component(f->fn->decl);
+            ObjComponent *c = new_component(f->fn);
             set_slot(I, ARG_OF(in), OBJ_VAL(c));
             c->depth = VM_DEPTH(I);
             break;
