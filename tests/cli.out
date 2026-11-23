@@ -1,3 +1,6 @@
+--- web: serve(port)
+web: serving at http://127.0.0.1:PORT/
+HTTP/1.1 200 OK App(not started)
 --- version
 lube 0.1.0
 [exit 0]
@@ -114,6 +117,8 @@ args: ["first", "second"] 2
 from stdin ["a", "b"]
 [exit 0]
 --- check a good file
+[exit 0]
+--- check the web example
 [exit 0]
 --- check a file with an error
 tests/syntax_error.lube:2:16: syntax error: expected ')' to close the parameter list but found '{'
@@ -883,6 +888,7 @@ error: a str has no properties (it is plain text): use len(x) for its length, or
 error: thrown
 error: push() expects a List as argument 1, got Number
 locals [1, "ab", [1, 2], [1], 12, 20, [1, 1, 2]] [0, 1]
+component 2
 done
 [exit 0]
 --- debugger without a file
@@ -1226,7 +1232,7 @@ error: cannot index into a Counter
 error: cannot index into a Counter
 [exit 0]
 --- plugin: made for a later Lube
-lube: plugin 'old' needs a newer Lube (it was made for plugin API 3; this Lube has 2)
+lube: plugin 'old' needs a newer Lube (it was made for plugin API 4; this Lube has 3)
 <eval>:1: error: cannot load plugin old (see above)
     1 | import old
 [exit 65]
@@ -2071,4 +2077,65 @@ program:3:10: syntax error: #strict: parameter 'old' needs a type, like old: Num
 program:1:9: syntax error: Isolate has no default value: start one with spawn(f, ...)
     1 | var i = Isolate
       |         ^
+[exit 65]
+--- component: in a function
+program:2: error: a component is declared at the top level of a file, as fn Name(...) component { ... }
+    2 |   fn Inner() component {
+[exit 65]
+--- component: as a method
+program:2: error: a component is declared at the top level of a file, as fn Name(...) component { ... }
+    2 |   fn shown() component {
+[exit 65]
+--- component: a var parameter
+program:1: error: a component's parameters are plain: 'title' cannot take & or var
+    1 | fn Card(var title) component {
+[exit 65]
+--- component: with a return type
+program:1:19: syntax error: a component cannot have a return type: calling it makes the component
+    1 | fn Card(): Number component {
+      |                   ^
+[exit 65]
+--- component: no view at the end
+program:2: error: a component's body ends with 'return' and the view it shows, like 'return div(...)'
+    2 |   var n = 0
+[exit 65]
+--- component: an empty body
+program:1: error: a component's body ends with 'return' and the view it shows, like 'return div(...)'
+    1 | fn Card() component { }
+[exit 65]
+--- component: a return before the end
+program:2: error: a component returns once, at the end of its body: the view it shows, like 'return div(...)'
+    2 |   if x { return 1 }
+[exit 65]
+--- component: a handler with a default
+program:2: error: a handler's parameters are plain: 'n' cannot take &, var or a default
+    2 |   fn set(n = 1) { }
+[exit 65]
+--- component: a handler with a return type
+program:2: error: a handler cannot have a return type
+    2 |   fn get(): Number => 1
+[exit 65]
+--- component: a handler named view
+program:2: error: a component's 'view' is its own: name the handler something else
+    2 |   fn view() { }
+[exit 65]
+--- component: on leave with (old, new)
+program:2: error: 'on leave' takes no (old, new): nothing changes
+    2 |   on leave (old, new) { }
+[exit 65]
+--- component: on a global
+program:3: error: a component's 'on' blocks watch its own vars, and 'score' is a global: watch it at the top level of the file
+    3 |   on score { }
+[exit 65]
+--- an import of one name, which the file declares too
+program:1: error: 'div' is imported from web, and this file declares a 'div' too
+    1 | import web.div
+[exit 65]
+--- a component's let in a handler
+program:3: error: 'shown' is a let of the component, worked out again with each view: only the view sees it (make it a var to keep it, or work it out where it is needed)
+    3 |   fn f() => shown
+[exit 65]
+--- a component's let in its body
+program:3: error: 'shown' is a let of the component, worked out again with each view: only the view sees it (make it a var to keep it, or work it out where it is needed)
+    3 |   var copy = shown
 [exit 65]

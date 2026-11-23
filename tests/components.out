@@ -1,0 +1,49 @@
+<component Card> Component true
+{tag: "div", title: "Lube", open: false, clicks: 0, onclick: <handler toggle>}
+effect: open false -> true
+{tag: "div", title: "Lube", open: true, clicks: 1, onclick: <handler toggle>}
+effect: open true -> false
+false 2
+12
+effect: open false -> true
+13 <handler toggle> <handler add>
+error: add() takes 1 argument but got 0
+error: Card has no handler 'nope'
+error: Card has no handler 'nope'
+leaving Lube after 13 clicks
+error: this Card has left: it has no view
+error: this Card has left: its blocks are gone
+error: this Card has left: its blocks are gone
+error: toggle() belongs to a component that is gone
+{n: 6, log: []}
+129 {n: 129, log: []}
+{n: 0, log: ["reset at 2129"]}
+error: parameter 'by' of add() is a Number, so it cannot take a str
+0
+error: too far: 2
+[1, 2, 0]
+error: again() is already running: it cannot call itself
+[1, 2, 0]
+{finished: 2, items: ["write: false", "test: true", "ship: true"]}
+2
+[[]]
+error: Early cannot leave while its body or one of its blocks runs
+in the body: 1
+1
+error: not now
+error: this Grabby has left: its blocks are gone
+error: a Component cannot be sent to another isolate: only data can (numbers, text, bytes, lists, maps, instances and channels)
+error: a Function cannot be sent to another isolate: only data can (numbers, text, bytes, lists, maps, instances and channels)
+2
+error: too big
+n is 1
+1
+error: this Scoped has left: it has no view
+19
+error: stack overflow: too much recursion
+done
+2 5
+1 for 3
+2 for 7
+["one"]
+early() cannot run now: 'x' has no value yet (the body sets it later), or it is lent out with & to a call that has not returned

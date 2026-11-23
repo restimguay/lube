@@ -414,3 +414,76 @@ var a = 0
 on a (old, new) { }
 ### an Isolate has no default value
 var i = Isolate
+### component: in a function
+fn outer() {
+  fn Inner() component {
+    return 1
+  }
+}
+### component: as a method
+class Box {
+  fn shown() component {
+    return 1
+  }
+}
+### component: a var parameter
+fn Card(var title) component {
+  return title
+}
+### component: with a return type
+fn Card(): Number component {
+  return 1
+}
+### component: no view at the end
+fn Card() component {
+  var n = 0
+}
+### component: an empty body
+fn Card() component { }
+### component: a return before the end
+fn Card(x) component {
+  if x { return 1 }
+  return 2
+}
+### component: a handler with a default
+fn Card() component {
+  fn set(n = 1) { }
+  return 0
+}
+### component: a handler with a return type
+fn Card() component {
+  fn get(): Number => 1
+  return 0
+}
+### component: a handler named view
+fn Card() component {
+  fn view() { }
+  return 0
+}
+### component: on leave with (old, new)
+fn Card() component {
+  on leave (old, new) { }
+  return 0
+}
+### component: on a global
+var score = 0
+fn Card() component {
+  on score { }
+  return score
+}
+### an import of one name, which the file declares too
+import web.div
+fn div() => 1
+print(div())
+### a component's let in a handler
+fn Card() component {
+  let shown = 1
+  fn f() => shown
+  return shown
+}
+### a component's let in its body
+fn Card() component {
+  let shown = 1
+  var copy = shown
+  return copy
+}

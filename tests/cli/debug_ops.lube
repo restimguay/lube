@@ -76,4 +76,14 @@ fn add_one(&xs) => xs.push(1)
 var more = [0]
 add_one(&more)
 print("locals", on_locals(2..=4), more)
+
+// a component: its frame back on the stack for each block of it that runs
+fn Tally() component {
+  var n = 0
+  fn add(k) { n += k }
+  return n
+}
+let tally = Tally()
+tally.add(2)
+print("component", tally.view())
 print("done")

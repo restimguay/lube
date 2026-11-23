@@ -1,0 +1,51 @@
+// A to-do list as a web page: in Lube's folder, lube examples/web/todo.lube, then open http://localhost:8080/
+// Each browser tab gets a Todos component of its own. Its state stays on the server: the page sends its events
+// over a WebSocket, and fits each new view into the page in place (what you are typing stays as it is).
+import web.*
+
+fn class_if(yes, name) {
+  if yes { return name }
+  return ""
+}
+
+fn Item(id, text, remove) component {  // one item, with its own state and handlers
+  var done = false
+  fn toggle(checked) { done = checked }
+  fn state() => {id: id, text: text, done: done}
+  return li({key: id, class: class_if(done, "done")},
+    label(field({type: "checkbox", checked: done, onchange: toggle}), span(text)),
+    button({class: "remove", title: "Remove", onclick: fn() => remove(id)}, "×"))
+}
+
+fn Todos() component {
+  var items = []
+  var query = ""
+  var next = 1
+  fn add(fields) {
+    let text = trim(fields.text)
+    if text != "" {
+      items.push(Item(next, text, remove))
+      next += 1
+    }
+  }
+  fn remove(id) { items = items.filter(fn(it) => it.state().id != id) }
+  fn search(text) { query = text }
+  fn clear_done() { items = items.filter(fn(it) => not it.state().done) }
+  on leave { print("a page left, with", len(items), "items") }
+  let shown = items.filter(fn(it) => contains(lower(it.state().text), lower(query)))
+  let left = len(items.filter(fn(it) => not it.state().done))
+  return main(
+    h1("To do"),
+    form({onsubmit: add}, field({name: "text", placeholder: "What needs doing?", autocomplete: "off"}), button("Add")),
+    field({class: "filter", placeholder: "Filter", value: query, oninput: search}),
+    ul(shown),
+    footer(span("{left} left"), button({onclick: clear_done, disabled: left == len(items)}, "Clear done"))
+  )
+}
+
+let app = App()  // App({host: "0.0.0.0"}) to be reached from other machines
+app.page("/", fn(req) => Todos(), {title: "To do", styles: ["/assets/app.css"]})
+app.static("/assets", "examples/web/public")  // (run from Lube's folder)
+var port = 8080
+if len(args) > 0 { port = num(args[0]) }  // (lube examples/web/todo.lube 3000: another port; 0, any free one)
+app.serve(port)

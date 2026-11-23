@@ -1,0 +1,28 @@
+// For tests/browser/run.mjs (keys.js): a keyed list that moves, fields the server sets and fields it does not,
+// and a handler that fails.
+import web.*
+fn L() component {
+  var names = ["a", "b", "c", "d"]
+  var extra = 0
+  fn flip() { names = names.reverse() }
+  fn rotate() { names = names.slice(1) + [names[0]] }
+  fn more() { extra += 1 }
+  fn fail() {
+    extra += 100
+    assert(false, "fails on purpose")
+  }
+  return div(
+    button({id: "flip", onclick: flip}, "flip"), button({id: "rotate", onclick: rotate}, "rotate"),
+    button({id: "more", onclick: more}, "more"), button({id: "fail", onclick: fail}, "fail"),
+    ul(names.map(fn(n) => li({key: n}, n, field({class: "f"})))),
+    p("extra {extra}"),
+    textarea({id: "t"}, "server text {extra}"),
+    select({id: "s"}, option({value: "1"}, "one"), option({value: "2", selected: extra > 0}, "two")))
+}
+let app = App()
+app.page("/", fn(r) => L())
+app.get("/stop", fn(r) {  // (run.mjs stops it so: it ends as a program does, and lube-check checks for leaks)
+  app.stop()
+  return "bye"
+})
+app.serve(num(args[0]))

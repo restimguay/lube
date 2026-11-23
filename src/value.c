@@ -459,6 +459,9 @@ ObjNative *new_native(const char *name, NativeFn fn, int min, int max, int chang
     n->min_args = min;
     n->max_args = max;
     n->changes_first = changes_first;
+    n->plugin_fn = NULL;
+    n->cell = NULL;
+    n->od = NULL;
     return n;
 }
 
@@ -555,7 +558,7 @@ TypeDesc desc_of(Value v) {
         case OBJ_MONEY: d.kind = TD_MONEY; break;
         case OBJ_FOREIGN: d.kind = TD_CLASS; d.cls = AS_FOREIGN(v)->klass; break;
         case OBJ_ISOLATE: d.kind = TD_ISOLATE; break;
-        case OBJ_PACKAGE: d.kind = TD_OBJECT; break;
+        case OBJ_PACKAGE: case OBJ_COMPONENT: d.kind = TD_OBJECT; break;
         case OBJ_MAP:
             if (AS_MAP(v)->klass) { d.kind = TD_CLASS; d.cls = AS_MAP(v)->klass; }
             else if (AS_MAP(v)->dict) { d.kind = TD_MAP; d.a = AS_MAP(v)->ktype; d.b = AS_MAP(v)->vtype; }
@@ -762,6 +765,7 @@ const char *type_name(Value v) {
     case OBJ_CHANNEL: return "Channel";
     case OBJ_ISOLATE: return "Isolate";
     case OBJ_PACKAGE: return "Package";
+    case OBJ_COMPONENT: return "Component";
     default: return "Function";  /* OBJ_FUNCTION or OBJ_NATIVE */
     }
 }
@@ -929,7 +933,10 @@ static void append_inner(StrBuf *sb, Value v, int quote, int depth) {
         return;
     }
     case OBJ_NATIVE:
-        sb_printf(sb, "<builtin %s>", AS_NATIVE(v)->name);
+        sb_printf(sb, AS_NATIVE(v)->cell ? "<handler %s>" : "<builtin %s>", AS_NATIVE(v)->name);
+        return;
+    case OBJ_COMPONENT:
+        sb_printf(sb, "<component %s>", AS_COMPONENT(v)->decl->name->chars);
         return;
     case OBJ_BYTES: {  /* Bytes(68 69): in hex, the first 64 */
         ObjBytes *b = AS_BYTES(v);

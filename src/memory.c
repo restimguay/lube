@@ -191,6 +191,18 @@ void obj_destroy(Obj *first) {
             isolate_release(((ObjIsolate *)o)->iso);
         } else if (o->type == OBJ_PACKAGE) {
             drop(&fl, OBJ_VAL(((ObjPackage *)o)->name));
+        } else if (o->type == OBJ_COMPONENT) {  /* its frame's slots and blocks; its handlers find it gone */
+            ObjComponent *c = (ObjComponent *)o;
+            for (int i = 0; c->slots && i < c->decl->nslots; i++) drop(&fl, c->slots[i]);
+            for (int i = 0; i < c->nblocks; i++) drop(&fl, c->blocks[i].token);
+            drop(&fl, OBJ_VAL(c->fn));
+            free(c->slots);
+            free(c->types);
+            free(c->blocks);
+            c->cell->comp = NULL;
+            lube_cell_release(c->cell);
+        } else if (o->type == OBJ_NATIVE && ((ObjNative *)o)->cell) {  /* a component's handler */
+            lube_cell_release(((ObjNative *)o)->cell);
         }  /* strs, natives and ranges own nothing else */
         pool_put(o, o->pool);
         lube_live_objects--;

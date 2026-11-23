@@ -34,6 +34,11 @@ jobs:
         run: make -k
       - name: Test
         run: make test
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: The web plugin's pages in a real browser (the runner's Chrome)
+        run: make browser BROWSER_FLAGS=--require
       - name: A real window (X11, on a screen of Xvfb's), with fullscreen, the cursor and controllers
         run: |
           sudo apt-get update -q && sudo apt-get install -y -q xvfb
@@ -44,6 +49,8 @@ jobs:
         run: sudo sysctl vm.mmap_rnd_bits=28
       - name: Test with AddressSanitizer and UndefinedBehaviorSanitizer (and the leak check)
         run: make check
+      - name: The browser tests on that build
+        run: make lube-check browser BROWSER_LUBE=./lube-check BROWSER_FLAGS=--require
       - name: Test with ThreadSanitizer
         run: make tsan
       - name: Keep the output of failing tests

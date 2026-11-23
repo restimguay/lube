@@ -12,7 +12,7 @@ CFLAGS  += -std=c99 -Wall -Wextra -Wno-unused-parameter -pedantic
 LDLIBS  += -lm -lpthread
 UNAME   := $(shell uname -s 2>/dev/null)
 EXE     :=
-PLUGINS := fs net audio gfx array math cmath random statistics nn learn llm
+PLUGINS := fs net audio gfx array math cmath random statistics nn learn llm web
 
 # Give the interpreter a 64 MB stack on macOS and Windows so deep recursion
 # works. (On Linux the main thread's stack is set by `ulimit -s`, usually
@@ -30,6 +30,7 @@ else ifneq (,$(filter MINGW% MSYS% CYGWIN%,$(UNAME)))
   PLUGIN_EXT   := .dll
   PLUGIN_FLAGS := -shared -static-libgcc  # (a DLL that needs no other of gcc's)
   PLUGIN_LIBS_net := -lws2_32  # sockets: Winsock
+  PLUGIN_LIBS_web := -lws2_32
   PLUGIN_LIBS_gfx := -lgdi32 -luser32  # windows
 else
   PLUGIN_EXT   := .so
@@ -99,6 +100,17 @@ plugins/array$(PLUGIN_EXT): $(wildcard src/plugins/array/*.c) src/plugins/array.
 plugins/nn$(PLUGIN_EXT): $(wildcard src/plugins/nn/*.c) src/plugins/array.h src/plugins/vecmath.h
 plugins/learn$(PLUGIN_EXT): $(wildcard src/plugins/learn/*.c) src/plugins/array.h
 plugins/llm$(PLUGIN_EXT): $(wildcard src/plugins/llm/*.c) src/plugins/array.h
+plugins/web$(PLUGIN_EXT): $(wildcard src/plugins/web/*.c)
+
+# The page script: client.c is made from client.js (needs python3; only after changing client.js).
+web-client:
+	python3 src/plugins/web/client.py
+
+# The web plugin's pages in a real browser (needs Node 22+ and Chrome or Chromium; without them it says so and
+# passes). make browser BROWSER_LUBE=./lube-check runs them on the checking build (with make check's options).
+BROWSER_LUBE ?= ./lube
+browser: all
+	@ASAN_OPTIONS=detect_leaks=0:detect_stack_use_after_return=0 node tests/browser/run.mjs $(BROWSER_LUBE) $(BROWSER_FLAGS)
 
 plugins:
 	mkdir -p plugins
@@ -158,4 +170,4 @@ pgo: all
 clean:
 	rm -rf build plugins lube lube.exe liblube.a lube-check lube-check.dSYM lube-tsan lube-tsan.dSYM
 
-.PHONY: all lib test check tsan coverage install clean pgo
+.PHONY: all lib test check tsan coverage install clean pgo web-client browser

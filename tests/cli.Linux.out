@@ -8,6 +8,13 @@ lube: the executable would replace 'noext': name it with -o
 --- build when lube cannot find itself
 built TMP/x: 1 file, N bytes
 [exit 0]
+--- web: static files are not links
+/ok.txt HTTP/1.1 200 OK
+/link.txt HTTP/1.1 404 Not Found
+/dir/key.txt HTTP/1.1 404 Not Found
+/inside-link.txt HTTP/1.1 404 Not Found
+/root/ok.txt HTTP/1.1 200 OK
+[exit 0]
 --- debugger: Ctrl-C pauses a running program
 Lube debugger: h lists the commands (Ctrl-C pauses the program)
    at <script> (TMP/spin.lube:N)
@@ -17,3 +24,23 @@ Lube debugger: h lists the commands (Ctrl-C pauses the program)
     N | (a line of the loop)
 (lube) true
 (lube) [exit 0]
+--- web: a signal stops serve(), and its pages leave; the program goes on
+web: serving at http://127.0.0.1:PORT/
+web: stopping (interrupted)
+ready
+the page leaves
+serve() returned: HTTP/1.1 200 OK, 0 pages
+[exit 0]
+--- web: another signal, once serve() has returned, ends the program
+web: serving at http://127.0.0.1:PORT/
+web: stopping (interrupted)
+ready
+the page leaves
+serve() returned: HTTP/1.1 200 OK, 0 pages
+[exit 143]
+--- web: a second signal while the pages leave ends the program
+web: serving at http://127.0.0.1:PORT/
+web: stopping (interrupted)
+ready
+the page leaves
+[exit 143]

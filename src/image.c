@@ -212,7 +212,8 @@ static void w_func(Writer *w, const FuncDecl *d) {
     w_type(w, &d->ret);
     w_u32(o, (uint32_t)d->strict | (uint32_t)d->is_arrow << 1 | (uint32_t)d->is_method << 2 | (uint32_t)d->is_ctor << 3 |
                  (uint32_t)d->has_ref << 4 | (uint32_t)d->plain << 5 | (uint32_t)d->plain_method << 6 |
-                 (uint32_t)d->plain_ctor << 7);
+                 (uint32_t)d->plain_ctor << 7 | (uint32_t)d->is_component << 8);
+    w_u32(o, (uint32_t)d->comp_slot);
     w_u32(o, (uint32_t)d->nslots);
     w_u32(o, (uint32_t)d->line);
     w_str(w, d->key);
@@ -235,7 +236,7 @@ static void w_on(Writer *w, const OnDesc *od) {
         for (int k = 0; k < od->items[i].npath; k++) w_str(w, od->items[i].path[k]);
     }
     w_obj(w, od->func, IMG_FUNC);
-    w_u32(o, (uint32_t)od->frame);
+    w_u32(o, (uint32_t)od->frame | (uint32_t)od->kind << 1);
     w_u32(o, (uint32_t)od->token);
     w_u32(o, (uint32_t)od->param_slot[0]);
     w_u32(o, (uint32_t)od->param_slot[1]);
@@ -555,6 +556,8 @@ static void r_func(Reader *r, FuncDecl *d) {
     d->plain = (unsigned char)((f >> 5) & 1);
     d->plain_method = (unsigned char)((f >> 6) & 1);
     d->plain_ctor = (unsigned char)((f >> 7) & 1);
+    d->is_component = (unsigned char)((f >> 8) & 1);
+    d->comp_slot = r_int(r);
     d->nslots = r_int(r);
     d->line = r_int(r);
     d->key = r_str(r);
@@ -596,6 +599,8 @@ static void r_on(Reader *r, OnDesc *od) {
     }
     od->func = r_obj(r);
     od->frame = r_int(r);
+    od->kind = od->frame >> 1;
+    od->frame &= 1;
     od->token = r_int(r);
     od->param_slot[0] = r_int(r);
     od->param_slot[1] = r_int(r);

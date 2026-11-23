@@ -1,0 +1,36 @@
+// Ctrl-C while serve() runs (cli.sh sends SIGTERM, which goes the same way): the page leaves, serve() returns, the program goes on.
+// What it does goes to the file args[0] names (a signal that ends it loses what print() had not sent yet), and
+// there cli.sh sees when to send the next one.
+import web.*
+import net
+let marks = args[0]
+fn mark(what) { append_file(marks, what + "\n") }
+fn visit(port) {  // (in an isolate: a browser that opens the page, so there is a page to leave)
+  let c = net.tcp_connect("127.0.0.1", port, 5)
+  c.send("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+  var got = Bytes()
+  while c.is_open() { got += c.receive(5) }
+  append_file(args[0], "ready\n")
+  return split(got.decode(), "\r\n")[0]
+}
+fn Hello() component {
+  var n = 0
+  fn more() { n += 1 }
+  on leave {
+    mark("the page leaves")
+    if len(args) > 1 and args[1] == "slow" { sleep(5) }  // (time for a second signal, which ends the program here)
+  }
+  return button({onclick: more}, "{n}")
+}
+let probe = App()
+let port = probe.start(0)
+probe.stop()
+let app = App({policy: {page_wait: 60}})
+app.page("/", fn(r) => Hello())
+let visitor = spawn(visit, port)
+app.serve(port)
+mark("serve() returned: {visitor.join()}, {app.pages()} pages")
+if len(args) > 1 and args[1] == "after" {
+  sleep(5)  // (a signal now, with nothing serving, ends the program)
+  mark("not reached")
+}

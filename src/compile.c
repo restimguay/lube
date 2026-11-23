@@ -718,7 +718,13 @@ static void compile_class(Comp *C, Node *n) {
 
 static void compile_let(Comp *C, Node *n) {
     VarRef *r = &n->as.let.var;
-    compile_expr(C, n->as.let.value, 1);
+    if (n->as.let.is_fn == 2) {  /* a component's handler: its block, then the handler itself in its local */
+        compile_stmt(C, n->as.let.value);
+        C->line = n->line;
+        emit(C, OP_HANDLER, C->nons - 1, 1);
+    } else {
+        compile_expr(C, n->as.let.value, 1);
+    }
     C->line = n->line;
     if (r->kind == VAR_LOCAL) {
         emit(C, OP_DEF_LOCAL, r->index, -1);
@@ -950,7 +956,7 @@ static FuncDecl *compile_function(Comp *parent, FuncDecl *d) {
     Comp c, *C = &c;
     start(C, parent->I, parent->arena, d, RUN_FILE);
     d->has_default = arena_alloc(C->arena, (size_t)(d->nparams ? d->nparams : 1));
-    d->plain = !d->is_ctor && !d->on_block;
+    d->plain = !d->is_ctor && !d->on_block && !d->is_component;
     d->plain_method = d->is_method && !d->is_ctor;
     d->plain_ctor = d->is_ctor;
     for (int i = 0; i < d->nparams; i++) {
@@ -961,7 +967,7 @@ static FuncDecl *compile_function(Comp *parent, FuncDecl *d) {
         }
     }
     for (int i = 0; i < d->nparams; i++)  /* (debug info) an `on` block's (old, new) are in its function's frame */
-        note_local(C, d->params[i], d->on_block ? d->on_block->param_slot[i] : i, 0);
+        note_local(C, d->params[i], d->on_block ? d->on_block->param_slot[0] + i : i, 0);
     for (int i = 0; i < d->nparams; i++) {  /* defaults run in the new frame, for arguments not given */
         if (!d->defaults[i]) continue;
         d->has_default[i] = 1;
@@ -972,7 +978,12 @@ static FuncDecl *compile_function(Comp *parent, FuncDecl *d) {
         emit(C, OP_DEF_PARAM, i, -1);
         patch_word(C, skip + 1, C->ncode);
     }
-    if (d->is_arrow) {
+    if (d->is_component) {  /* the component is made first: its handlers are bound to it */
+        emit(C, OP_COMPONENT_BEGIN, d->comp_slot, 0);
+        compile_stmts(C, &d->body->as.block.stmts);
+        C->line = d->body->as.block.stmts.items[d->body->as.block.stmts.count - 1]->line;
+        emit(C, OP_COMPONENT_END, d->comp_slot, 0);
+    } else if (d->is_arrow) {
         compile_expr(C, d->body, 0);
         C->line = d->body->line;
         emit(C, OP_RETURN, 0, -1);

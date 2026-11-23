@@ -1,0 +1,21 @@
+// app.serve(port): it listens, says where, and serves until a handler stops it. (cli.sh hides the port.)
+import web.*
+import net
+fn ask(p) {  // (in an isolate: a client of the server)
+  let c = net.tcp_connect("127.0.0.1", p, 5)
+  c.send("GET /stop HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+  var got = Bytes()
+  while c.is_open() { got += c.receive(5) }
+  return split(got.decode(), "\r\n")[0]
+}
+let probe = App()
+let port = probe.start(0)  // a free port
+probe.stop()
+let app = App()
+app.get("/stop", fn(req) {
+  app.stop()
+  return "bye"
+})
+let client = spawn(ask, port)
+app.serve(port)
+print(client.join(), app)

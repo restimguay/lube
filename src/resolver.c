@@ -79,6 +79,8 @@ typedef struct {
     ObjMap *pkg_names;         /* names the package's files declare (NULL if not found) */
     ObjMap *own;               /* names this file declares at the top level */
     ObjMap *aliases;           /* imported names -> the globals they are */
+    ObjString **view_lets;     /* a component's lets, worked out with its view: only the view sees them */
+    int nview_lets, in_view;
 } Resolver;
 
 static void resolve(Resolver *R, Node *n);
@@ -230,7 +232,8 @@ static void resolve_import(Resolver *R, Node *n) {
         if (!names) rerror(R, n->line, "cannot find package %s (in the program's folder or LUBE_PATH, or as a plugin)", dotted->chars);
         for (size_t i = 0; i < names->used; i++) {
             ObjString *name = AS_STRING(names->entries[i].key);
-            if (name->chars[0] != '_')
+            Value own;  /* (a name this file declares is its own: it hides the package's) */
+            if (name->chars[0] != '_' && !(map_get(R->own, OBJ_VAL(name), &own) && IS_NUM(own)))
                 map_set(R->aliases, retain(OBJ_VAL(name)), retain(OBJ_VAL(lube_global_key(R->I, dotted, name))));
         }
         n->as.import.pkg = dotted;
@@ -253,6 +256,10 @@ static void resolve_import(Resolver *R, Node *n) {
     if (!names) rerror(R, n->line, "cannot find package %s (in the program's folder or LUBE_PATH, or as a plugin)", pkg->chars);
     if (name->chars[0] == '_') rerror(R, n->line, "'%s' is private to package %s", name->chars, pkg->chars);
     if (!map_get(names, OBJ_VAL(name), NULL)) rerror(R, n->line, "package %s has no '%s'", pkg->chars, name->chars);
+    ObjString *as = n->as.import.alias ? n->as.import.alias : name;
+    Value own;
+    if (map_get(R->own, OBJ_VAL(as), &own) && IS_NUM(own))
+        rerror(R, n->line, "'%s' is imported from %s, and this file declares a '%s' too", as->chars, pkg->chars, as->chars);
     map_set(R->aliases, retain(OBJ_VAL(n->as.import.alias ? n->as.import.alias : name)),
             retain(OBJ_VAL(lube_global_key(R->I, pkg, name))));
     n->as.import.pkg = pkg;
@@ -361,6 +368,8 @@ static void resolve_block(Resolver *R, Node *b) {
     b->as.block.nslots = end_scope(R, start);
 }
 
+static void resolve_component(Resolver *R, FuncDecl *d);
+
 static void resolve_function(Resolver *R, FuncDecl *d) {
     FnCtx f;
     memset(&f, 0, sizeof f);
@@ -378,7 +387,8 @@ static void resolve_function(Resolver *R, FuncDecl *d) {
         if (d->defaults[i]) resolve(R, d->defaults[i]);
         declare(R, d->params[i], d->line, d->modes[i] != PARAM_LET, d->is_method && i == 0 ? ORIGIN_THIS : ORIGIN_PARAM);
     }
-    if (d->is_arrow) resolve(R, d->body);
+    if (d->is_component) resolve_component(R, d);
+    else if (d->is_arrow) resolve(R, d->body);
     else resolve_list(R, &d->body->as.block.stmts);  /* the body shares the parameters' scope */
 
     d->nslots = f.max_slots;
@@ -411,7 +421,10 @@ static void resolve_frame_block(Resolver *R, OnDesc *od, FuncDecl *d) {
     }
     f->ons[f->nons++] = od;
     int start = begin_scope(R);
-    for (int i = 0; i < d->nparams; i++) od->param_slot[i] = declare(R, d->params[i], d->line, 0, ORIGIN_PARAM);
+    for (int i = 0; i < d->nparams; i++) {  /* (in a row: a handler's from param_slot[0] on) */
+        int slot = declare(R, d->params[i], d->line, 0, ORIGIN_PARAM);
+        if (i < 2) od->param_slot[i] = slot;
+    }
     resolve_list(R, &d->body->as.block.stmts);
     end_scope(R, start);
     f->nons--;
@@ -461,6 +474,145 @@ static void resolve_on(Resolver *R, Node *n) {
     else resolve_function(R, od->func);
 }
 
+/* A block of a component (a handler, its view, on leave): runs on its frame, as an `on` block in a function does,
+ * whenever it is asked to (it watches nothing). */
+static OnDesc *component_block(Resolver *R, FuncDecl *d, int kind) {
+    OnDesc *od = arena_alloc(R->tree, sizeof(OnDesc));
+    memset(od, 0, sizeof *od);
+    od->func = d;
+    od->frame = 1;
+    od->kind = kind;
+    resolve_frame_block(R, od, d);
+    return od;
+}
+
+static Node *tree_node(Resolver *R, NodeKind kind, int line);
+
+/* A { } block of one statement. */
+static Node *block_of(Resolver *R, Node *stmt) {
+    Node *b = tree_node(R, N_BLOCK, stmt->line);
+    b->as.block.stmts.items = arena_alloc(R->tree, sizeof(Node *));
+    b->as.block.stmts.items[0] = stmt;
+    b->as.block.stmts.count = b->as.block.stmts.cap = 1;
+    return b;
+}
+
+static Node *tree_node(Resolver *R, NodeKind kind, int line) {
+    Node *n = arena_alloc(R->tree, sizeof(Node));
+    memset(n, 0, sizeof *n);
+    n->kind = kind;
+    n->line = n->end_line = line;
+    return n;
+}
+
+/* fn Card(title) component { ...; return view }: its body's own fns are its handlers, its `on leave` runs when it
+ * leaves (c.leave()), and what it returns is its view, worked out again each time c.view() is asked for. */
+static void resolve_component(Resolver *R, FuncDecl *d) {
+    FnCtx *f = R->fn;
+    if (!d->name || d->is_method || f->parent->decl || f->parent->depth > 0)
+        rerror(R, d->line, "a component is declared at the top level of a file, as fn Name(...) component { ... }");
+    for (int i = 0; i < d->nparams; i++)
+        if (d->modes[i] != PARAM_LET)
+            rerror(R, d->line, "a component's parameters are plain: '%s' cannot take & or var", d->params[i]->chars);
+    d->comp_slot = f->nslots++;
+    if (f->nslots > f->max_slots) f->max_slots = f->nslots;
+    NodeList *stmts = &d->body->as.block.stmts;
+    Node *last = stmts->count ? stmts->items[stmts->count - 1] : NULL;
+    if (!last || last->kind != N_RETURN || !last->as.expr)
+        rerror(R, last ? last->line : d->line,
+               "a component's body ends with 'return' and the view it shows, like 'return div(...)'");
+    /* its lets (not vars, not fns) go with the view: worked out again, in order, before each view */
+    int nlets = 0, kept = 0;
+    for (int i = 0; i < stmts->count - 1; i++)
+        nlets += stmts->items[i]->kind == N_LET && !stmts->items[i]->as.let.is_fn && !stmts->items[i]->as.let.is_var;
+    Node *view_block = tree_node(R, N_BLOCK, last->line);
+    NodeList *vl = &view_block->as.block.stmts;
+    vl->items = arena_alloc(R->tree, sizeof(Node *) * (size_t)(nlets + 1));
+    vl->cap = nlets + 1;
+    ObjString **names = nlets ? arena_alloc(R->tmp, sizeof(ObjString *) * (size_t)nlets) : NULL;
+    for (int i = 0; i < stmts->count; i++) {
+        Node *s = stmts->items[i];
+        if (s != last && s->kind == N_LET && !s->as.let.is_fn && !s->as.let.is_var) {
+            names[vl->count] = s->as.let.var.name;
+            vl->items[vl->count++] = s;
+        } else {
+            stmts->items[kept++] = s;
+        }
+    }
+    stmts->count = kept;
+    for (int i = 0; i < stmts->count; i++) {  /* every handler's name, first: the handlers see each other */
+        Node *s = stmts->items[i];
+        if (s->kind == N_LET && s->as.let.is_fn)
+            bind(&s->as.let.var, declare(R, s->as.let.var.name, s->line, 0, ORIGIN_FN), 0, ORIGIN_FN);
+    }
+    vl->items[vl->count++] = last;
+    ObjString **saved_lets = R->view_lets;
+    int saved_nlets = R->nview_lets;
+    R->view_lets = names;
+    R->nview_lets = nlets;
+    for (int i = 0; i < stmts->count; i++) {
+        Node *s = stmts->items[i];
+        if (s == last) {  /* its lets, and return view: a block of its own, run by c.view() */
+            FuncDecl *v = arena_alloc(R->tree, sizeof(FuncDecl));
+            memset(v, 0, sizeof *v);
+            v->name = lube_intern(R->I, "view", 4);
+            v->line = s->line;
+            v->src = d->src;
+            v->strict = d->strict;
+            v->defaults = d->defaults;  /* (none are read: it has no parameters) */
+            v->body = view_block;
+            Node *on = tree_node(R, N_ON, s->line);
+            on->as.on.func = v;
+            R->in_view = 1;
+            on->as.on.desc = component_block(R, v, ON_VIEW);
+            R->in_view = 0;
+            stmts->items[i] = on;
+        } else if (s->kind == N_LET && s->as.let.is_fn) {  /* fn toggle() { ... }: a handler */
+            FuncDecl *h = s->as.let.value->as.func;
+            for (int k = 0; k < h->nparams; k++)
+                if (h->modes[k] != PARAM_LET || h->defaults[k])
+                    rerror(R, h->line, "a handler's parameters are plain: '%s' cannot take &, var or a default",
+                           h->params[k]->chars);
+            if (h->ret.set) rerror(R, h->line, "a handler cannot have a return type");
+            if (!strcmp(h->name->chars, "view") || !strcmp(h->name->chars, "leave"))
+                rerror(R, h->line, "a component's '%s' is its own: name the handler something else", h->name->chars);
+            if (h->is_arrow) {  /* fn add(n) => count += n: the same as { return count += n } */
+                Node *ret = tree_node(R, N_RETURN, h->body->line);
+                ret->as.expr = h->body;
+                h->body = block_of(R, ret);
+                h->is_arrow = 0;
+            }
+            Node *on = tree_node(R, N_ON, s->line);  /* (its name was declared above) */
+            on->as.on.func = h;
+            on->as.on.desc = component_block(R, h, ON_HANDLER);
+            s->as.let.value = on;
+            s->as.let.is_fn = 2;
+        } else if (s->kind == N_ON && s->as.on.count == 1 && !s->as.on.items[0].npath &&
+                   !strcmp(s->as.on.items[0].name->chars, "leave")) {  /* on leave { ... } */
+            if (s->as.on.func->nparams) rerror(R, s->line, "'on leave' takes no (old, new): nothing changes");
+            s->as.on.count = 0;
+            s->as.on.desc = component_block(R, s->as.on.func, ON_LEAVE);
+        } else {
+            resolve(R, s);
+            for (int k = 0; s->kind == N_ON && k < s->as.on.count; k++)
+                if (s->as.on.items[k].root.kind == VAR_GLOBAL)
+                    rerror(R, s->line, "a component's 'on' blocks watch its own vars, and '%s' is a global: watch it "
+                                       "at the top level of the file", s->as.on.items[k].name->chars);
+        }
+    }
+    R->view_lets = saved_lets;
+    R->nview_lets = saved_nlets;
+    Node **rest = arena_alloc(R->tmp, sizeof(Node *) * (size_t)stmts->count);  /* the handlers are made first, so the */
+    int nrest = 0;                                                              /* body can call one written after it */
+    kept = 0;
+    for (int i = 0; i < stmts->count; i++) {
+        Node *s = stmts->items[i];
+        if (s->kind == N_LET && s->as.let.is_fn == 2) stmts->items[kept++] = s;
+        else rest[nrest++] = s;
+    }
+    for (int i = 0; i < nrest; i++) stmts->items[kept++] = rest[i];
+}
+
 /* Long chains like 1 + 1 + ... build deep trees without deep nesting in
  * the source, so the tree depth is limited here, before anything else
  * walks the tree recursively. */
@@ -507,6 +659,10 @@ static void resolve_node(Resolver *R, Node *n) {
     case N_VAR: {
         ObjString *name = n->as.var.name;
         n->as.var = lookup(R, R->fn, name, 1);
+        for (int i = 0; n->as.var.kind == VAR_GLOBAL && !R->in_view && i < R->nview_lets; i++)
+            if (R->view_lets[i] == name)
+                rerror(R, n->line, "'%s' is a let of the component, worked out again with each view: only the view sees "
+                                   "it (make it a var to keep it, or work it out where it is needed)", name->chars);
         if (n->as.var.kind == VAR_GLOBAL && !strcmp(name->chars, "this"))
             rerror(R, n->line, "'this' can only be used inside a class's methods and constructor");
         break;
@@ -616,6 +772,9 @@ static void resolve_node(Resolver *R, Node *n) {
     case N_RETURN: {  /* in an `on` block's code: ends the block */
         FuncDecl *d = R->fn->nons ? R->fn->ons[R->fn->nons - 1]->func : R->fn->decl;
         if (!d) rerror(R, n->line, "'return' can only be used inside a function");
+        if (d->is_component)
+            rerror(R, n->line, "a component returns once, at the end of its body: the view it shows, like 'return "
+                               "div(...)'");
         const char *fname = d->name ? d->name->chars : "this function";
         const char *paren = d->name ? "()" : "";
         if (!n->as.expr && d->ret.set)
@@ -713,6 +872,8 @@ int resolve_program(Interp *I, Node *program, Source *src, Arena *tree) {
     R.ns = src->package;
     R.pkg_names = NULL;
     R.own = new_map();
+    R.view_lets = NULL;
+    R.nview_lets = R.in_view = 0;
     R.aliases = new_map();
     if (setjmp(R.jb) != 0) {
         release(OBJ_VAL(R.own));
@@ -721,9 +882,6 @@ int resolve_program(Interp *I, Node *program, Source *src, Arena *tree) {
         return 0;
     }
     NodeList *stmts = &program->as.block.stmts;
-    if (!R.ns && I->main_aliases)  /* the main namespace keeps its imports (from one REPL line to the next) */
-        for (size_t i = 0; i < I->main_aliases->used; i++)
-            map_set(R.aliases, retain(I->main_aliases->entries[i].key), retain(I->main_aliases->entries[i].value));
     for (int i = 0; i < stmts->count; i++) {  /* the names this file declares */
         Node *s = stmts->items[i];
         ObjString *name = s->kind == N_LET ? s->as.let.var.name : s->kind == N_CLASS ? s->as.klass.var.name : NULL;
@@ -731,6 +889,11 @@ int resolve_program(Interp *I, Node *program, Source *src, Arena *tree) {
         int fn = s->kind == N_LET && s->as.let.is_fn && !map_get(R.own, OBJ_VAL(name), NULL);  /* 2: a fn (declared once) */
         map_set(R.own, retain(OBJ_VAL(name)), NUM_VAL(fn ? 2 : 1));
     }
+    if (!R.ns && I->main_aliases)  /* the main namespace keeps its imports (from one REPL line to the next), but for
+                                      the names this line declares anew */
+        for (size_t i = 0; i < I->main_aliases->used; i++)
+            if (!map_get(R.own, I->main_aliases->entries[i].key, NULL))
+                map_set(R.aliases, retain(I->main_aliases->entries[i].key), retain(I->main_aliases->entries[i].value));
     if (R.ns) R.pkg_names = package_names(&R, R.ns, 1);
     for (int i = 0; i < stmts->count; i++)  /* imports first: they decide what names mean */
         if (stmts->items[i]->kind == N_IMPORT && stmts->items[i]->as.import.dotted) resolve_import(&R, stmts->items[i]);
@@ -767,6 +930,8 @@ int resolve_debug(Interp *I, FuncDecl *d, Source *src, Arena *tree, Source *home
     R.ns = home ? home->package : NULL;
     R.pkg_names = NULL;
     R.own = new_map();
+    R.view_lets = NULL;
+    R.nview_lets = R.in_view = 0;
     R.aliases = new_map();
     if (setjmp(R.jb) != 0) {
         release(OBJ_VAL(R.own));

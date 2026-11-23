@@ -26,6 +26,7 @@ make test       # runs the test suite
 make check      # runs it again with memory sanitizers and a leak check
 make coverage   # measures test coverage (needs clang's llvm-cov); fails below 100%
 make tsan       # runs the suite with ThreadSanitizer (data races between isolates)
+make browser    # runs the web plugin's pages in headless Chrome (needs Node 22+ and Chrome)
 tests/soak/run.sh   # runs everything for an hour, watching memory and speed (see Testing)
 make pgo        # builds lube twice, the second time laid out by how the first one ran (needs clang): 5-15% faster
 make install    # copies lube to /usr/local/bin and its plugins to /usr/local/lib/lube (PREFIX=...)
@@ -616,6 +617,49 @@ A block inside a function runs on that function's own frame. It reads and change
 - In a `#strict` file, `(old, new)` need types: `on score (old: Number, new: Number)`.
 - With hot reload, a changed file's top-level `on` blocks replace the old ones.
 
+### Components: `fn ... component`
+
+A component is a function whose frame outlives its call. Its `var`s are its state, the `fn`s in its body are its handlers, its `on` blocks are its effects, and what it returns is its view. The body runs once, when the component is made. The view is worked out again each time it's asked for, from the state as it is then, and so are the component's `let`s:
+
+```lube
+fn Card(title) component {
+  var open = false
+  var clicks = 0
+  on open (old, new) { print("open:", new) }       // an effect: runs when open changes
+  on leave { print(title, "leaves") }              // runs once, at c.leave()
+  fn toggle() {                                    // a handler: changes the card's own vars
+    open = not open
+    clicks += 1
+  }
+  fn add(n) => clicks += n
+  let label = "{title} ({clicks})"                 // a let: worked out again with each view
+  return {title: label, open: open, clicks: clicks, onclick: toggle}
+}
+
+let c = Card("Lube")
+c.toggle()                 // open: true
+print(c.view())            // {title: "Lube (1)", open: true, clicks: 1, onclick: <handler toggle>}
+let h = c.toggle           // a handler is a function: kept, passed on, called later
+h()                        // open: false
+print(c.add(10))           // 12
+c.leave()                  // Lube leaves
+```
+
+- A handler runs on the component's frame, as an `on` block in a function does, so it changes the component's vars themselves. A closure gets copies and can't. A handler can call the component's other handlers, wherever they are written, and the body can call them too.
+- A `let` at the top of the body belongs to the view: it is worked out again, in order, before each view. So `let total = sum(prices)` is always up to date. Only the view sees it: a handler, an effect, or the body itself that uses one is an error. A value they need is a `var`, or is worked out where it is used.
+- `c.view()` runs the `return` expression again. `c.name(...)` calls a handler, and `c.name` is the handler as a function. A view that holds a handler, like `onclick: toggle` above, is how a page calls back into its component: the `web` plugin serves components as pages (see Web pages below).
+- `c.leave()` runs its `on leave` blocks; after that, its view and handlers are gone. Leaving twice does nothing.
+- A component can hold other components in its vars, a list of them for instance, and its handlers can call theirs.
+- A handler doesn't keep its component alive: once nothing else holds the component, calling the handler is an error. So a component can keep its own handlers in its vars with no cycle, and with no garbage collector nothing is left over.
+- The rules:
+  - A component is declared at the top level of a file.
+  - Its parameters, and its handlers', are plain: no `&`, `var` or defaults. Neither has a return type.
+  - Its body ends with `return` and the view, and returns nowhere else.
+  - Its `on` blocks watch its own vars; a global is watched at the top level of the file.
+  - A handler can't call itself, and a component can't leave while one of its blocks is running.
+  - Inside a component, `view` and `leave` are its own names: a handler can't use them, and `on leave` is the leave block.
+- A component isn't data, so it can't be sent to another isolate. It prints as `<component Card>`, and its type is `Component`.
+
 ### Concurrency: isolates and channels
 
 A program can use every core. `spawn` runs a function in an *isolate*: a separate interpreter, with its own heap and globals, on its own thread. Isolates share no values (Lube's values are copies anyway), so there are no locks and no data races, and each one runs at full speed. They talk through *channels*:
@@ -707,9 +751,9 @@ print(m(10, "USD").to("PHP", 58.25))   // ₱582.50
 - The currencies are ISO 4217's, with their decimals (JPY and KRW have none, BHD, KWD and JOD three). `add_currency("BTC", "₿", 8)` adds one of one's own: a code, a symbol and its decimals.
 - An amount holds up to 2⁶³ of its smallest unit (92 quadrillion dollars); a result past that is an error, as is money that is nan or infinite.
 
-### Plugins: files, sockets, sound, graphics, maths and machine learning
+### Plugins: files, sockets, sound, graphics, maths, machine learning and web pages
 
-Some of Lube comes as plugins: packages written in C, loaded when a program imports them, so a program that uses none of them doesn't load them. `make` builds those that come with Lube into `plugins/` next to `lube`: `fs` for files and folders, `net` for sockets, `audio` for sound and `gfx` for graphics; `math`, `cmath`, `statistics` and `random`, Python's modules of those names; and `array`, `nn`, `learn` and `llm`, which do what numpy, PyTorch, scikit-learn and llama.cpp do. They are imported as any package is:
+Some of Lube comes as plugins: packages written in C, loaded when a program imports them, so a program that uses none of them doesn't load them. `make` builds those that come with Lube into `plugins/` next to `lube`: `fs` for files and folders, `net` for sockets, `audio` for sound and `gfx` for graphics; `math`, `cmath`, `statistics` and `random`, Python's modules of those names; `array`, `nn`, `learn` and `llm`, which do what numpy, PyTorch, scikit-learn and llama.cpp do; and `web` for web pages. They are imported as any package is:
 
 ```lube
 import fs.*                // open, exists, list_dir...: their names, bare
@@ -1066,6 +1110,59 @@ print(q.generate("<|im_start|>user\nName three colors of the rainbow.<|im_end|>\
 - Speed, against llama-cpp-python 0.3 (llama.cpp's C++ underneath) on an M5, with the same files: TinyLlama 1.1B Q4_K_M generates 85 tokens a second to its 111 and reads a prompt at 307 to its 491; Qwen2.5 0.5B Q4_K_M generates 109 to its 163; stories15M about 2,000 to 3,100. A model in numpy (its weights in float32, products by Accelerate) generates 15 tokens a second with TinyLlama, and 700 with stories15M.
 - Left out: GPUs, the architectures beyond those above (Gemma 2 and 3, Phi-2, mixtures of experts such as Mixtral), the formats Q2_K, Q3_K and the IQ ones, Hugging Face's own checkpoints (safetensors: convert them with llama.cpp's `convert_hf_to_gguf.py`), chat templates (write the prompt as the model expects it), and YaRN's long contexts.
 
+### Web pages: `web`
+
+Pages made of components, served by Lube itself over HTTP, safe by default. A page's view is HTML from the server. Its handlers stay on the server: the page's small script sends each event over a WebSocket, the handler runs, and the page gets the new view.
+
+```lube
+import web.*
+
+fn Todos() component {
+  var items = str[]
+  fn add(fields) {                                 // submit: the form's fields
+    if trim(fields.item) != "" { items.push(trim(fields.item)) }
+  }
+  fn clear() { items = str[] }
+  return main(
+    h1("To do ({len(items)})"),
+    form({onsubmit: add}, field({name: "item"}), button("Add")),
+    ul(items.map(fn(item) => li(item))),           // text is escaped: "<b>" shows as <b>
+    button({onclick: clear, disabled: len(items) == 0}, "Clear")
+  )
+}
+
+let app = App()                                    // 127.0.0.1 unless told otherwise
+app.page("/", fn(req) => Todos(), {title: "To do", styles: ["/assets/app.css"]})
+app.get("/hello/:name", fn(req) => "hello {req.params.name}")
+app.post("/api/echo", fn(req) => {status: 201, type: "application/json", body: req.text})
+app.static("/assets", "public")
+app.serve(8080)                                    // until a handler calls app.stop()
+```
+
+- **Views.** `div(attributes?, children...)`, and the same for `p`, `span`, `a`, `button`, `form`, `ul`, `li`, `table`, `h1` to `h6` and the rest of HTML's elements. `<input>` is `field()`, because `input` is Lube's own. `el("svg", ...)` makes any other element. A child is text, a Number, a Node, a component (its view), a List of those, or nothing. Attributes are text, Numbers or Bools (`true` gives the attribute alone, `false` leaves it out). `html(view)` gives the HTML as text.
+- **Lists.** `key:` on a list's items (`li({key: item.id}, ...)`) lets the page move them as the list changes, instead of rewriting them.
+- **In the browser.** The page's script, under 5 KB, makes the page match each new view in place, changing only what differs. Focus, the caret and what's being typed stay as they are. A field takes the server's value when that value changes, but not while someone types in it, unless its form was just sent: so a form whose view leaves its fields empty clears after it is sent. Events go one at a time, at most one every 60 ms. A field's latest value replaces one still waiting, so typing fast sends what was typed, not every key. While an event waits to go or for its answer, the page's root has `data-busy`. When the server goes away, it gets `data-closed`. Both are there for styles to show.
+- **Handlers.** `onclick`, `ondblclick`, `oninput`, `onchange`, `onsubmit`, `onkeydown`, `onkeyup`, `onfocus`, `onblur`, `onmouseenter` and `onmouseleave` take a function: a component's handler, or a closure. `input` and `change` give it the element's value (a Bool for a checkbox), `submit` the form's fields as an object, and the key events the key's name. The other events give nothing.
+- **Pages.** `app.page(path, fn(req), {title, styles, scripts}?)` serves what `fn` gives, a component or a view, as a page. A page with a component or handlers is live: it keeps its component until its browser tab goes, and then runs its `on leave` blocks. `styles` and `scripts` are paths on the site.
+- **Other routes.** `app.get`, `post`, `put`, `patch` and `delete` take `fn(req)`. It returns text (`text/plain`), `Bytes`, a view (HTML), nothing (204), or `{status, body, type, headers}`. Paths take `:name` for one part and `*rest` at the end for the rest. The request is `{method, path, params, query, headers, body, text, form, ip}`: `body` is its `Bytes`, `text` the same as text, and `form` a urlencoded form's fields.
+- **Static files.** `app.static(prefix, folder)` serves the folder's files under `prefix`, with their content types.
+- **Serving.** `app.serve(port?)` serves until `app.stop()`, or until Ctrl-C (or SIGTERM), which stops it the same way: its pages leave, running their `on leave` blocks, and `serve()` returns, so the program can finish its own way. Another Ctrl-C before that is done ends the program at once. (When the program, a debugger or a host program has its own handler for the signal, or ignores it, `serve()` leaves it so.) `app.start(port)` listens (port 0 picks a free one, and `start` returns it) and `app.step(seconds)` serves what has come, so a program can serve from its own loop. All of it runs on the program's thread, inside `step()`. `app.pages()` counts the live pages. Errors go to standard error, as `web: GET /path: what happened`.
+
+`examples/web/todo.lube` is a whole app: a to-do list with items that are components of their own, a filter that updates as you type, and a stylesheet. Run `lube examples/web/todo.lube` in Lube's folder, then open http://localhost:8080/. (`lube examples/web/todo.lube 3000` serves on port 3000.)
+
+The policy is on from the start. `App({policy: {...}})` loosens a rule by name, and an unknown name is an error, so a typo can't weaken one:
+
+- **Strict requests.** Lines end with CRLF. There's no space before a header's colon and no folded header, one `Host` and one `Content-Length` of digits, no `Transfer-Encoding`, and no `..` or `.` in a path. %-escapes must be well formed and the text UTF-8. These are the gaps that request smuggling and path tricks use.
+- **Limits.** 16 KB of head, 100 headers, an 8 KB URL and a 1 MB body. A client has 10 seconds for a head, 30 for a body, and 5 idle between requests. There are 512 connections in all and 64 from one address. A client that stops reading its answer is dropped. Policy: `max_header`, `max_headers`, `max_url`, `max_body`, `header_timeout`, `body_timeout`, `keep_alive`, `max_connections`, `max_per_ip`.
+- **Security headers.** Every answer carries a Content-Security-Policy (scripts, styles and images from the site only, no inline code, no framing by other sites), `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, Cross-Origin-Opener-Policy, Cross-Origin-Resource-Policy and `X-Frame-Options: DENY`. A handler can't set these, nor a header that holds a line break. Policy: `csp`, and `inline_styles: true` for `style="..."`, which is refused otherwise.
+- **Escaping.** Text and attribute values are escaped, and only `raw(html)` goes out as it is. Nodes come from the helpers alone, so data such as a request's JSON can't become markup. `<script>`, `<style>` and `<base>` are refused. `on...` attributes take functions, never code. URLs in `href`, `src`, `action` and the like keep only `http:`, `https:`, `mailto:`, `tel:` and paths on the site: `javascript:`, `data:` and the rest become `about:invalid#refused`.
+- **Static files.** A static file comes from its folder only: no `..`, no names that start with `.` (such as `.env` or `.git`), no symbolic links, and no folder listings.
+- **WebSockets.** A page's WebSocket must come from the page's own site (`Origin`), name the page's secret, and carry the session's cookie, which is `HttpOnly` and `SameSite=Strict`. Handler ids are secret per page. Events are limited to 20 a second (bursts of 50) and 64 KB each, and a socket that breaks the protocol is closed. Policy: `origins` (other sites allowed, such as `["https://example.com"]`), `events_per_second`, `event_burst`, `max_message`, `ws_idle`, `max_pages`, `page_wait`, `secure_cookies`.
+- **Host names.** The server answers to addresses (`127.0.0.1`, `[::1]`, `10.0.0.5`), to `localhost`, and to the names in policy `hosts` (such as `["example.com"]`, or `["*"]` for any). Any other `Host` gets 421. A page of another site whose name was made to lead here (DNS rebinding) gets nothing.
+- **Forgery.** A POST, PUT, PATCH or DELETE from a page of another site gets 403. That covers an `Origin` that isn't this site's or one of policy `origins`, and `Sec-Fetch-Site: cross-site`. Clients that aren't browsers send neither header, and pass.
+- **Errors.** A handler's error answers a bare `500 Internal Server Error`. The error itself goes to the log, and to the browser only with `App({dev: true})`.
+- **TLS and proxies.** The server listens on `127.0.0.1` unless `App({host: "0.0.0.0"})` says otherwise. It doesn't speak TLS: put it behind a proxy that does, and say `trust_proxy: true`. Then `req.ip` comes from `X-Forwarded-For`, and `X-Forwarded-Proto: https` makes the cookie `Secure`. Without `trust_proxy`, those headers mean nothing.
+
 ### Writing a plugin
 
 A plugin is a shared library with one entry point. It includes `lube_plugin.h` (in Lube's `src/`), which is all it needs: everything goes through the API table that Lube passes it, so it links against no part of Lube.
@@ -1106,6 +1203,7 @@ print(maths.twice(21))   // 42
 - The entry point runs once per process; its functions can run in any isolate, so shared state goes under a lock (`lube->lock_new()`). `LUBE_PLUGIN_API` is the version of the API the plugin was made for: a newer Lube loads it, and an older one says it needs a newer Lube.
 - Version 2 of the API added what Arrays and Tensors needed. `lube->op(type, "+", fn)` gives a type an operator: `+ - * / % ** @`, the comparisons, `"neg"`, `"[]"` and `"[]="` (indexing, with several indexes as several arguments), `"len"` (and with `"[]"`, `for x in t`), `"copy"` (which makes `x[i] = v` copy a shared object first, as lists do), and `+= -= *= /= %=` in place when nothing else holds the object. `lube->property(type, "shape", fn)` makes `x.shape` work, `lube->constant(plugin, "pi", 3.14...)` gives the package a Number, and `lube->range(v, ...)` reads a range. `lube->call(vm, f, argc, argv)` and `lube->call_method(vm, obj, "forward", ...)` call back into Lube (`lube->failed(r)` says whether that raised an error), and `lube->object_keys(vm, obj)` lists an object's keys.
 - One plugin can use another's: `lube->provide(plugin, &table)` gives other plugins a table of the plugin's own, and `lube->require(plugin, "array")` loads that plugin and returns its table (`src/plugins/array.h` is array's: `nn` makes and reads Arrays through it). A program built with `lube --build` takes along the plugins its plugins require.
+- Version 3 added `lube->take_error(vm, buf, size)`: it catches the error a `call` failed with, as text (`file:line: message`), so a plugin can carry on (the web plugin answers 500 and goes on serving). `call_method` reaches a component's handlers, `view` and `leave` too.
 - `src/lube_plugin.h` describes every function, and Lube's own plugins (`src/plugins/fs.c`, `net.c`, `audio.c`, `gfx.c` and the rest) are complete examples; `tests/plugins/vec.c` uses every part of version 2.
 
 ### Errors
@@ -1179,6 +1277,7 @@ print(size(p), geometry.area(p), p is geo.Point)
 
 - Packages are found from the main program's folder, then from the folders listed in `LUBE_PATH` (separated by `:`, or `;` on Windows). Importing anything from a package loads its whole folder, once.
 - Inside a package, a name means: an imported name, else one of the package's own, else a built-in. So a package can define its own `len` without affecting anyone else.
+- A file's own top-level names come before those of `import x.*`: with `import web.*`, a file's own `header` or `var b` is its own, and `web.header` is still there by name. Importing one name the file declares too (`import web.div` next to `fn div()`) is an error.
 - `import "file"` still works as before: a file without a package line shares the importer's names. A file that has one keeps its names to itself, however it is imported.
 - Package imports go at the top level of a file. A missing package or name, a private name, or a file in a package's folder whose package line disagrees, is an error before the program runs.
 - Isolates, hot reload and `lube --build` all handle packages: a built executable carries the package files it uses.
@@ -1448,6 +1547,7 @@ Lube is written in C, and its plugins read files from anywhere (models, arrays, 
 - **Memory.** `make check` runs the suite on a build with AddressSanitizer and UndefinedBehaviorSanitizer. That build also fails if any object is still alive at exit, in the main program or in any isolate.
 - **Threads.** `make tsan` runs it with ThreadSanitizer, which reports any data race: between isolates, and in the thread pool that `array`, `nn`, `learn` and `llm` share.
 - **Coverage.** `make coverage` builds with clang's source-based coverage, runs the suite, and fails unless every line and every function of the interpreter and its plugins ran. The few defensive lines that no program can reach are marked `LCOV_EXCL_LINE` (or sit between `LCOV_EXCL_START` and `LCOV_EXCL_STOP`), and the report counts them.
+- **In a browser.** `make browser` runs the web plugin's pages in headless Chrome, driven by `tests/browser/run.mjs` over the DevTools protocol. Each case starts an app on a free port (the example app, and `tests/browser/keys.lube`), uses it as a person would, and compares what the page shows, and its console, with a `.out` file. It checks that typing fast keeps focus, the caret and every letter, that list items moving with `key:` keep their elements, that a form clears after it is sent, that markup someone types stays text, and that the page shows when the server goes. The steps wait for `data-busy` to go, not for a fixed time. With `BROWSER_LUBE=./lube-check`, they run on the checking build, and the keys app, stopped by its `/stop` route, must end without a leak. It needs Node 22 or later and Chrome or Chromium (`CHROME=` names one). Without them it says so and passes, because it is not part of `make test`.
 - **Fuzzing.** The interpreter has been fuzzed with tens of thousands of malformed and adversarial programs.
 
 ### On every pull request
@@ -1456,7 +1556,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs:
 
 | job | what it runs |
 |---|---|
-| Linux, with gcc and with clang | the build with every warning an error, `make test`, `make check`, `make tsan`, a real window (X11 under Xvfb), a static binary |
+| Linux, with gcc and with clang | the build with every warning an error, `make test`, `make check`, `make tsan`, `make browser` on both builds, a real window (X11 under Xvfb), a static binary |
 | macOS | `make test`, `make check`, `make coverage`, a real Cocoa window, a universal binary |
 | Windows (MSYS2, gcc) | `make test`, a real Win32 window, the release zip |
 | Android | the template in `mobile/android`, built with Gradle, and its native part again with every warning an error |

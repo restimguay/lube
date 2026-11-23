@@ -1,0 +1,508 @@
+this file's b <p>web&#39;s p</p>
+-- routes
+HTTP/1.1 200 OK | home
+HTTP/1.1 200 OK | hello ada lovelace
+HTTP/1.1 200 OK | hello a/b
+HTTP/1.1 404 Not Found | 404 Not Found
+HTTP/1.1 404 Not Found | 404 Not Found
+HTTP/1.1 200 OK | rest: a/b/c.txt
+HTTP/1.1 200 OK | rest:
+HTTP/1.1 200 OK | with a slash
+HTTP/1.1 404 Not Found | 404 Not Found
+HTTP/1.1 200 OK | {a: "1", b: "two words", c: "&", flag: ""} /query GET
+HTTP/1.1 200 OK | first, second a=1; b=2 127.0.0.1
+HTTP/1.1 200 OK | {name: "ada", n: "1 2!"} name=ada&n=1+2%21 17
+HTTP/1.1 200 OK application/octet-stream abc
+HTTP/1.1 201 Created yes made 7
+HTTP/1.1 200 OK | <!doctype html>
+<div><p>patched</p></div>
+deleted 7
+HTTP/1.1 204 No Content (none) (none)
+HTTP/1.1 200 OK application/json [1,2]
+HTTP/1.1 200 OK text/html; charset=utf-8 <!doctype html>
+<div class="x"><h1>A &lt;view&gt;</h1></div>
+HTTP/1.1 418  | 
+HTTP/1.1 405 Method Not Allowed GET, HEAD
+HTTP/1.1 204 No Content PUT, PATCH, DELETE
+HTTP/1.1 404 Not Found | 404 Not Found
+HTTP/1.1 200 OK 7 0
+HTTP/1.1 200 OK | hello old
+HTTP/1.1 200 OK (none) 2 true true false
+HTTP/1.1 200 OK keep-alive true
+-- hosts
+localhost: HTTP/1.1 200 OK
+LocalHost:8080: HTTP/1.1 200 OK
+127.0.0.1: HTTP/1.1 200 OK
+127.0.0.1:80: HTTP/1.1 200 OK
+10.1.2.3:8080: HTTP/1.1 200 OK
+[::1]:8080: HTTP/1.1 200 OK
+[::1]: HTTP/1.1 200 OK
+web: GET /hello/x: refused: the host "evil.example" is not this server's (App({policy: {hosts: [...]}}) names more)
+evil.example: HTTP/1.1 421 Misdirected Request
+web: GET /hello/x: refused: the host "evil.example:8080" is not this server's (App({policy: {hosts: [...]}}) names more)
+evil.example:8080: HTTP/1.1 421 Misdirected Request
+web: GET /hello/x: refused: the host "localhost.evil.example" is not this server's (App({policy: {hosts: [...]}}) names more)
+localhost.evil.example: HTTP/1.1 421 Misdirected Request
+web: GET /hello/x: refused: the host "1.2.3" is not this server's (App({policy: {hosts: [...]}}) names more)
+1.2.3: HTTP/1.1 421 Misdirected Request
+web: GET /hello/x: refused: the host "[::1" is not this server's (App({policy: {hosts: [...]}}) names more)
+[::1: HTTP/1.1 421 Misdirected Request
+web: GET /hello/x: refused: the host "[::1]x" is not this server's (App({policy: {hosts: [...]}}) names more)
+[::1]x: HTTP/1.1 421 Misdirected Request
+web: GET /: refused: the host "www.example.com" is not this server's (App({policy: {hosts: [...]}}) names more)
+a name of policy hosts: HTTP/1.1 200 OK HTTP/1.1 421 Misdirected Request
+any: HTTP/1.1 200 OK
+-- forgery
+no Origin (not a browser): HTTP/1.1 200 OK
+this site: HTTP/1.1 200 OK
+web: POST /form: refused: it came from another site (App({policy: {origins: [...]}}) names those it may)
+another site: HTTP/1.1 403 Forbidden
+web: POST /form: refused: it came from another site (App({policy: {origins: [...]}}) names those it may)
+an opaque origin: HTTP/1.1 403 Forbidden
+web: POST /form: refused: it came from another site (App({policy: {origins: [...]}}) names those it may)
+cross-site, no Origin: HTTP/1.1 403 Forbidden
+same-site: HTTP/1.1 200 OK
+GET from another site: HTTP/1.1 200 OK
+a site the policy names: HTTP/1.1 200 OK
+-- headers
+Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'
+X-Content-Type-Options: nosniff
+Referrer-Policy: same-origin
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Resource-Policy: same-origin
+X-Frame-Options: DENY
+Cache-Control: no-store
+Server: (none)
+DENY
+-- strict
+bare LF: HTTP/1.1 400 Bad Request
+CR alone: HTTP/1.1 400 Bad Request
+folded header: HTTP/1.1 400 Bad Request
+space before colon: HTTP/1.1 400 Bad Request
+no colon: HTTP/1.1 400 Bad Request
+empty name: HTTP/1.1 400 Bad Request
+two lengths: HTTP/1.1 400 Bad Request
+length and chunked: HTTP/1.1 400 Bad Request
+chunked: HTTP/1.1 501 Not Implemented
+signed length: HTTP/1.1 400 Bad Request
+length with a space: HTTP/1.1 400 Bad Request
+empty length: HTTP/1.1 400 Bad Request
+huge length: HTTP/1.1 413 Content Too Large
+body too big: HTTP/1.1 413 Content Too Large
+no host: HTTP/1.1 400 Bad Request
+two hosts: HTTP/1.1 400 Bad Request
+odd host: HTTP/1.1 400 Bad Request
+NUL: HTTP/1.1 400 Bad Request
+control character: HTTP/1.1 400 Bad Request
+absolute URL: HTTP/1.1 400 Bad Request
+asterisk: HTTP/1.1 400 Bad Request
+HTTP/2.0: HTTP/1.1 505 HTTP Version Not Supported
+HTTP/1.1x: HTTP/1.1 400 Bad Request
+not HTTP: HTTP/1.1 400 Bad Request
+no version: HTTP/1.1 400 Bad Request
+no target: HTTP/1.1 400 Bad Request
+odd method: HTTP/1.1 400 Bad Request
+empty method: HTTP/1.1 400 Bad Request
+unknown method: HTTP/1.1 501 Not Implemented
+dot dot: HTTP/1.1 400 Bad Request
+dot: HTTP/1.1 400 Bad Request
+escaped dot dot: HTTP/1.1 400 Bad Request
+backslash: HTTP/1.1 400 Bad Request
+escaped NUL: HTTP/1.1 400 Bad Request
+bad escape: HTTP/1.1 400 Bad Request
+short escape: HTTP/1.1 400 Bad Request
+not UTF-8: HTTP/1.1 400 Bad Request
+overlong UTF-8: HTTP/1.1 400 Bad Request
+bad query: HTTP/1.1 400 Bad Request
+fragment: HTTP/1.1 400 Bad Request
+odd expect: HTTP/1.1 417 Expectation Failed
+URL too long: HTTP/1.1 414 URI Too Long
+head too big: HTTP/1.1 431 Request Header Fields Too Large
+head too big, unfinished: HTTP/1.1 431 Request Header Fields Too Large
+too many headers: HTTP/1.1 431 Request Header Fields Too Large
+UTF-8 path: hello ❤
+HTTP/1.1 100 Continue | HTTP/1.1 200 OK
+-- time
+slow head: HTTP/1.1 408 Request Timeout false
+silent: HTTP/1.1 408 Request Timeout
+slow body: HTTP/1.1 408 Request Timeout
+idle: HTTP/1.1 200 OK true
+after a quiet while: 0 false
+trickle: HTTP/1.1 408 Request Timeout
+a last answer: HTTP/1.1 400 Bad Request
+then: 0 false
+-- connections
+a third from one address: true true false
+HTTP/1.1 200 OK
+past max_connections: true false
+-- answers
+web: GET /csp: an answer's header 'Content-Security-Policy' is the server's own (its policy sets it)
+/csp HTTP/1.1 500 Internal Server Error 500 Internal Server Error
+web: GET /frames: an answer's header 'x-frame-options' is the server's own (its policy sets it)
+/frames HTTP/1.1 500 Internal Server Error 500 Internal Server Error
+web: GET /length: an answer's header 'Content-Length' is the server's own (its policy sets it)
+/length HTTP/1.1 500 Internal Server Error 500 Internal Server Error
+web: GET /split: an answer's header 'X-A' has a line break or a control character in it
+/split HTTP/1.1 500 Internal Server Error 500 Internal Server Error
+web: GET /name: an answer's header 'X A' has a name that is not a header's
+/name HTTP/1.1 500 Internal Server Error 500 Internal Server Error
+web: GET /value: an answer's header 'X-A' has a value that is not text
+/value HTTP/1.1 500 Internal Server Error 500 Internal Server Error
+web: GET /headers: an answer's headers are an object, of names and text
+/headers HTTP/1.1 500 Internal Server Error 500 Internal Server Error
+web: GET /type: an answer's header 'Content-Type' is the answer's type: give it as type:
+/type HTTP/1.1 500 Internal Server Error 500 Internal Server Error
+web: GET /badtype: an answer's type is text, as "application/json"
+/badtype HTTP/1.1 500 Internal Server Error 500 Internal Server Error
+web: GET /status: an answer's status is a whole Number from 200 to 599
+/status HTTP/1.1 500 Internal Server Error 500 Internal Server Error
+web: GET /extra: an answer has no 'color' (it has status, body, type and headers)
+/extra HTTP/1.1 500 Internal Server Error 500 Internal Server Error
+web: GET /component: a component is a page: serve it with app.page()
+/component HTTP/1.1 500 Internal Server Error 500 Internal Server Error
+web: GET /throws: tests/web.lube:318: the database is down: password=hunter2
+/throws HTTP/1.1 500 Internal Server Error 500 Internal Server Error
+web: GET /bad: a view shows text, a Number, a Node, a component, a List of those, or nothing, but an Object is not one
+/bad HTTP/1.1 500 Internal Server Error 500 Internal Server Error
+web: GET /handler: <button onclick=...>: a handler works only in a page (app.page)
+/handler HTTP/1.1 500 Internal Server Error 500 Internal Server Error
+theme=dark; Path=/ /elsewhere
+web: GET /throws: tests/web.lube:334: the database is down
+HTTP/1.1 500 Internal Server Error | 500 Internal Server Error
+tests/web.lube:334: the database is down
+-- static
+HTTP/1.1 200 OK text/plain; charset=utf-8 12 no-cache hello, file
+text/css; charset=utf-8 5
+HTTP/1.1 200 OK application/octet-stream 0
+HTTP/1.1 200 OK 12 0
+/assets/nope.txt HTTP/1.1 404 Not Found
+/assets/sub HTTP/1.1 404 Not Found
+/assets/sub/ HTTP/1.1 404 Not Found
+/assets/.env HTTP/1.1 404 Not Found
+/assets/.hidden/x.txt HTTP/1.1 404 Not Found
+/assets/../outside.txt HTTP/1.1 400 Bad Request
+/assets/%2e%2e/outside.txt HTTP/1.1 400 Bad Request
+/assets/sub%2F..%2F..%2Foutside.txt HTTP/1.1 404 Not Found
+/assets/..%5Coutside.txt HTTP/1.1 404 Not Found
+/assets/C:%5Cwindows HTTP/1.1 404 Not Found
+/assets HTTP/1.1 404 Not Found
+/assets/ HTTP/1.1 404 Not Found
+/assets/made HTTP/1.1 200 OK
+HTTP/1.1 405 Method Not Allowed | 405 Method Not Allowed
+HTTP/1.1 200 OK 300000 true true
+HTTP/1.1 200 OK | a route after it
+-- html
+<div class="a&quot;b&lt;" id="5" hidden>x &lt; y &amp; &quot;z&quot; &#39;w&#39;3<p>one</p><span>two</span></div>
+<b>as it is</b> text 12 Node(<div>) Node(raw)
+<ul><li>a</li><li>b</li></ul> <br> <input type="checkbox" checked>
+<svg viewBox="0 0 1 1"><circle r="1"></circle></svg> <my-tag>x</my-tag>
+"https://example.com/a?b=1&c=2" <a href="https://example.com/a?b=1&amp;c=2">x</a>
+"http://x" <a href="http://x">x</a>
+"mailto:a@b.c" <a href="mailto:a@b.c">x</a>
+"tel:+1" <a href="tel:+1">x</a>
+"/path" <a href="/path">x</a>
+"path/x:y" <a href="path/x:y">x</a>
+"#top" <a href="#top">x</a>
+"?q=1" <a href="?q=1">x</a>
+"" <a href="">x</a>
+"javascript:alert(1)" <a href="about:invalid#refused">x</a>
+"JaVaScRiPt:alert(1)" <a href="about:invalid#refused">x</a>
+" javascript:alert(1)" <a href="about:invalid#refused">x</a>
+"java\tscript:alert(1)" <a href="about:invalid#refused">x</a>
+"java\nscript:x" <a href="about:invalid#refused">x</a>
+"\x01javascript:x" <a href="about:invalid#refused">x</a>
+"data:text/html,<script>" <a href="about:invalid#refused">x</a>
+"vbscript:x" <a href="about:invalid#refused">x</a>
+"x:y" <a href="about:invalid#refused">x</a>
+"file:///etc/passwd" <a href="about:invalid#refused">x</a>
+"aaaaaaaaaaaaaaaaaaaaaaaa:x" <a href="about:invalid#refused">x</a>
+<img src="about:invalid#refused"> <form action="about:invalid#refused"></form> <a title="javascript:x"></a>
+error: div(): the attribute 'onclick' takes a handler (a function), never code: the page runs no code written inline
+error: div(): the attribute 'onfoo' is not an event a handler can take (click, dblclick, input, change, submit, keydown, keyup, focus, blur, mouseenter, mouseleave)
+error: div(): the attribute 'data-on-click' is the page script's own
+error: div(): the attribute 'data-lube' is the page script's own
+error: el(): the attribute 'srcdoc' is refused: it is a page of HTML, unescaped
+error: div(): the attribute 'x y' is not an attribute's name
+error: div(): the attribute '1x' is not an attribute's name
+error: div(): the attribute 'title' takes text, a Number, a Bool or nothing
+error: div(): a child is text, a Number, a Node, a component, a List of those, or nothing, but an Object is not one
+error: div(): a child is text, a Number, a Node, a component, a List of those, or nothing, but a Bool is not one
+error: br() makes <br>, which has no children
+error: el(): <script> is refused: the page makes its own <html>, <head> and <body>, and runs only the scripts and stylesheets on its site (app.page(..., {scripts: [...], styles: [...]}))
+error: el(): <style> is refused: the page makes its own <html>, <head> and <body>, and runs only the scripts and stylesheets on its site (app.page(..., {scripts: [...], styles: [...]}))
+error: el(): <body> is refused: the page makes its own <html>, <head> and <body>, and runs only the scripts and stylesheets on its site (app.page(..., {scripts: [...], styles: [...]}))
+error: el(): '1x' is not a tag's name
+error: el(): 'a b' is not a tag's name
+error: el() needs a tag's name (text) first, not a Number
+error: el(): 'averyveryveryveryveryveryveryveryveryverylongtagname' is not a tag's name
+error: raw() needs text (HTML), not a Number
+<div style="color: red"></div>
+error: html(): <button onclick=...>: a handler works only in a page (app.page)
+error: html(): a view shows text, a Number, a Node, a component, a List of those, or nothing, but an Object is not one
+error: html(): the view is more than 200 levels deep (does a component show itself?)
+error: division by zero
+<div><p>shown</p><p>1</p></div>
+-- pages
+HTTP/1.1 200 OK 32 32 4 1
+true
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>A &lt;counter&gt;</title><link rel="stylesheet" href="/assets/app.css"><script src="/assets/more.js" defer></script><script src="/_lube/web.js" defer></script></head><body><div id="lube" data-page="TOKEN" data-version="1"><div><p>count: 1 </p><button data-on-click="ID">+1</button><input data-on-input="ID"><button data-on-click="ID">fail</button><form data-on-submit="ID"></form></div></div></body></html>
+
+16 true
+16 true
+16 true
+16 true
+a counter leaves at 1
+HTTP/1.1 200 OK 0 1
+HTTP/1.1 200 OK true (none) false 1
+HTTP/1.1 200 OK text/javascript; charset=utf-8 true
+HTTP/1.1 404 Not Found HTTP/1.1 404 Not Found
+true (none) true 2
+HTTP/1.1 101 Switching Protocols s3pPLMBiTxaQ9kYGzzhZRbK+xOo= websocket
+["{\"v\":2,\"html\":\"<div><p>count: 2 </p><button data-on-click=\"ID\">+1</button><input data-on-input=\"ID\"><button data-on-click=\"ID\">fail</button><form data-on-submit=\"ID\"></form></div>\"}"]
+["{\"v\":2,\"html\":\"<div><p>count: 2 </p><button data-on-click=\"ID\">+1</button><input data-on-input=\"ID\"><button data-on-click=\"ID\">fail</button><form data-on-submit=\"ID\"></form></div>\"}"]
+["{\"v\":3,\"html\":\"<div><p>count: 2 typed &lt;b&gt;</p><button data-on-click=\"ID\">+1</button><input data-on-input=\"ID\"><button data-on-click=\"ID\">fail</button><form data-on-submit=\"ID\"></form></div>\"}"]
+["{\"v\":4,\"html\":\"<div><p>count: 2 {name: &quot;ada&quot;}</p><button data-on-click=\"ID\">+1</button><input data-on-input=\"ID\"><button data-on-click=\"ID\">fail</button><form data-on-submit=\"ID\"></form></div>\"}"]
+web: an event: tests/web.lube:499: a handler failed
+["{\"v\":4,\"error\":\"tests/web.lube:499: a handler failed\"}"]
+["pong hi"]
+["{\"v\":5,\"html\":\"<div><p>count: 3 {name: &quot;ada&quot;}</p><button data-on-click=\"ID\">+1</button><input data-on-input=\"ID\"><button data-on-click=\"ID\">fail</button><form data-on-submit=\"ID\"></form></div>\"}"]
+[]
+a counter leaves at 3
+["close 1000"] false
+1
+web: a WebSocket was refused: it came from another site (Origin)
+no origin: HTTP/1.1 403 Forbidden
+web: a WebSocket was refused: it came from another site (Origin)
+another site: HTTP/1.1 403 Forbidden
+web: a WebSocket was refused: it came from another site (Origin)
+https origin: HTTP/1.1 403 Forbidden
+web: a WebSocket was refused: it came from another site (Origin)
+a site that ends the same: HTTP/1.1 403 Forbidden
+web: a WebSocket was refused: not the page's session
+no cookie: HTTP/1.1 403 Forbidden
+web: a WebSocket was refused: not the page's session
+another session: HTTP/1.1 403 Forbidden
+web: a WebSocket was refused: not the page's session
+a cookie not well made: HTTP/1.1 403 Forbidden
+web: a WebSocket was refused: no such page
+no such page: HTTP/1.1 403 Forbidden
+web: a WebSocket was refused: no such page
+no page: HTTP/1.1 403 Forbidden
+two versions: HTTP/1.1 400 Bad Request
+two origins: HTTP/1.1 400 Bad Request
+an old version: HTTP/1.1 426 Upgrade Required 13
+no key: HTTP/1.1 400 Bad Request
+a bad key: HTTP/1.1 400 Bad Request
+a key not base64: HTTP/1.1 400 Bad Request
+no upgrade: HTTP/1.1 400 Bad Request
+not to websocket: HTTP/1.1 400 Bad Request
+no Connection: upgrade: HTTP/1.1 400 Bad Request
+POST: HTTP/1.1 400 Bad Request
+its own: HTTP/1.1 101 Switching Protocols
+web: a WebSocket was refused: the page has one
+a second one: HTTP/1.1 403 Forbidden
+a counter leaves at 1
+a counter leaves at 1
+not masked: ["close 1002"] false
+a counter leaves at 1
+an extension: ["close 1002"] false
+a counter leaves at 1
+binary: ["close 1003"] false
+a counter leaves at 1
+an unknown opcode: ["close 1002"] false
+a counter leaves at 1
+a long ping: ["close 1002"] false
+a counter leaves at 1
+a ping in parts: ["close 1002"] false
+a counter leaves at 1
+a part of nothing: ["close 1002"] false
+a counter leaves at 1
+a new message inside one: ["close 1002"] false
+a counter leaves at 1
+not UTF-8: ["close 1007"] false
+a counter leaves at 1
+not JSON: ["close 1008"] false
+a counter leaves at 1
+JSON, but not an event: ["close 1008"] false
+a counter leaves at 1
+an event with more: ["close 1008"] false
+a counter leaves at 1
+an event with no version: ["close 1008"] false
+a counter leaves at 1
+an event with no handler: ["close 1008"] false
+a counter leaves at 1
+an event with a number for its handler: ["close 1008"] false
+a counter leaves at 1
+a handler that is not there: ["close 1008"] false
+a counter leaves at 1
+trailing junk: ["close 1008"] false
+a counter leaves at 1
+too deep: ["close 1008"] false
+a counter leaves at 1
+too big: ["close 1009"] false
+a counter leaves at 1
+too big, in parts: ["close 1009"] false
+a counter leaves at 1
+a close with no code: ["close"] false
+a counter leaves at 1
+bad JSON "\x": ["close 1008"] false
+a counter leaves at 1
+bad JSON "\u12": ["close 1008"] false
+a counter leaves at 1
+bad JSON "\ud800": ["close 1008"] false
+a counter leaves at 1
+bad JSON "\udc00": ["close 1008"] false
+a counter leaves at 1
+bad JSON "\ud800\u0041": ["close 1008"] false
+a counter leaves at 1
+bad JSON "a": ["close 1008"] false
+a counter leaves at 1
+bad JSON "open: ["close 1008"] false
+a counter leaves at 1
+bad JSON tru: ["close 1008"] false
+a counter leaves at 1
+bad JSON -: ["close 1008"] false
+a counter leaves at 1
+bad JSON 1e999x: ["close 1008"] false
+a counter leaves at 1
+bad JSON {"a" 1}: ["close 1008"] false
+a counter leaves at 1
+bad JSON {1:1}: ["close 1008"] false
+a counter leaves at 1
+bad JSON {"a":1,}: ["close 1008"] false
+a counter leaves at 1
+bad JSON [1,]: ["close 1008"] false
+a counter leaves at 1
+bad JSON [1 2]: ["close 1008"] false
+a counter leaves at 1
+bad JSON "\: ["close 1008"] false
+a counter leaves at 1
+bad JSON {"a\u0000":1}: ["close 1008"] false
+["{\"v\":2,\"html\":\"<div><p>count: 1 &quot;\\\\/\\u0008\\u000c\\n\\u000d\\u0009Aé€😀</p><button data-on-click=\"ID\">+1</button><input data-on-input=\"ID\"><button data-on-click=\"ID\">fail</button><form data-on-submit=\"ID\"></form></div>\"}"]
+web: an event: tests/web.lube:498: 'said' is a str, so it cannot hold a List: a var keeps the type it starts with
+["{\"v\":2,\"error\":\"tests/web.lube:498: 'said' is a str, so it cannot hold a List: a var keeps the type it starts with\"}"]
+web: a page sent events too fast (policy events_per_second: 1)
+a counter leaves at 3
+too fast: ["{\"v\":2,\"html\":\"<div><p>count: 2 </p><button data-on-click=\"ID\">+1</button><input data-on-input=\"ID\"><button data-on-click=\"ID\">fail</button><form data-on-submit=\"ID\"></form></div>\"}", "{\"v\":3,\"html\":\"<div><p>count: 3 </p><button data-on-click=\"ID\">+1</button><input data-on-input=\"ID\"><button data-on-click=\"ID\">fail</button><form data-on-submit=\"ID\"></form></div>\"}", "close 1008"]
+pages: 1
+a counter leaves at 7
+pages: 0
+web: GET /: too many live pages (policy max_pages: 2)
+past max_pages: HTTP/1.1 503 Service Unavailable
+a quiet WebSocket is pinged: true
+a counter leaves at 7
+then dropped: false 1
+a counter leaves at 7
+a counter leaves at 1
+web: GET /fails: tests/web.lube:514: the page failed
+HTTP/1.1 500 Internal Server Error 500 Internal Server Error
+tests/web.lube:514: the page failed
+web: GET /badview: a view shows text, a Number, a Node, a component, a List of those, or nothing, but an Object is not one
+HTTP/1.1 500 Internal Server Error 1
+web: GET /fails: tests/web.lube:669: the page failed
+HTTP/1.1 500 Internal Server Error | 500 Internal Server Error
+web: an event: tests/web.lube:499: a handler failed
+["{\"v\":1,\"error\":\"the server could not handle that event\"}"]
+a closure ran
+["{\"v\":1}"]
+-- policy
+default-src 'self' https://cdn.example | true
+an origin the policy names: HTTP/1.1 101 Switching Protocols
+default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'
+<!doctype html>
+<div style="color: red">red</div>
+198.51.100.7 127.0.0.1
+true
+https, through the proxy: HTTP/1.1 101 Switching Protocols
+127.0.0.1
+error: App(): policy max_body is a whole Number above 0, not -1
+error: App(): policy max_body is a whole Number above 0, not 1.5
+error: App(): policy header_timeout is a Number above 0, not a str
+error: App()'s policy has no option 'max_bodyy'
+error: App(): policy csp is text (a Content-Security-Policy), not a Number
+error: App(): policy csp has a control character
+error: App(): policy inline_styles is a Bool, not a str
+error: App(): policy origins is a List of sites, not a str
+error: App(): policy origins has sites, as "https://example.com" (no path)
+error: App(): policy origins has sites, as "https://example.com" (no path)
+error: App(): policy hosts is a List of names, not a str
+error: App(): policy hosts has names, as "example.com" (no port), or "*" for any
+error: App(): policy hosts has names, as "example.com" (no port), or "*" for any
+error: App(): policy hosts has names, as "example.com" (no port), or "*" for any
+error: App(): policy is an object (the rules to loosen, by name), not a Number
+error: App(): host is text (where to listen: "0.0.0.0" is every network), not a Number
+error: App(): host is an address or a name, as "0.0.0.0"
+error: App(): dev is a Bool, not a Number
+error: App(): trust_proxy is a Bool, not a str
+error: App() has no option 'color'
+error: App() takes its options as an object, not a Number
+HTTP/1.1 413 Content Too Large
+-- errors
+App(not started) 0 0
+error: get(): a path starts with /, as "/users/:id": not "users"
+error: get() needs a path first, as "/users/:id", not a Number
+error: get(): the path "/a//b" has an empty part ("//")
+error: get(): the path "/_lube/x" is the page script's own (/_lube)
+error: get(): the path "/a/../b" has . or ..
+error: get(): the path "/:" names a part with no name
+error: get(): the path "/*rest/more" has *name before its end
+error: get(): the path "/a?b" has ?, #, %, \ or a space
+error: get() needs a function, fn(req), after its path, not a str
+error: page() needs a function, fn(req), after its path, not a Number
+error: page() takes its options as an object, not a Number
+error: page() has no option 'color'
+error: page(): title is text, not a Number
+error: page(): styles is a List of paths on this site, as "/assets/app.css"
+error: page(): styles is a List of paths on this site, as "/assets/app.css"
+error: page(): scripts is a List of paths on this site, as "/assets/app.js"
+error: page(): scripts is a List of paths on this site, as "/assets/app.js"
+error: page() needs a path first, as "/users/:id", not a Number
+error: static(): its path is a plain one, with no :name or *name
+error: static(): there is no folder "tests/web/nowhere"
+error: static(): there is no folder "tests/web/outside.txt"
+error: static() needs a folder (text) after its path, not a Number
+error: static(): a path starts with /, as "/users/:id": not "a"
+error: step(): the app has not started (app.start(port) first)
+error: start() takes a port, a whole Number from 0 to 65535 (0: any free one), not 1.5
+error: start() takes a port, a whole Number from 0 to 65535 (0: any free one), not a str
+error: start() takes a port, a whole Number from 0 to 65535 (0: any free one), not 70000
+error: start(): there is no address "not.a.host.invalid" to listen on
+error: start(): cannot listen on 127.0.0.1 port PORT (is it in use?)
+error: start(): the app is serving already, at port PORT
+error: step() takes the seconds to wait, not a str
+web: GET /serve: tests/web.lube:769: step(): the app is serving already (a handler cannot serve)
+HTTP/1.1 500 Internal Server Error | 500 Internal Server Error
+web: GET /route: tests/web.lube:770: get(): an app's routes are set before it serves, not while it does
+HTTP/1.1 500 Internal Server Error | 500 Internal Server Error
+1
+a counter leaves at 1
+HTTP/1.1 200 OK 0 0
+false
+web: GET /serve: tests/web.lube:769: step(): the app is serving already (a handler cannot serve)
+HTTP/1.1 500 Internal Server Error | 500 Internal Server Error
+App(not started)
+HTTP/1.1 200 OK 0
+-- more
+App(127.0.0.1:PORT)
+HTTP/1.1 301 Moved Permanently 10 status 301
+HTTP/1.1 302 Found 10 status 302
+HTTP/1.1 304 Not Modified (none) 
+HTTP/1.1 307 Temporary Redirect 10 status 307
+HTTP/1.1 308 Permanent Redirect 10 status 308
+HTTP/1.1 401 Unauthorized 10 status 401
+HTTP/1.1 409 Conflict 10 status 409
+HTTP/1.1 415 Unsupported Media Type 10 status 415
+HTTP/1.1 422 Unprocessable Content 10 status 422
+HTTP/1.1 429 Too Many Requests 10 status 429
+HTTP/1.1 599  10 status 599
+web: GET /style: <div style=...>: the page's CSP blocks inline styles: use a class and a stylesheet (app.page(..., {styles: [...]})), or App({policy: {inline_styles: true}})
+HTTP/1.1 500 Internal Server Error
+web: a view: tests/web.lube:822: division by zero
+["{\"v\":1,\"error\":\"the server could not handle that event\"}"]
+web: a page's leave: tests/web.lube:821: it will not leave quietly
+0
+true 127
+web: a page's leave: tests/web.lube:821: it will not leave quietly
+a lazy reader is dropped: true false
+and one that has gone: true

@@ -1,0 +1,263 @@
+// Components: fn Name(...) component { ... }, a function whose frame outlives its call. Its vars are its state,
+// its own fns its handlers, its `on` blocks its effects, and what it returns its view, worked out again each time.
+
+fn tries(f) { try { f() } catch e { print("error:", e) } }
+
+fn Card(title) component {
+  var open = false
+  var clicks = 0
+  on open (old, new) { print("effect: open", old, "->", new) }
+  on leave { print("leaving", title, "after", clicks, "clicks") }
+  fn toggle() {
+    open = not open
+    clicks += 1
+  }
+  fn add(n) => clicks += n
+  return {tag: "div", title: title, open: open, clicks: clicks, onclick: toggle}
+}
+
+// the state lasts from one call of a handler to the next; the view is worked out again each time
+let c = Card("Lube")
+print(c, type(c), c is Object)
+print(c.view())
+c.toggle()
+print(c.view())
+let h = c.toggle  // a handler is a function: kept, passed on, called later
+h()
+print(c.view()["open"], c.view().clicks)
+print(c.add(10))
+let v = c.view()
+v.onclick()  // the handler in a view, as a page would call it
+print(c.view().clicks, h, c.add)
+tries(fn() => c.add())
+tries(fn() => c.nope())
+tries(fn() => c.nope)
+
+// leaving: `on leave` runs once, and then nothing of it can run
+c.leave()
+c.leave()
+tries(fn() => c.view())
+tries(fn() => c.toggle())
+tries(fn() => h())
+
+// a handler whose component is gone
+fn handler_only() {
+  let d = Card("gone")
+  return d.toggle
+}
+let orphan = handler_only()
+tries(fn() => orphan())
+
+// handlers with parameters (typed ones are checked); called from the body, and from an `on` block
+fn Counter(start) component {
+  var n = start
+  var log = []
+  fn add(by: Number) { n += by }
+  fn move(dx, dy, dz) {
+    n += dx * 100 + dy * 10 + dz
+    return n
+  }
+  fn reset() {
+    log.push("reset at {n}")
+    n = 0
+  }
+  on n { if n > 1000 { reset() } }
+  add(5)  // (the body runs on the frame: a handler runs there too)
+  return {n: n, log: log}
+}
+let k = Counter(1)
+print(k.view())
+print(k.move(1, 2, 3), k.view())
+k.add(2000)
+print(k.view())
+tries(fn() => k.add("x"))
+print(k.view().n)
+
+// an error in a handler: what it changed before is kept, and the component goes on
+fn Fails() component {
+  var steps = []
+  fn step(x) {
+    steps.push(x)
+    if x > 1 { throw "too far: {x}" }
+  }
+  fn again() => again()
+  return steps
+}
+let fl = Fails()
+fl.step(1)
+tries(fn() => fl.step(2))
+fl.step(0)
+print(fl.view())
+tries(fn() => fl.again())
+print(fl.view())
+
+// components inside components: the parent keeps its children, its handlers reach theirs
+fn Item(name) component {
+  var done = false
+  fn finish() { done = true }
+  return "{name}: {done}"
+}
+fn Todo(names) component {
+  var items = names.map(fn(n) => Item(n))
+  var finished = 0
+  fn finish(i) {
+    items[i].finish()
+    finished += 1
+  }
+  fn add(name) { items.push(Item(name)) }
+  return {finished: finished, items: items.map(fn(it) => it.view())}
+}
+let todo = Todo(["write", "test"])
+todo.finish(1)
+todo.add("ship")
+todo.finish(2)
+print(todo.view())
+
+// a handler kept in the component's own state (no cycle: nothing is left over at the end)
+fn Keeper() component {
+  var kept = []
+  var count = 0
+  fn tick() { count += 1 }
+  kept.push(tick)
+  fn run_kept() { for t in kept { t() } }
+  return count
+}
+let kp = Keeper()
+kp.run_kept()
+kp.run_kept()
+print(kp.view())
+
+// what cannot be done while the body runs, or from inside
+fn Early() component {
+  var seen = []
+  fn look(other) { seen.push(other.view()) }
+  fn quit(other) { other.leave() }
+  return seen
+}
+let e1 = Early()
+let e2 = Early()
+e1.look(e2)
+print(e1.view())
+tries(fn() => e1.quit(e1))
+tries(fn() => e1.look(e1))
+fn Grabby() component {
+  var me = []
+  fn keep(c) { me.push(c) }
+  return len(me)
+}
+fn SelfView() component {
+  var n = 1
+  fn get() => n
+  print("in the body:", get())
+  return n
+}
+print(SelfView().view())
+
+// on leave: its error reaches leave()'s caller; a component without one leaves quietly
+fn Noisy() component {
+  on leave { throw "not now" }
+  return 0
+}
+let ny = Noisy()
+tries(fn() => ny.leave())
+let g = Grabby()
+g.leave()
+tries(fn() => g.keep(1))
+
+// a component cannot go to another isolate (it is not data)
+let ch = channel()
+tries(fn() => ch.send(Card("x")))
+tries(fn() => ch.send(k.add))
+
+// an error in the body: no component
+fn Broken(x) component {
+  var y = x * 2
+  if y > 10 { throw "too big" }
+  return y
+}
+print(Broken(1).view())
+tries(fn() => Broken(10))
+// view and leave kept as functions; an `on` block in a { } of the body ends with it
+fn Scoped() component {
+  var n = 0
+  on n { print("n is", n) }
+  fn bump() { n += 1 }
+  if true {
+    on n { print("never: the block it was in is over") }
+  }
+  return n
+}
+let sc = Scoped()
+let see = sc.view
+let go = sc.leave
+sc.bump()
+print(see())
+go()
+tries(fn() => see())
+
+// many blocks at once, brought back each time one runs
+fn Many() component {
+  var t = 0
+  fn a() { t += 1 }
+  fn b() { t += 2 }
+  fn c() { t += 3 }
+  fn d() { t += 4 }
+  fn e() { t += 5 }
+  fn f() { t += 6 }
+  fn g() { t += 7 }
+  fn h() { t += 8 }
+  fn i() { t += 9 }
+  fn j(other) { other.i() }
+  on t { if t > 100 { t = 0 } }
+  return t
+}
+let mn = Many()
+mn.a()
+mn.i()
+Many().j(mn)
+print(mn.view())
+
+// too deep: a component's frame needs room on the stack too
+fn deeper(c, n) {
+  c.view()
+  return deeper(c, n + 1)
+}
+tries(fn() => deeper(mn, 0))
+print("done")
+
+// a component that makes more of itself (a tree): in its view and handlers, its name means it too
+fn Tree(depth) component {
+  fn grow() => Tree(depth + 1)
+  return depth
+}
+print(Tree(0).grow().grow().view(), Tree(5).view())
+
+// a component's lets are worked out again with each view (its vars are its state, made once)
+fn Basket() component {
+  var prices = [3]
+  fn add(p) { prices.push(p) }
+  let total = sum(prices)
+  let label = "{len(prices)} for {total}"
+  return label
+}
+let basket = Basket()
+print(basket.view())
+basket.add(4)
+print(basket.view())
+
+// its handlers see each other, in any order, and the body can call one written after it
+fn Ordered() component {
+  var log = str[]
+  start()
+  fn start() { step("one") }
+  fn step(s) { log.push(s) }
+  return log
+}
+print(Ordered().view())
+fn Early2() component {
+  early()
+  var x = 1
+  fn early() { x += 1 }
+  return x
+}
+try { Early2() } catch e { print(e) }

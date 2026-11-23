@@ -1,0 +1,29 @@
+{
+ "steps": {
+  "flipped": [
+   "d=d",
+   "c=c",
+   "b=b",
+   "a=a"
+  ],
+  "focusKept": true,
+  "rotated": [
+   "c=c",
+   "b=b",
+   "a=a",
+   "d=d"
+  ],
+  "stillFocused": true,
+  "textareaBefore": "server text 0",
+  "unownedKept": "mine",
+  "textareaAfter": "server text 1",
+  "select": "2",
+  "extra": "extra 1",
+  "afterFail": "extra 101",
+  "afterMore": "extra 102"
+ },
+ "closedWhenServerStops": true,
+ "console": [
+  "error: lube: the server could not handle that event"
+ ]
+}

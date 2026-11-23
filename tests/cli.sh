@@ -59,6 +59,16 @@ if [ "$SECTION" = os ]; then
     if [ "$OS" != Windows ]; then  # (Windows always says where lube is)
         run "build when lube cannot find itself" perl -e 'exec {shift} "no-such-lube", @ARGV' "$ABS" --build "$TMP/tool.lube" -o "$TMP/x"
     fi
+    if [ "$OS" != Windows ]; then  # (links on Windows need an administrator)
+        mkdir -p "$TMP/site/public" "$TMP/site/secret"
+        printf 'inside\n' >"$TMP/site/public/ok.txt"
+        printf 'secret\n' >"$TMP/site/secret/key.txt"
+        ln -s ../secret/key.txt "$TMP/site/public/link.txt"
+        ln -s ../secret "$TMP/site/public/dir"
+        ln -s ok.txt "$TMP/site/public/inside-link.txt"
+        ln -s public "$TMP/site/root"
+        run "web: static files are not links" "$LUBE" tests/cli/web_links.lube "$TMP/site/public" "$TMP/site/root"
+    fi
     if [ "$OS" != Windows ]; then  # (MSYS2's kill cannot send Ctrl-C to a Windows program)
         printf 'var i = 0\nwhile true {\n  i += 1\n}\n' >"$TMP/spin.lube"
         printf 'c\np i > 0\nq\n' >"$TMP/spin.cmds"
@@ -72,8 +82,42 @@ if [ "$SECTION" = os ]; then
         sed "s|$TMP|TMP|g" "$TMP/out" | sed -E 's/spin\.lube:[0-9]+/spin.lube:N/; s/^    [0-9] \| .*/    N | (a line of the loop)/'
         echo "[exit $code]"
     fi
+    if [ "$OS" != Windows ]; then  # (the same)
+        # until WORD: waits (up to 10 s) for the line WORD in the program's marks
+        until_mark() {
+            for _ in $(seq 100); do grep -q "^$1" "$TMP/marks" 2>/dev/null && return; sleep 0.1; done
+            echo "(no '$1' in 10 s)"
+        }
+        # interrupt LABEL [slow|after] MARK...: runs web_interrupt.lube, and sends it SIGTERM at each MARK in turn. (SIGTERM
+        # goes the way Ctrl-C does; this shell's background programs ignore SIGINT, and serve() leaves that so.)
+        interrupt() {
+            echo "--- $1"
+            shift
+            rm -f "$TMP/marks"
+            more=
+            case "$1" in slow | after) more=$1 && shift ;; esac
+            "$LUBE" tests/cli/web_interrupt.lube "$TMP/marks" $more >"$TMP/out" 2>&1 &
+            pid=$!
+            for m in "$@"; do
+                until_mark "$m"
+                kill -TERM "$pid"
+            done
+            { wait "$pid"; } 2>/dev/null  # (without the shell's own word on how it ended, which differs)
+            code=$?
+            sed -E 's/:[0-9]+\//:PORT\//' "$TMP/out"
+            cat "$TMP/marks"
+            echo "[exit $code]"
+        }
+        interrupt "web: a signal stops serve(), and its pages leave; the program goes on" ready
+        interrupt "web: another signal, once serve() has returned, ends the program" after ready "serve() returned"
+        interrupt "web: a second signal while the pages leave ends the program" slow ready "the page leaves"
+    fi
     exit 0
 fi
+
+# ---- the web plugin's serve(): it says where it serves (the port differs from run to run) ----
+echo "--- web: serve(port)"
+"$LUBE" tests/cli/web_serve.lube 2>&1 | sed -E 's/:[0-9]+\//:PORT\//'
 
 # ---- flags ----
 run "version" "$LUBE" --version
@@ -90,6 +134,7 @@ feed "script from standard input" 'print("from stdin", args)\n' "$LUBE" - a b
 
 # ---- checking without running ----
 run "check a good file" "$LUBE" --check examples/shapes.lube
+run "check the web example" "$LUBE" --check examples/web/todo.lube
 run "check a file with an error" "$LUBE" --check tests/syntax_error.lube
 feed "check standard input" '#strict\nfn f(x) {}\nprint("never runs")\n' "$LUBE" --check -
 feed "check runs nothing" 'print("never runs")\n' "$LUBE" --check -
