@@ -41,5 +41,9 @@ error: cannot open 'build/files-test/nope': No such file or directory
 error: write_bytes() expects Bytes as argument 2, got str
 error: sleep(): seconds must be 0 or more
 error: len() expects a str, List, Object, Range or Bytes as argument 1, got File
+error: unsupported operand types for '+': File and File
+error: cannot index into a File
+error: unsupported operand types for '<': File and File
+ABCDEF
 true true
 false

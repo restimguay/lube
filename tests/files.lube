@@ -119,6 +119,20 @@ tries(fn() { write_bytes(dir + "/x", "text") })
 tries(fn() { sleep(-1) })
 tries(fn() { len(open(dir + "/scores.sav")) })
 
+// the order an operator that fails lets go of its operands (a File writes out when let go of): the left first
+fn opened(text) {
+    let o = open(dir + "/order.txt", "a")
+    o.write(text)
+    return o
+}
+write_file(dir + "/order.txt", "")
+tries(fn() => [opened("A")][0] + [opened("B")][0])
+tries(fn() => [opened("C")][0][[opened("D")][0]])
+tries(fn() {
+    if [opened("E")][0] < [opened("F")][0] { print("never") }
+})
+print(read_file(dir + "/order.txt"))
+
 // sleep: a frame's wait
 let t = now()
 sleep(0.02)
@@ -131,5 +145,6 @@ remove_file(dir + "/a/b")
 remove_file(dir + "/a")
 remove_file(dir + "/scores.sav")
 remove_file(dir + "/log.txt")
+remove_file(dir + "/order.txt")
 remove_file(dir)
 print(exists(dir))

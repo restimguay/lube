@@ -96,7 +96,7 @@ static void stack_effect(Comp *C, int delta) {
 }
 
 static int word(Comp *C, Instr w) {
-    if (C->ncode >= MAX_ARG) lube_out_of_memory(); /* LCOV_EXCL_LINE: 16 million words for one function */
+    if (C->ncode >= MAX_ARG / 2) lube_out_of_memory(); /* LCOV_EXCL_LINE: 8 million words for one function */
     if (C->ncode == C->capcode) {
         C->capcode = C->capcode ? C->capcode * 2 : 64;
         C->code = xrealloc(C->code, sizeof(Instr) * (size_t)C->capcode);
@@ -121,10 +121,13 @@ static int emit2(Comp *C, OpCode op, int a, int b, int delta) {
 }
 
 static void patch_to(Comp *C, int at, int target) {
-    C->code[at] = INSTR(OP_OF(C->code[at]), target);
+    C->code[at] = INSTR(OP_OF(C->code[at]), JUMP_ARG(at, target));
 }
 
 static void patch_word(Comp *C, int at, int value) { C->code[at] = (Instr)value; }
+
+/* A jump back (to the start of a loop), emitted whole. */
+static int emit_jump_to(Comp *C, OpCode op, int target) { return emit(C, op, JUMP_ARG(C->ncode, target), 0); }
 
 static int constant(Comp *C, Value v) {
     for (int i = 0; i < C->nconsts; i++)  /* strings are interned, so equal ones are the same object */
@@ -302,12 +305,12 @@ static int quick_push(Comp *C, const MethodDesc *md, Node *xs, Node *v, int line
     compile_expr(C, v, 1);
     C->line = line;
     int done = emit2(C, OP_PUSH_DO, xs->as.var.index, 0, 0);  /* (v becomes the call's nothing) */
-    patch_word(C, check + 1, C->ncode);
+    patch_word(C, check + 1, JUMP_ARG(check, C->ncode));
     C->depth = before;
     return done;
 }
 
-static void quick_push_end(Comp *C, int done) { patch_word(C, done + 1, C->ncode); }
+static void quick_push_end(Comp *C, int done) { patch_word(C, done + 1, JUMP_ARG(done, C->ncode)); }
 
 static void compile_call(Comp *C, Node *n) {
     Node *callee = n->as.call.callee;
@@ -762,7 +765,7 @@ static void compile_stmt(Comp *C, Node *n) {
         int to_end = compile_jump_unless(C, n->as.while_s.cond, n->line);
         compile_block(C, n->as.while_s.body);
         C->line = n->line;
-        emit(C, OP_LOOP, start, 0);
+        emit_jump_to(C, OP_LOOP, start);
         patch_to(C, to_end, C->ncode);
         end_loop(C, &loop, C->ncode);
     } break;
@@ -782,7 +785,7 @@ static void compile_stmt(Comp *C, Node *n) {
         if (two) note_local(C, n->as.for_s.second.name, n->as.for_s.second.index, C->ncode);
         compile_stmts(C, &n->as.for_s.body->as.block.stmts);  /* the body's slots are the loop's */
         C->line = n->line;
-        emit(C, OP_LOOP, next, 0);
+        emit_jump_to(C, OP_LOOP, next);
         int end = C->ncode;
         patch_to(C, next, end);
         end_loop(C, &loop, end);
@@ -807,7 +810,7 @@ static void compile_stmt(Comp *C, Node *n) {
             GROW(l->breaks, l->nbreaks, l->capbreaks);
             l->breaks[l->nbreaks++] = emit(C, OP_JUMP, 0, 0);
         } else {
-            emit(C, OP_JUMP, l->continue_at, 0);
+            emit_jump_to(C, OP_JUMP, l->continue_at);
         }
         break;
     }
