@@ -81,6 +81,7 @@ static Interp *enter(LubeVM *vm, char *here, Interp **was) {
     if (h->error.data) h->error.data[0] = '\0';
     *was = current;
     current = I;
+    lube_api_bind(I);
     return I;
 }
 
@@ -88,6 +89,7 @@ static Interp *enter(LubeVM *vm, char *here, Interp **was) {
 static int leave(Interp *I, Interp *was, int failed) {
     Hosted *h = (Hosted *)I->hosted;
     current = was;
+    lube_api_bind(was);  /* (none: the program's own code runs, in no interpreter) */
     h->depth--;
     if (I->exiting) return LUBE_EXIT;  /* (it stays set until the program's outermost call ends) */
     return failed ? LUBE_ERROR : LUBE_OK;
@@ -98,6 +100,7 @@ LubeVM *lube_open(void) {
     lube_hosted = 1;
     lube_output = hosted_output;
     Interp *I = lube_new(&here);  /* (each call in measures its own stack: this is only for now) */
+    lube_api_bind(current);       /* (bound while a call runs in it: enter()) */
     Hosted *h = (Hosted *)xmalloc(sizeof(Hosted));
     memset(h, 0, sizeof *h);
     sb_init(&h->error);
@@ -146,7 +149,7 @@ int lube_get(LubeVM *vm, const char *name, LubeValue *out) {
     Interp *I = (Interp *)vm;
     Value v;
     if (!map_get(I->globals, OBJ_VAL(lube_intern(I, name, strlen(name))), &v) || v.type == VAL_LENT) return 0;
-    *out = value_to_lube(retain(v));
+    *out = value_to_lube(str_heap(retain(v)));  /* (the program's: text it can point at until it releases it) */
     return 1;
 }
 
@@ -176,7 +179,7 @@ int lube_call_value(LubeVM *vm, LubeValue fn, int argc, const LubeValue *argv, L
     if (args != small) free(args);
     int failed = IS_ERR(r);
     if (failed) lube_report_uncaught(I);
-    else if (result) *result = value_to_lube(r);
+    else if (result) *result = value_to_lube(str_heap(r));
     else release(r);
     return leave(I, was, failed);
 }

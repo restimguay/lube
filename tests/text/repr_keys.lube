@@ -1,0 +1,15 @@
+// repr and printing of strs needing escapes; object keys needing quotes, short and long
+let specials = ["\t", "\n", "\r", "\"", "\\", "\x7f", "\x01", "\u{80}", "\u{a0}", "{", "}", "'", "a\tb", "line1\nline2 long", "\x1b[0m", "€", "\u{feff}", "\x00\x00"]
+for s in specials { print(repr(s), len(s)) }
+print(specials)
+var o = {}
+for k in ["a b", "if", "else", "_x", "9", "x9", "x-y", "", "é", "Ω", "with space but longer", "true", "nil", "fn", "class", "a.b", "A", "__", "1e3", "x\ny"] { o[k] = len(k) }
+print(o)
+print(keys(o))
+print({a: 1}, {"a": 1}, {"a b": 1}, {"if": 2}, {[1]: 1, [1 + 1]: 2, ["k"]: 3, ["k" + "1"]: 4, [true]: 5})
+var m = Map
+m["quote\"d"] = 1
+m["back\\slash"] = 2
+m["a"] = 3
+m[["a", "b c"]] = 4
+print(m, repr(m), str(m), "{m}")

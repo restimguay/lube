@@ -1,0 +1,26 @@
+// interpolation producing strs of 0..20 bytes, nested, with every kind of value
+let a = "abc"
+let b = "defghij"
+let c = "a long text here"
+print("{a}", "{a}{b}", "{a}{b}x", "{a}{b}xy", "{c}", "{a}{c}", "", "{""}", "x{""}y")
+for i in 0..14 {
+  let s = "{i}:{a.slice(0, i % 4)}"
+  print(s, len(s), type(s), s == str(i) + ":" + a.slice(0, i % 4))
+}
+let n = 3.25
+let neg = -0.0
+let big = 1e21
+print("{n}{n}", "{neg}", "{big}", "{[1, a]}", "{{k: a}}", "{true}", "{int8(5)}", "{String(a)}", "{m(1.5)}", "{Bytes("hi")}", "{0.1 + 0.2}")
+let nested = "out{"in{a}{b}"}out"
+print(nested, len(nested))
+let u = "é{a}é"
+print(u, len(u), String(u).length)
+var acc = ""
+for i in 0..12 {
+  acc = "{acc}{i % 10}"
+  write(len(acc), " ")
+}
+print()
+print(acc)
+print("{a} == {"abc"}: {a == "abc"}", "{a < b}", "{a in c}", "{"" in a}")
+print('{a} not interpolated', '{' + a + '}')

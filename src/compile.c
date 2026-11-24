@@ -131,13 +131,22 @@ static int emit_jump_to(Comp *C, OpCode op, int target) { return emit(C, op, JUM
 
 static int constant(Comp *C, Value v) {
     for (int i = 0; i < C->nconsts; i++)  /* strings are interned, so equal ones are the same object */
-        if (C->consts[i].type == v.type && C->consts[i].as.u == v.as.u && C->consts[i].ikind == v.ikind) return i;
+        if (C->consts[i].type == v.type && C->consts[i].as.u == v.as.u && C->consts[i].ikind == v.ikind &&
+            memcmp(C->consts[i].sbytes, v.sbytes, sizeof v.sbytes) == 0)
+            return i;
     GROW(C->consts, C->nconsts, C->capconsts);
     C->consts[C->nconsts] = v;
     return C->nconsts++;
 }
 
 static int name_const(Comp *C, ObjString *s) { return constant(C, OBJ_VAL(s)); }
+
+/* A value written out in the program, as the VM gets it: a str of up to LUBE_SSTR_MAX bytes is held in the
+ * value itself (names stay ObjStrings, interned: see name_const). */
+static int literal_const(Comp *C, Value v) {
+    if (IS_HSTR(v) && AS_STRING(v)->length <= LUBE_SSTR_MAX) v = sstr_value(AS_STRING(v)->chars, AS_STRING(v)->length);
+    return constant(C, v);
+}
 
 /* ---------- places: x, x.a, x[i] ---------- */
 
@@ -455,8 +464,8 @@ static void compile_assign(Comp *C, Node *n, int drop) {
     if (pop) emit(C, OP_POP, 0, -1);
 }
 
-static int is_comparison(TokenType op) {
-    return op == T_LT || op == T_LE || op == T_GT || op == T_GE || op == T_EQ || op == T_NEQ;
+static int is_comparison(TokenType op) {  /* (and `in`: a test, with a Bool for an answer as they have) */
+    return op == T_LT || op == T_LE || op == T_GT || op == T_GE || op == T_EQ || op == T_NEQ || op == T_IN;
 }
 
 static int operand_kind(Node *n) {
@@ -471,8 +480,8 @@ static int compile_operands(Comp *C, Node *a, Node *b, int *ia, int *ib) {
     int kb = operand_kind(b), ka = kb == OPND_STACK ? OPND_STACK : operand_kind(a);
     if (ka == OPND_STACK) compile_expr(C, a, 1);
     if (kb == OPND_STACK) compile_expr(C, b, 1);
-    *ia = ka == OPND_LOCAL ? a->as.var.index : ka == OPND_CONST ? constant(C, a->as.literal) : 0;
-    *ib = kb == OPND_LOCAL ? b->as.var.index : kb == OPND_CONST ? constant(C, b->as.literal) : 0;
+    *ia = ka == OPND_LOCAL ? a->as.var.index : ka == OPND_CONST ? literal_const(C, a->as.literal) : 0;
+    *ib = kb == OPND_LOCAL ? b->as.var.index : kb == OPND_CONST ? literal_const(C, b->as.literal) : 0;
     return ka | kb << 2;
 }
 
@@ -500,7 +509,7 @@ static void compile_expr(Comp *C, Node *n, int want_value) {
     C->line = n->line;
     switch (n->kind) {
     case N_LITERAL:
-        emit(C, OP_CONST, constant(C, n->as.literal), 1);
+        emit(C, OP_CONST, literal_const(C, n->as.literal), 1);
         break;
     case N_INTERP:
         for (int i = 0; i < n->as.items.count; i++) compile_expr(C, n->as.items.items[i], 1);
@@ -525,7 +534,11 @@ static void compile_expr(Comp *C, Node *n, int want_value) {
         break;
     case N_MAP:
         for (int i = 0; i < n->as.map.keys.count; i++) {
-            compile_expr(C, n->as.map.keys.items[i], 1);
+            Node *key = n->as.map.keys.items[i];
+            if (key->kind == N_LITERAL && IS_HSTR(key->as.literal))  /* a key written out: a name, as o.key's */
+                emit(C, OP_CONST, constant(C, key->as.literal), 1);
+            else
+                compile_expr(C, key, 1);
             C->line = n->line;
             emit(C, OP_CHECK_KEY, 0, 0);
             compile_expr(C, n->as.map.values.items[i], 1);

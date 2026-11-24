@@ -611,7 +611,7 @@ static Program *snapshot(Interp *I) {
         ObjList *l = AS_LIST(args);
         p->args = xmalloc(sizeof(char *) * (l->count ? l->count : 1));
         for (size_t i = 0; i < l->count; i++)
-            if (IS_TEXT(l->items[i])) p->args[p->nargs++] = copy_text(text_of(l->items[i])->chars, text_of(l->items[i])->length);
+            if (IS_TEXT(l->items[i])) p->args[p->nargs++] = copy_text(text_of(l->items[i])->chars, text_len(l->items[i]));
     }
     return p;
 }

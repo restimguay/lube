@@ -122,13 +122,42 @@ static LubeValue L(Value v) {
 
 typedef char value_sizes_match[sizeof(Value) == sizeof(LubeValue) ? 1 : -1];  /* (LubeValue is a Value) */
 
+/* A short str has no memory of its own for lube->str() to point at (a LubeValue is given by value), and the
+ * header promises that "text pointers are good until the plugin returns". So text reaches C code only where it
+ * has memory that lasts:
+ *   - an argument of the function: its bytes are in the arguments Lube passed, there until it returns (found
+ *     among them by lube->str(): api_args; the interpreter is the one this thread is running, bound when it was
+ *     made and when a host program calls into one, so a call into a plugin stores nothing in a thread's own
+ *     variable on its way);
+ *   - an item of a list, a value of an object: lube->list_get() and object_get() make a short one an ObjString
+ *     there, in place (the same str to a program), and hand that on: good for as long as it stays there;
+ *   - what a call returns, to a plugin or a host program: an ObjString, the caller's (str_heap).
+ * What is left (a str the plugin made itself and reads back, a short one it kept from an earlier call): a
+ * copy, one of the few this thread keeps in turn (short_str_chars). */
+static LUBE_THREAD_LOCAL Interp *api_interp;
+
+void lube_api_bind(Interp *I) { api_interp = I; }
+
+void lube_api_unbind(Interp *I) {
+    if (api_interp == I) api_interp = NULL;
+}
+
+#define PLUGIN_ENTER(args, n)                                          \
+    const void *api_args_were = I->api_args;                           \
+    int api_nargs_were = I->api_nargs;                                 \
+    I->api_args = (args);                                              \
+    I->api_nargs = (n)
+#define PLUGIN_LEAVE() (I->api_args = api_args_were, I->api_nargs = api_nargs_were)
+
 /* Every plugin function is called through this native: it finds which in I->calling. */
 static Value plugin_call(Interp *I, int argc, Value *argv) {
     const Fn *f = (const Fn *)I->calling->plugin_fn;
     LubeValue small[8] = {{{0}}};  /* (zeroed: gcc would rather it were, with no arguments) */
     LubeValue *args = argc <= 8 ? small : (LubeValue *)xmalloc(sizeof(LubeValue) * (size_t)argc);
     for (int i = 0; i < argc; i++) args[i] = L(argv[i]);  /* (a few: not worth memcpy's call) */
+    PLUGIN_ENTER(args, argc);
     LubeValue r = f->fn((LubeVM *)I, argc, args);
+    PLUGIN_LEAVE();
     if (args != small) free(args);
     Value v = V(r);
     if (I->exiting && !IS_ERR(v)) {  /* (a host program's function called Lube, which called exit(): on out) */
@@ -196,15 +225,20 @@ static void api_constructor(LubeType *t, LubeFn fn, int min, int max) {
 
 static int api_kind(LubeValue x) {
     Value v = V(x);
-    if (IS_NIL(v)) return LUBE_NOTHING;
-    if (IS_BOOL(v)) return LUBE_BOOL;
     if (IS_NUMERIC(v)) return LUBE_NUMBER;
-    if (IS_TEXT(v)) return LUBE_STR;
-    if (IS_BYTES(v)) return LUBE_BYTES;
-    if (IS_LIST(v)) return LUBE_LIST;
-    if (IS_MAP(v)) return LUBE_OBJECT;
-    if (IS_FOREIGN(v)) return LUBE_FOREIGN;
-    return LUBE_OTHER;
+    if (IS_OBJ(v)) {  /* (by its type, looked at once) */
+        switch (OBJ_TYPE(v)) {
+        case OBJ_FOREIGN: return LUBE_FOREIGN;
+        case OBJ_LIST: return LUBE_LIST;
+        case OBJ_MAP: return LUBE_OBJECT;
+        case OBJ_STRING: case OBJ_STROBJ: return LUBE_STR;
+        case OBJ_BYTES: return LUBE_BYTES;
+        default: return LUBE_OTHER;
+        }
+    }
+    if (IS_SSTR(v)) return LUBE_STR;
+    if (IS_BOOL(v)) return LUBE_BOOL;
+    return IS_NIL(v) ? LUBE_NOTHING : LUBE_OTHER;
 }
 
 static double api_number(LubeValue x) {
@@ -214,14 +248,31 @@ static double api_number(LubeValue x) {
 
 static int api_truthy(LubeValue x) { return is_truthy(V(x)); }
 
+#define API_KEPT 64  /* (the copies a thread keeps of short strs that are nowhere else: see api_interp) */
+
+static LUBE_NOINLINE const char *short_str_chars(Value v) {
+    const Interp *I = api_interp;
+    if (I) {  /* an argument of the function being called: its bytes, where Lube put them */
+        const char *arg = (const char *)I->api_args;
+        for (int i = 0; i < I->api_nargs; i++, arg += sizeof(Value))
+            if (memcmp(arg, &v, sizeof v) == 0) return arg + offsetof(Value, sbytes);
+    }
+    static LUBE_THREAD_LOCAL char kept[API_KEPT][LUBE_SSTR_MAX + 1];
+    static LUBE_THREAD_LOCAL unsigned next;
+    char *slot = kept[next++ % API_KEPT];
+    memcpy(slot, SSTR_CHARS(&v), LUBE_SSTR_MAX + 1);
+    return slot;
+}
+
 static const char *api_str(LubeValue x, size_t *len) {
     Value v = V(x);
     if (!IS_TEXT(v)) {
         if (len) *len = 0;
         return NULL;
     }
-    if (len) *len = text_of(v)->length;
-    return text_of(v)->chars;
+    if (len) *len = text_len(v);
+    if (IS_SSTR(v)) return short_str_chars(v);  /* (see api_interp) */
+    return (IS_HSTR(v) ? AS_STRING(v) : AS_STROBJ(v)->text)->chars;
 }
 
 static const unsigned char *api_bytes(LubeValue x, size_t *len) {
@@ -241,7 +292,10 @@ static size_t api_list_len(LubeValue x) {
 
 static LubeValue api_list_get(LubeValue x, size_t i) {
     Value v = V(x);
-    return L(IS_LIST(v) && i < AS_LIST(v)->count ? AS_LIST(v)->items[i] : NIL_VAL);
+    if (!IS_LIST(v) || i >= AS_LIST(v)->count) return L(NIL_VAL);
+    Value *item = &AS_LIST(v)->items[i];
+    if (IS_SSTR(*item)) *item = str_heap(*item);  /* (text a plugin can point at: see api_interp) */
+    return L(*item);
 }
 
 /* key, interned: through a cache by its address (plugins' keys are mostly their literals), checked against the
@@ -258,9 +312,10 @@ static ObjString *plugin_key(Interp *I, const char *key) {
 }
 
 static int api_object_get(LubeVM *vm, LubeValue o, const char *key, LubeValue *out) {
-    Value v = V(o), got;
-    if (!IS_MAP(v) || !map_get(AS_MAP(v), OBJ_VAL(plugin_key((Interp *)vm, key)), &got)) return 0;
-    *out = L(got);
+    Value v = V(o), *got;
+    if (!IS_MAP(v) || !(got = map_find(AS_MAP(v), OBJ_VAL(plugin_key((Interp *)vm, key))))) return 0;
+    if (IS_SSTR(*got)) *got = str_heap(*got);  /* (as api_list_get does) */
+    *out = L(*got);
     return 1;
 }
 
@@ -273,7 +328,7 @@ static LubeValue api_number_value(double x) { return L(NUM_VAL(x)); }
 static LubeValue api_new_str(LubeVM *vm, const char *s, size_t len) {
     (void)vm;
     if (len > LUBE_MAX_BYTES) lube_out_of_memory();
-    return L(OBJ_VAL(new_string(s, len)));
+    return L(str_value(s, len));
 }
 
 static LubeValue api_new_bytes(LubeVM *vm, const void *data, size_t len) {
@@ -418,13 +473,13 @@ static LubeValue api_call(LubeVM *vm, LubeValue fn, int argc, const LubeValue *a
     Value r = IS_CALLABLE(V(fn)) ? lube_call((Interp *)vm, V(fn), argc, args)
                                  : lube_error((Interp *)vm, "%s cannot be called", a_type(V(fn)));
     if (args != small) free(args);
-    return L(r);
+    return L(str_heap(r));
 }
 
 static LubeValue api_call_method(LubeVM *vm, LubeValue obj, const char *name, int argc, const LubeValue *argv) {
     Interp *I = (Interp *)vm;
     Value v = V(obj);
-    if (IS_COMPONENT(v)) return L(lube_component_call(I, v, lube_intern(I, name, strlen(name)), argc, (Value *)argv));
+    if (IS_COMPONENT(v)) return L(str_heap(lube_component_call(I, v, lube_intern(I, name, strlen(name)), argc, (Value *)argv)));
     ObjClass *c = IS_INSTANCE(v) ? AS_MAP(v)->klass : IS_FOREIGN(v) ? AS_FOREIGN(v)->klass : NULL;
     Value m = c ? lube_find_method(c, lube_intern(I, name, strlen(name))) : NIL_VAL;
     if (IS_NIL(m)) return L(lube_error(I, "%s has no method '%s'", a_type(v), name));
@@ -432,7 +487,7 @@ static LubeValue api_call_method(LubeVM *vm, LubeValue obj, const char *name, in
     if (argc) memcpy(args, argv, sizeof(Value) * (size_t)argc);
     Value r = lube_call_method(I, m, v, argc, args);
     if (args != small) free(args);
-    return L(r);
+    return L(str_heap(r));
 }
 
 static int api_failed(LubeValue v) { return IS_ERR(V(v)); }
@@ -804,7 +859,7 @@ static LubeFn op_of(Value v, int op) { return IS_FOREIGN(v) ? AS_FOREIGN(v)->kla
 
 /* Calls operator fn with argv (borrowed; tuple: x[i, j]'s indexes, spread out) and `last` after them when
  * it is not nothing (the value of x[i] = v): returns what it gives. */
-static Value op_call(Interp *I, LubeFn fn, Value x, Value idx, Value last) {
+LUBE_INLINE Value op_call(Interp *I, LubeFn fn, Value x, Value idx, Value last) {
     Value small[8], *args = small;
     int n = 1 + (IS_TUPLE(idx) ? (int)AS_LIST(idx)->count : !IS_NIL(idx)) + !IS_NIL(last);
     if (n > 8) args = (Value *)xmalloc(sizeof(Value) * (size_t)n);
@@ -817,7 +872,9 @@ static Value op_call(Interp *I, LubeFn fn, Value x, Value idx, Value last) {
     if (!IS_NIL(last)) args[k++] = last;
     LubeValue lsmall[8], *largs = n > 8 ? (LubeValue *)xmalloc(sizeof(LubeValue) * (size_t)n) : lsmall;
     memcpy(largs, args, sizeof(Value) * (size_t)n);
+    PLUGIN_ENTER(largs, n);
     Value r = V(fn((LubeVM *)I, n, largs));
+    PLUGIN_LEAVE();
     if (args != small) free(args);
     if (largs != lsmall) free(largs);
     return r;
@@ -850,7 +907,9 @@ int lube_foreign_binary(Interp *I, int op, Value a, Value b, Value *out) {
     Value args[2] = {a, b};
     LubeValue largs[2];
     memcpy(largs, args, sizeof largs);
+    PLUGIN_ENTER(largs, 2);
     *out = V(fn((LubeVM *)I, 2, largs));
+    PLUGIN_LEAVE();
     return 1;
 }
 

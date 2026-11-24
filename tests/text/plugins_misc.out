@@ -1,0 +1,6 @@
+[3, 2, 0] ["a very long label name", "bird", "cat", "dog"]
+error: transform(): y has a label LabelEncoder did not see in fit: "fish"
+4294944000 4294934528 4294936576 0 [12, 10] [216, 20]
+error: color(): 'nocolour' is not a color: a name ("orange"), or "#rgb", "#rrggbb" or "#rrggbbaa"
+error: color(): '#12345' is not a color: a name ("orange"), or "#rgb", "#rrggbb" or "#rrggbbaa"
+0 0 true

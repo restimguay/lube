@@ -1,0 +1,66 @@
+// A plugin reading text every way the plugin API hands it one (tests/plugins/texts.c): strs of a few bytes,
+// which are held in their values, and longer ones, each through pointers the plugin keeps for as long as it may.
+import texts
+fn tries(f) { try { f() } catch e { print("error:", e) } }
+
+// arguments: short, long, the same one twice, text with a NUL in it, a String, what is not text
+print(texts.args("a", "bb", "abcdefghij", "abcdefghijk", "", "é", "日本語x"))
+print(texts.args("x", "x", "x" + "", String("x"), 5, true, [1], "tail"))
+print(len(texts.args("a\x00b", "\x00")), texts.args())
+let grown = "ab" * 5
+let cut = "a longer text than ten bytes".slice(2, 8)
+print(texts.args(grown, cut, grown + cut, str(12345), "{cut}!", upper(cut), "p,q".split(",")[1]))
+
+// items of a list: hundreds of pointers held at once, and the list as it was afterwards
+var xs = []
+for i in 0..300 { xs.push(i % 3 == 0 and "n{i}" or i % 3 == 1 and "a longer item {i}" or "") }
+let before = xs.join(",")
+let ys = xs  // (shared until one changes)
+print(texts.items(xs) == before, texts.items(xs) == before, len(xs), xs == ys, xs[0], type(xs[0]), xs[3] == "n3", "n3" in xs)
+xs.push("z")
+print(len(xs), len(ys), texts.items(ys) == before, xs.index_of("n297"), sort(["b", xs[0], "a"]), {k: xs[0]}, repr(xs[0]))
+print(texts.items(["one", 2, "three", String("S")]), texts.items([]), texts.items("not a list"))
+var typed = str[]
+typed.push("p")
+typed.push("a typed list's long item")
+print(texts.items(typed), typed, typed[0] == "p")
+var counts = {}
+for w in ["p", "q", "p"] { counts[w] = get(counts, w, 0) + 1 }
+print(texts.items(keys(counts)), counts, counts["p"], counts.q)
+
+// values of an object, and of a Map with keys made as the program runs
+var o = {name: "ada", role: "an engineer of note", n: 3, tag: "x"}
+print(texts.fields(o), o, o.name == "ada", o.tag + o.name, len(o))
+o.name = "bo"
+print(texts.fields(o), texts.fields(o), o)
+var m = Map
+for i in 0..12 { m["k{i}"] = "v{i}" }
+m["a key longer than ten bytes"] = "a value longer than ten bytes"
+print(texts.fields(m))
+print(m["k3"], m["k11"], "k5" in m, len(m), keys(m)[0], type(keys(m)[0]), texts.fields({}), texts.fields(5))
+class Pet {
+  var name = "rex"
+  var kind = "a very good dog"
+  fn hello() => "hi"
+  fn long() => "hello from {this.name}, {this.kind}"
+  fn num() => 7
+}
+let p = Pet()
+print(texts.fields(p), p, p.name, texts.method(p, "hello"), texts.method(p, "long"), texts.method(p, "num"))
+tries(fn() => texts.method(p, "nope"))
+
+// what a call returns: each result kept until all are had
+fn short(x) => "r{x}"
+fn long(x) => "a result longer than ten bytes: {x}"
+fn fails(x) { throw "no {x}" }
+print(texts.calls(short, 1, 5), texts.calls(long, "x", 2), texts.calls(upper, "abc", 100) == ("ABC " * 100).trim())
+print(texts.calls(fn(x) => str(x), 42, 3), texts.calls(fn(x) => x, 9, 2), texts.calls(repr, "q", 2))
+tries(fn() => texts.calls(fails, "luck", 3))
+
+// a str kept from one call to a later one, read many times; and a str the plugin makes and reads back
+texts.keep("kept")
+print(texts.kept(1), texts.kept(3), texts.kept(500), texts.args("other", "texts", "between"))
+texts.keep("a kept text that is longer")
+print(texts.kept(2), texts.kept(500))
+texts.keep("é")
+print(texts.kept(2), texts.made("m"), texts.made("abcdefghij"), texts.made("abcdefghijk"), texts.made(""))

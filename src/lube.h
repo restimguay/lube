@@ -142,7 +142,8 @@ typedef struct ObjClass ObjClass;
 typedef enum {
     VAL_NIL, VAL_BOOL, VAL_NUM, VAL_INT, VAL_OBJ,
     VAL_ERR,    /* internal: "an error is being raised", never stored */
-    VAL_LENT    /* internal: a global whose value is lent out with & */
+    VAL_LENT,   /* internal: a global whose value is lent out with & */
+    VAL_STR     /* a str of at most LUBE_SSTR_MAX bytes, held in the value itself: no object, no owner count */
 } ValueType;
 
 /* Sized integers (integer.c). Arithmetic on them is checked: a result that
@@ -152,7 +153,8 @@ typedef enum { IK_I8, IK_I16, IK_I32, IK_I64, IK_U8, IK_U16, IK_U32, IK_U64 } In
 
 typedef struct {
     ValueType type;
-    unsigned char ikind;    /* VAL_INT only: which IntKind */
+    unsigned char ikind;    /* VAL_INT: which IntKind; VAL_STR: its length in bytes */
+    unsigned char sbytes[3];  /* VAL_STR: its first bytes; the rest follow, in `as` (SSTR_CHARS): 0 otherwise */
     union {
         int boolean;
         double number;      /* VAL_NUM: every plain number is a double */
@@ -180,7 +182,16 @@ typedef struct {
 #define IS_ERR(v)    ((v).type == VAL_ERR)
 #define OBJ_TYPE(v)  ((v).as.obj->type)
 
-#define IS_STRING(v)   (IS_OBJ(v) && OBJ_TYPE(v) == OBJ_STRING)
+/* A str is held one of two ways: in the value itself when it has at most LUBE_SSTR_MAX bytes (IS_SSTR: made by
+ * str_value(), by the literals of a program, by split, slice, interpolation...), or as an ObjString (IS_HSTR:
+ * longer text, and every name the interpreter itself keeps). A short text may be held either way: both are the
+ * same str to a program (equal, with the same hash), and code that reads one goes through text_in(). */
+#define LUBE_SSTR_MAX 10
+#define IS_SSTR(v)     ((v).type == VAL_STR)
+#define IS_HSTR(v)     (IS_OBJ(v) && OBJ_TYPE(v) == OBJ_STRING)
+#define IS_STRING(v)   (IS_SSTR(v) || IS_HSTR(v))
+#define SSTR_LEN(v)    ((size_t)(v).ikind)
+#define SSTR_CHARS(p)  ((char *)(p) + offsetof(Value, sbytes))  /* p: a Value *; its bytes, then a NUL */
 #define IS_LIST(v)     (IS_OBJ(v) && OBJ_TYPE(v) == OBJ_LIST)
 #define IS_MAP(v)      (IS_OBJ(v) && OBJ_TYPE(v) == OBJ_MAP)
 #define IS_FUNCTION(v) (IS_OBJ(v) && OBJ_TYPE(v) == OBJ_FUNCTION)
@@ -397,9 +408,131 @@ struct ObjStrObj {
     ObjString *text;
 };
 
-/* The text of a str or a String (borrowed). */
-static inline ObjString *text_of(Value v) {
+/* Copies n <= 16 bytes with no call and no loop: two moves that overlap cover 8 to 16 bytes, or 4 to 8; of
+ * 1 to 3 bytes, the first, the middle and the last are all of them. */
+static inline void lube_copy16(char *to, const char *from, size_t n) {
+    if (n >= 8) {
+        uint64_t a, b;
+        memcpy(&a, from, 8);
+        memcpy(&b, from + n - 8, 8);
+        memcpy(to, &a, 8);
+        memcpy(to + n - 8, &b, 8);
+    } else if (n >= 4) {
+        uint32_t a, b;
+        memcpy(&a, from, 4);
+        memcpy(&b, from + n - 4, 4);
+        memcpy(to, &a, 4);
+        memcpy(to + n - 4, &b, 4);
+    } else if (n) {
+        to[0] = from[0];
+        to[n >> 1] = from[n >> 1];
+        to[n - 1] = from[n - 1];
+    }
+}
+
+/* (16 bytes, with nothing between the fields: a short str's bytes run from sbytes to the end.) */
+typedef char lube_value_layout[sizeof(Value) == 16 && offsetof(Value, sbytes) == 5 && offsetof(Value, as) == 8 ? 1 : -1];
+
+/* The short str holding chars[0..n), n <= LUBE_SSTR_MAX: every other byte of the value is zero, so two short
+ * strs are the same text exactly when their 16 bytes are the same. */
+static inline Value sstr_value(const char *chars, size_t n) {
+    Value v;
+    v.type = VAL_STR;
+    v.ikind = (unsigned char)n;
+    v.sbytes[0] = v.sbytes[1] = v.sbytes[2] = 0;
+    v.as.u = 0;
+    lube_copy16(SSTR_CHARS(&v), chars, n);
+    return v;
+}
+
+static inline int sstr_same(Value a, Value b) {  /* two short strs: the same text? */
+    uint64_t a0, a1, b0, b1;
+    memcpy(&a0, &a, 8);
+    memcpy(&a1, (const char *)&a + 8, 8);
+    memcpy(&b0, &b, 8);
+    memcpy(&b1, (const char *)&b + 8, 8);
+    return a0 == b0 && a1 == b1;
+}
+
+/* A short str's hash: of its two words (two multiplications; the fold between them brings the first bytes,
+ * which sit in the upper half of the first word, down to where the second multiplication spreads them: without
+ * it the low bits of the hash would not depend on them, and keys "k1", "k2"... would crowd a map's index). An
+ * ObjString of the same text hashes alike (string_hash). */
+static inline uint32_t sstr_hash(Value v) {
+    uint64_t a, b;
+    memcpy(&a, &v, 8);
+    memcpy(&b, (const char *)&v + 8, 8);
+    uint64_t x = a ^ (b * 0x9e3779b97f4a7c15ULL);
+    x ^= x >> 32;
+    x *= 0xff51afd7ed558ccdULL;
+    return (uint32_t)(x >> 32);
+}
+
+/* The short str of one byte. */
+static inline Value sstr_byte(unsigned char c) {
+    Value v;
+    v.type = VAL_STR;
+    v.ikind = 1;
+    v.sbytes[0] = c;
+    v.sbytes[1] = v.sbytes[2] = 0;
+    v.as.u = 0;
+    return v;
+}
+
+/* Reading text. text_in(v, &t) gives the ObjString of a str or a String (borrowed); for a short str it is t,
+ * filled from the value: memory of the caller's, good while t is in scope and never to be kept (str_object()
+ * gives one to keep). Its owner count is out of reach of retain and release. */
+typedef union {
+    ObjString s;
+    char room[sizeof(ObjString) + LUBE_SSTR_MAX + 6];
+} StrTemp;
+#define LUBE_TEMP_POOL 0xEE  /* (the `pool` of a StrTemp's ObjString: no free list has it) */
+
+static inline ObjString *text_in(Value v, StrTemp *t) {
+    if (v.type == VAL_STR) {
+        t->s.obj.rc = (size_t)1 << 30;
+        t->s.obj.type = OBJ_STRING;
+        t->s.obj.pool = LUBE_TEMP_POOL;
+        t->s.length = t->s.capacity = v.ikind;
+        t->s.hash = 0;
+        t->s.hashed = 0;
+        memcpy(t->s.chars, SSTR_CHARS(&v), LUBE_SSTR_MAX + 1);
+        return &t->s;
+    }
     return v.as.obj->type == OBJ_STRING ? (ObjString *)v.as.obj : ((ObjStrObj *)v.as.obj)->text;
+}
+
+/* ...and where no name is at hand: a temporary of the enclosing block's (so: not to be returned or kept). */
+#define text_of(v) text_in((v), &(StrTemp){.room = {0}})
+
+/* Where the bytes of a str or String are (and how many), for as long as *v stays where it is. */
+static inline const char *text_chars(const Value *v, size_t *len) {
+    if (v->type == VAL_STR) {
+        *len = v->ikind;
+        return SSTR_CHARS(v);
+    }
+    ObjString *s = v->as.obj->type == OBJ_STRING ? (ObjString *)v->as.obj : ((ObjStrObj *)v->as.obj)->text;
+    *len = s->length;
+    return s->chars;
+}
+
+/* ...as one thing: the bytes of a text, where they are. (Reading text this way needs no memory of the
+ * function's own; text_in() is for code that wants an ObjString.) */
+typedef struct {
+    const char *chars;
+    size_t length;
+} Text;
+
+static inline Text text_at(const Value *v) {
+    Text t;
+    t.chars = text_chars(v, &t.length);
+    return t;
+}
+
+/* The length in bytes of a str or a String. */
+static inline size_t text_len(Value v) {
+    if (v.type == VAL_STR) return v.ikind;
+    return v.as.obj->type == OBJ_STRING ? ((ObjString *)v.as.obj)->length : ((ObjStrObj *)v.as.obj)->text->length;
 }
 
 /* memory.c */
@@ -412,13 +545,77 @@ void *lube_block_alloc(size_t size);
 void lube_block_free(void *p, size_t size);
 void *lube_block_realloc(void *p, size_t old, size_t size);
 
+/* (The checking build stops at once if a StrTemp's ObjString, memory of some function's, is given an owner or
+ * put in a list or a map: text_in()'s are for reading only.) */
+#ifdef LUBE_CHECK_LEAKS
+void lube_temp_kept(void);
+#define LUBE_NOT_TEMP(v) do { if ((v).type == VAL_OBJ && (v).as.obj->pool == 0xEE) lube_temp_kept(); } while (0)
+#else
+#define LUBE_NOT_TEMP(v) ((void)0)
+#endif
+
 static inline Value retain(Value v) {
+    LUBE_NOT_TEMP(v);
     if (v.type == VAL_OBJ) v.as.obj->rc++;
     return v;
 }
 
 static inline void release(Value v) {
     if (v.type == VAL_OBJ && --v.as.obj->rc == 0) obj_destroy(v.as.obj);
+}
+
+/* ======================================================================
+ * Text, eight bytes at a time. A 64-bit word holds 8 bytes of text, and
+ * plain arithmetic on it tests or changes all 8 at once: the same result
+ * on every system, with any compiler. Only finding WHICH byte of a word
+ * matched needs the byte order and a count of trailing zeros: where the
+ * compiler gives neither (LUBE_SWAR_SCAN 0), the scans go byte by byte.
+ * ==================================================================== */
+#define LUBE_W_ONES 0x0101010101010101ULL
+#define LUBE_W_LOW7 0x7f7f7f7f7f7f7f7fULL
+#define LUBE_W_HIGH 0x8080808080808080ULL
+
+static inline uint64_t lube_load64(const char *p) {
+    uint64_t w;
+    memcpy(&w, p, 8);
+    return w;
+}
+
+/* 0x80 in every byte of w that is zero, and nothing anywhere else (no carry leaves a byte). */
+static inline uint64_t lube_zero_bytes(uint64_t w) {
+    return ~(((w & LUBE_W_LOW7) + LUBE_W_LOW7) | w | LUBE_W_LOW7);
+}
+
+/* A loop over bytes with no branch in it (changing the case of each) is made 16 bytes at a time or more by
+ * clang at -O2 (0.34 instructions a byte); gcc at -O2 leaves it a byte at a time, and there the same loop
+ * written eight bytes at a time in a word is quicker (1.9 a byte). Both are plain C and give the same bytes;
+ * this says which is used (-DLUBE_NO_SWAR_SCAN, for testing, also picks the plain loop). Counting the bytes
+ * equal to one is the other way round: clang's 16 at a time must widen its counts, and the word is quicker. */
+#if defined(__clang__) || defined(LUBE_NO_SWAR_SCAN)
+#define LUBE_LOOPS_VECTORIZED 1
+#endif
+
+#if (defined(__GNUC__) || defined(__clang__)) && defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__ && \
+    !defined(LUBE_NO_SWAR_SCAN)  /* (-DLUBE_NO_SWAR_SCAN: the plain way, to test that it gives the same) */
+#define LUBE_SWAR_SCAN 1
+#define LUBE_FIRST_BYTE(m) ((size_t)__builtin_ctzll(m) >> 3)  /* the first byte (in memory) that m marks */
+#else
+#define LUBE_SWAR_SCAN 0
+#endif
+
+/* Where byte c first is in s[0..n), or n. */
+static inline size_t lube_scan_byte(const char *s, size_t n, unsigned char c) {
+    size_t i = 0;
+#if LUBE_SWAR_SCAN
+    uint64_t pattern = LUBE_W_ONES * c;
+    for (; i + 8 <= n; i += 8) {
+        uint64_t m = lube_zero_bytes(lube_load64(s + i) ^ pattern);
+        if (m) return i + LUBE_FIRST_BYTE(m);
+    }
+#endif
+    for (; i < n; i++)
+        if ((unsigned char)s[i] == c) return i;
+    return n;
 }
 
 /* ======================================================================
@@ -604,6 +801,8 @@ static inline LubeValue value_to_lube(Value v) {
     memcpy(&x, &v, sizeof x);
     return x;
 }
+void lube_api_bind(Interp *I);               /* (plugin.c) this thread runs I (NULL: none): lube->str() looks there */
+void lube_api_unbind(Interp *I);             /* ...and no longer, I being freed */
 void lube_plugins_start(void);               /* (the first lube_new, before any isolate) */
 const char *lube_plugin_file(Interp *I, ObjString *name);  /* the file it was loaded from (NULL: compiled in) */
 Value lube_foreign_construct(Interp *I, ObjClass *c, int argc, Value *argv);  /* Sound(...) */
@@ -1116,6 +1315,8 @@ struct Interp {
     long hot_last;                  /* clock() when the files were last looked at */
     ObjList *imports_found;         /* while building: the import paths the resolver sees */
     ObjString *chars[256];          /* cached one-byte strings */
+    const void *api_args;           /* (plugin.c) the arguments of the plugin's function being called: LubeValues, */
+    int api_nargs;                  /* ...and how many: lube->str() finds a short str's bytes there */
     struct { const char *at; ObjString *s; } key_cache[64];  /* (plugins' keys, by their address: object_get's) */
 
     Value ret_val;                  /* the result of the frame execute() was entered for (see vm_step) */
@@ -1194,14 +1395,27 @@ void print_source_line(Source *src, int line, int col);
 uint32_t hash_bytes(const char *s, size_t n);
 ObjString *alloc_string(size_t length);
 ObjString *new_string(const char *chars, size_t length);
+Value str_value(const char *chars, size_t length);  /* a str: in the value when it fits, else a new ObjString */
+Value str_take(ObjString *s);                /* likewise from an ObjString just made (taken: freed when short) */
+ObjString *str_object(Value v);              /* the ObjString of a str or String, to keep (a new reference) */
+Value str_heap(Value v);                     /* v, a short str made an ObjString (C code can point at its text) */
+Value value_str(Value v);                    /* str(v): a str (a new reference) */
+uint32_t text_hash(const char *chars, size_t length);
+int text_equal(Value a, Value b);            /* two strs or Strings: the same text? */
 ObjString *string_append(ObjString *s, const char *chars, size_t n);
 uint32_t string_hash(ObjString *s);
 ObjString *lube_intern(Interp *I, const char *chars, size_t length);
 long str_find(const char *hay, size_t hlen, const char *needle, size_t nlen, size_t from);
+size_t str_count_byte(const char *s, size_t n, unsigned char c);
+size_t str_count(const char *hay, size_t hlen, const char *needle, size_t nlen);
+void str_change_case(char *dst, const char *src, size_t n, int upper);
+int str_to_double(const char *s, size_t n, double *out);
 size_t utf8_seq_len(unsigned char lead);
 ObjList *new_list(void);
 void list_reserve(ObjList *l, size_t n);
 void list_push(ObjList *l, Value v);
+void list_take(ObjList *l, const Value *items, size_t n);
+int lube_any_objects(const Value *items, size_t n);
 ObjList *list_copy(ObjList *l);
 ObjMap *new_map(void);
 Value *map_find(ObjMap *m, Value key);
@@ -1235,6 +1449,8 @@ int is_truthy(Value v);
 int values_equal(Value a, Value b);
 const char *type_name(Value v);
 void format_number(char *buf, size_t size, double n);
+#define LUBE_WHOLE_ROOM 24                   /* (the room format_whole() writes in: 16 digits, a sign, NULs) */
+size_t format_whole(char *buf, double n);    /* a whole Number's digits: how many (0: it is not one) */
 /* The fewest decimal places (0..8) that give x back as z / 10^places, with z (below 2^53 / 10) in *z; -1 if it
  * takes more (or x is too large for them). */
 int short_decimal(double x, int64_t *z);

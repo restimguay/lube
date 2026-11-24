@@ -295,7 +295,7 @@ static Breakpoint *breakpoint_at(Interp *I, Frame *f, int line) {
                 sb_free(&sb);
                 free(err);
             } else {
-                print_out(I, AS_STRING(v)->chars);
+                print_out(I, text_of(v)->chars);
                 release(v);
             }
             continue;

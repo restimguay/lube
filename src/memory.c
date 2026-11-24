@@ -152,11 +152,15 @@ void obj_destroy(Obj *first) {
     fl.cap = sizeof fl.small / sizeof fl.small[0];
     push_dead(&fl, first);
 
+    size_t freed = 0;
     while (fl.count > 0) {
         Obj *o = fl.items[--fl.count];
-        if (o->type == OBJ_LIST) {
+        if (o->type == OBJ_STRING) {
+            /* a str owns nothing else (the most of what dies: looked at first) */
+        } else if (o->type == OBJ_LIST) {
             ObjList *l = (ObjList *)o;
-            for (size_t i = 0; i < l->count; i++) drop(&fl, l->items[i]);
+            if (l->count <= 16 || lube_any_objects(l->items, l->count))  /* (Numbers, Bools and short strs own nothing) */
+                for (size_t i = 0; i < l->count; i++) drop(&fl, l->items[i]);
             lube_block_free(l->items, l->capacity * sizeof(Value));
         } else if (o->type == OBJ_MAP) {
             ObjMap *m = (ObjMap *)o;
@@ -205,7 +209,8 @@ void obj_destroy(Obj *first) {
             lube_cell_release(((ObjNative *)o)->cell);
         }  /* strs, natives and ranges own nothing else */
         pool_put(o, o->pool);
-        lube_live_objects--;
+        freed++;
     }
+    lube_live_objects -= freed;  /* (once: each use of a thread's own variable is a call, on macOS) */
     if (fl.items != fl.small) free(fl.items);
 }

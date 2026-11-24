@@ -1,0 +1,15 @@
+s: "a" -> "ab" 2
+s: "ab" -> "abcdefghij" 10
+s: "abcdefghij" -> "abcdefghijk" 11
+s: "abcdefghijk" -> "abcdefghij" 10
+s: "abcdefghij" -> "ABCDEFGHIJ" 10
+name: ada -> bob
+o changed: {name: "bob", tag: "x"}
+name: bob -> a longer name here
+o changed: {name: "a longer name here", tag: "x"}
+o changed: {name: "a longer name here", tag: "y"}
+words: ["x"] -> ["x", "y"]
+words: ["x", "y"] -> ["z", "y"]
+words: ["z", "y"] -> ["p", "q"]
+s: "ABCDEFGHIJ" -> "ABCDEFGHIJ!" 11
+ABCDEFGHIJ!

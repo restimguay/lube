@@ -1,0 +1,47 @@
+// lists of short strs: slices, copies, contains, equality across forms, list keys over 16 items, deep hashes
+var xs = []
+for i in 0..40 { xs.push(str(i)) }
+let ys = xs.slice(5, 30)
+var zs = xs
+zs[0] = "changed"
+zs.push("more")
+print(xs[0], zs[0], len(xs), len(zs), ys, len(ys), xs.slice(0, 3), xs.slice(38), xs.slice(-3), xs.slice(10, 5))
+print("7" in xs, 7 in xs, "39" in xs, "40" in xs, String("7") in xs, xs.index_of("7"), xs.index_of("a long one"), xs.contains("12"))
+var mixed = ["a", 1, "abcdefghijkl", [1], {k: "v"}]
+for i in 0..20 { mixed.push(str(i) + "x") }
+let mcopy = mixed.slice(0)
+var m2 = mixed
+m2[1] = 2
+print(mixed[1], m2[1], mcopy == mixed, m2 == mixed, len(mcopy))
+let a = split("p,q,r,s,t,u,v,w,x,y,z,a,b,c,d,e,f,g", ",")
+let b = ["p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "a", "b", "c", "d", "e", "f", "g"]
+var key_heap = []
+for k in keys({p: 1, q: 2}) { key_heap.push(k) }
+print(a == b, a != b, key_heap == ["p", "q"], key_heap == split("p q", " "), [String("p")] == ["p"])
+var mp = Map
+mp[a] = "split"
+print(mp[b], has(mp, b), len(mp))
+mp[b] = "literal"
+print(mp, len(mp))
+var deep = ["x"]
+for i in 0..40 { deep = [deep, str(i)] }
+var dm = Map
+dm[deep] = 1
+var deep2 = ["x"]
+for i in 0..40 { deep2 = [deep2, str(i)] }
+print(dm[deep2], has(dm, deep2), deep == deep2)
+var nums = []
+for i in 0..100 { nums.push(i * 0.5) }
+let ncopy = nums.slice(10, 90)
+var nalias = nums
+nalias[0] = 99
+print(nums[0], nalias[0], len(ncopy), ncopy[0], sum(ncopy), nums.slice(98), 49.5 in nums, 200 in nums, -0 in [0], nums.index_of(10))
+print(reverse(xs).slice(0, 3), sort(xs).slice(0, 5), xs + ["z"] == xs, len(xs * 2), (xs * 2)[40], xs.filter(fn(s) => len(s) == 2).slice(0, 3), xs.map(fn(s) => s + s).slice(0, 3))
+var popped = xs
+print(pop(&popped), len(popped), len(xs), remove(&popped, 0), popped[0])
+insert(&popped, 0, "first")
+print(popped.slice(0, 2))
+var big = []
+for i in 0..100000 { big.push(str(i % 1000)) }
+let bs = big.slice(1000, 99000)
+print(len(bs), bs[0], bs[97999], "999" in big, big.index_of("999"), len(big.filter(fn(s) => s == "5")))

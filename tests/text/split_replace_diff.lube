@@ -1,0 +1,65 @@
+// split and replace against plain versions; join(split(s, sep), sep) == s; counts agree
+var state = 777
+fn rnd(n) {
+  state = (state * 1103515245 + 12345) % 2147483648
+  return state % n
+}
+fn rstr(n, alphabet) {
+  var parts = []
+  for i in 0..n { parts.push(alphabet[rnd(len(alphabet))]) }
+  return join(parts, "")
+}
+fn naive_split(s, sep) {
+  var out = []
+  var start = 0
+  var i = 0
+  while i + len(sep) <= len(s) {
+    if slice(s, i, i + len(sep)) == sep {
+      out.push(slice(s, start, i))
+      i += len(sep)
+      start = i
+    } else {
+      i += 1
+    }
+  }
+  out.push(slice(s, start))
+  return out
+}
+fn naive_replace(s, old, rep) => join(naive_split(s, old), rep)
+let alphabets = [[",", "a"], [",", "ab", "c", "abcdefghijk"], ["a", "b"], ["\x00", "x", "é"], [" ", "word", "\t", "longerword12"]]
+let seps = [",", "a", "ab", "aa", "ba", ",,", "abc", "\x00", "é", "x", "wordw", "abcdefgh", "abcdefghi", "aaaaaaaaaaaaaaaaa", " "]
+var bad = 0
+var checks = 0
+for al in alphabets {
+  for n in [0, 1, 2, 5, 8, 9, 10, 11, 16, 17, 31, 32, 33, 40, 64, 65, 100, 250] {
+    for rep in 0..4 {
+      let s = rstr(n, al)
+      for sep in seps {
+        let a = split(s, sep)
+        let b = naive_split(s, sep)
+        checks += 1
+        if a != b or join(a, sep) != s or len(a) != len(b) {
+          bad += 1
+          if bad < 10 { print("SPLIT MISMATCH", repr(s), repr(sep), a, b) }
+        }
+        for r in ["", "-", "XY", "0123456789A"] {
+          let x = replace(s, sep, r)
+          let y = naive_replace(s, sep, r)
+          if x != y or len(x) != len(y) {
+            bad += 1
+            if bad < 10 { print("REPLACE MISMATCH", repr(s), repr(sep), repr(r), repr(x), repr(y)) }
+          }
+        }
+      }
+    }
+  }
+}
+print("checks", checks, "bad", bad)
+print(split("", ","), split(",", ","), split(",,", ","), split("a,", ","), split(",a", ","), split("abc", "abc"), split("abcabc", "abc"), split("aaa", "aa"), split("aaaa", "aa"))
+print(replace("aaa", "aa", "b"), replace("aaaa", "aa", "b"), replace("", "a", "b"), replace("abc", "abcd", "x"), replace("abc", "", "x"), replace("abc", "abc", ""), replace("x", "x", "0123456789AB"))
+print(split(" a  b\t\nc  ", " "), split(" a  b\t\nc  "), split("one two"), split("     "), split(""), split("a\r\nb\r\n", "\r\n"), split("a\r\nb", "\n"))
+let big = "x," * 5000
+let parts = split(big, ",")
+print(len(parts), parts[0], parts[4999], parts[5000] == "", len(join(parts, ",")), join(parts, ",") == big)
+let words = split(("alpha beta gamma delta-epsilon-zeta " * 300), " ")
+print(len(words), words[3], words[1199], type(words[3]), len(replace(big, ",", "")), len(replace(big, "x", "abcdefghijkl")))

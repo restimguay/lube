@@ -1,0 +1,9 @@
+in out in
+error: cannot look inside a Number (expected a List, str, Object, Range or Bytes)
+3
+1 0
+tests/text/cmpjump_lines.lube:4: error: cannot look inside a Number (expected a List, str, Object, Range or Bytes)
+    4 |       in y) {
+traceback (innermost call first):
+  at check (tests/text/cmpjump_lines.lube:4)
+  at <script> (tests/text/cmpjump_lines.lube:22)

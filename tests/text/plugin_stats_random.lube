@@ -1,0 +1,36 @@
+// statistics and random with strs: mode/multimode count text, choice returns it, seed hashes it
+import statistics.*
+import random
+print(mode(["a", "b", "a", "abcdefghijkl", "abcdefghijkl", "abcdefghijkl"]), multimode(["x", "y", "x", "y", "zzzzzzzzzzzz"]))
+print(mode(["red", "blue", "red", "a much longer colour", "a much longer colour"]), multimode(["b", "a", "b" + "", "a", "c"]))
+var many = []
+for i in 0..2000 { many.push(str(i % 7)) }
+for i in 0..300 { many.push("long-label-" + str(i % 3)) }
+print(mode(many), multimode(many), len(many))
+print(mode([1, "1", 1, "1", "1"]), multimode([true, "true", true, "true"]))
+try { print(mode([])) } catch e { print("error:", e) }
+try { print(mode([[1]])) } catch e { print("error:", e) }
+random.seed("abc")
+print(random.random(), random.randint(1, 100))
+random.seed("a seed longer than ten bytes")
+print(random.random())
+random.seed("abc" + "")
+print(random.random())
+random.seed(String("abc"))
+print(random.random())
+random.seed("abc", 1)
+print(random.random())
+random.seed(42)
+let opts = ["rock", "paper", "scissors", "a long option string"]
+var picks = []
+for i in 0..10 { picks.push(random.choice(opts)) }
+print(picks, type(picks[0]))
+print(random.sample(opts, 2), random.shuffle(opts), random.choices(opts, {k: 3}))
+print(quantiles([1, 2, 3, 4], {n: 4, method: "inclusive"}), quantiles([1, 2, 3, 4], {n: 4, method: "exclusive"}))
+try { print(quantiles([1, 2, 3], {method: "bogus"})) } catch e { print("error:", e) }
+try { print(correlation([1, 2, 3], [3, 1, 2], {method: "ranked"})) } catch e { print("error:", e) }
+try { print(correlation([1, 2, 3], [3, 1, 2], {method: "nope"})) } catch e { print("error:", e) }
+let k = kde([1, 2, 3], 0.5, "gauss")
+print(fixed(k.pdf(2), 9), kde([1, 2, 3], 0.5, "epanechnikov").cdf(2))
+try { print(kde([1, 2], 1, "nokernel")) } catch e { print("error:", e) }
+try { print(kde([1, 2], 1, "a very long unknown kernel name")) } catch e { print("error:", e) }

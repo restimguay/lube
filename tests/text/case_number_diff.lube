@@ -1,0 +1,52 @@
+// upper/lower against a byte-by-byte version over every byte value; Number's quick path against strtod's
+var bytes = []
+for i in 0..256 { bytes.push(i) }
+let all = Bytes(bytes).decode()
+print(len(all), Bytes(upper(all)).hex())
+print(Bytes(lower(all)).hex())
+var bad = 0
+for i in 0..256 {
+  let s = Bytes([i]).decode()
+  let u = Bytes(upper(s)).unpack("u8")
+  let l = Bytes(lower(s)).unpack("u8")
+  var wu = i
+  var wl = i
+  if i >= 97 and i <= 122 { wu = i - 32 }
+  if i >= 65 and i <= 90 { wl = i + 32 }
+  if u != wu or l != wl { bad += 1 }
+}
+print("case bad", bad)
+for n in [0, 1, 7, 8, 9, 10, 11, 15, 16, 17, 31, 32, 33, 100] {
+  let s = slice(all * 2, 60, 60 + n)
+  print(n, Bytes(upper(s)).hex(), Bytes(lower(s)).hex(), upper(s) == upper(String(s)), lower(s) == String(s).lower)
+}
+// Number: the quick path (digits, a point, a sign) against the same text read by strtod (a leading space)
+var state = 99
+fn rnd(n) {
+  state = (state * 1103515245 + 12345) % 2147483648
+  return state % n
+}
+var nbad = 0
+var nchecks = 0
+let digits = "0123456789"
+for t in 0..6000 {
+  var s = ""
+  if rnd(3) == 0 { s = "-" }
+  let nd = 1 + rnd(17)
+  let point = rnd(nd + 2)
+  for k in 0..nd {
+    if k == point and k > 0 { s += "." }
+    s += digits[rnd(10)]
+  }
+  let a = Number(s, "x")
+  let b = Number(" " + s, "y")
+  nchecks += 1
+  if a != b or str(a) != str(b) {
+    nbad += 1
+    if nbad < 10 { print("NUMBER MISMATCH", repr(s), a, b) }
+  }
+}
+print("number checks", nchecks, "bad", nbad)
+for s in ["0.1", "0.2", "0.3", "1.1", "2.675", "0.000001", "123456789012.345", "999999999999999", "0.999999999999999", "8.000000000000001", "4.35", "1.15", "-0.0", "9.007199254740993"] {
+  print(s, Number(s), Number(" " + s), Number(s) == Number(" " + s), fixed(Number(s), 20))
+}

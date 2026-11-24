@@ -1,0 +1,10 @@
+abc String cab str abcdefghijkl String true true true str
+x 5 1 ABCDEFGHIJK abc ["a", "b", "c"] ["a", "b"]
+["a", "b"] a-b Q a+b+c 5 h el cba
+["a", String("b"), String("c")] true true true true true 2
+start-more! String
+{k: 1} false 0
+error: object keys must be str, Number or Bool values, not a String
+{k: 1}
+abcd str abcdefghijklmnop str String("q") x
+x true true ["é", "!"] 12 $1.50

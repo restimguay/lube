@@ -303,16 +303,14 @@ static Value keep_type(Interp *I, const VarRef *r, Value v) {
 static Value keep_field_type(Interp *I, const TypeDesc *d, Value field, Value holder, Value v) {
     Value out;
     if (desc_accepts(*d, v, &out)) return out;
-    Value e = lube_error(I, "field '%s' of %s is %s, so it cannot hold %s", AS_STRING(field)->chars,
+    size_t fl;  /* (the name read where it is: no array among this function's locals, see text_chars) */
+    Value e = lube_error(I, "field '%s' of %s is %s, so it cannot hold %s", text_chars(&field, &fl),
                          type_name(holder), with_article(desc_name(*d)), a_type(v));
     release(v);
     return e;
 }
 
-static int keys_same(Value a, Value b) {
-    ObjString *x = AS_STRING(a), *y = AS_STRING(b);
-    return x == y || (x->length == y->length && memcmp(x->chars, y->chars, x->length) == 0);
-}
+static int keys_same(Value a, Value b) { return text_equal(a, b); }
 
 /* Where field `name` (an interned name) is in instance m: an instance has
  * its class's fields in their order, and none is ever removed, so field f
@@ -468,27 +466,45 @@ static TokenType compound_base(TokenType op) {
 /* Joins two values as text. With a String on the left the result is a
  * String; otherwise it is a str. */
 static Value concat(Value a, Value b) {
-    ObjString *x = value_to_string(a), *y = value_to_string(b);
-    ObjString *s = alloc_string(x->length + y->length);
-    memcpy(s->chars, x->chars, x->length);
-    memcpy(s->chars + x->length, y->chars, y->length);
-    release(OBJ_VAL(x));
-    release(OBJ_VAL(y));
-    return IS_STROBJ(a) ? OBJ_VAL(new_strobj(s)) : OBJ_VAL(s);
+    /* (text is read where it is, in a and b themselves if they are short strs; anything else is written out
+     * first. No array among the locals: a function with one checks its stack on the way out, on some systems,
+     * and binary_op, which this is part of, is on the way of every operator of a plugin's type.) */
+    ObjString *xm = IS_TEXT(a) ? NULL : value_to_string(a), *ym = IS_TEXT(b) ? NULL : value_to_string(b);
+    size_t xl, yl;
+    const char *x, *y;
+    if (xm) x = xm->chars, xl = xm->length;
+    else x = text_chars(&a, &xl);
+    if (ym) y = ym->chars, yl = ym->length;
+    else y = text_chars(&b, &yl);
+    Value r;
+    if (xl + yl <= LUBE_SSTR_MAX && !IS_STROBJ(a)) {  /* short: held in the value, the second after the first */
+        r = sstr_value(x, xl);
+        lube_copy16(SSTR_CHARS(&r) + xl, y, yl);
+        r.ikind = (unsigned char)(xl + yl);
+    } else {
+        ObjString *s = alloc_string(xl + yl);
+        memcpy(s->chars, x, xl);
+        memcpy(s->chars + xl, y, yl);
+        r = IS_STROBJ(a) ? OBJ_VAL(new_strobj(s)) : OBJ_VAL(s);
+    }
+    if (xm) release(OBJ_VAL(xm));
+    if (ym) release(OBJ_VAL(ym));
+    return r;
 }
 
 static Value repeat(Interp *I, Value seq, double times) {
     if (!(times >= 0) || times != floor(times)) return lube_error(I, "can only repeat by a whole, non-negative number");
-    size_t unit = IS_TEXT(seq) ? text_of(seq)->length : AS_LIST(seq)->count;
+    size_t unit = IS_TEXT(seq) ? text_len(seq) : AS_LIST(seq)->count;
     size_t limit = IS_TEXT(seq) ? LUBE_MAX_BYTES : LUBE_MAX_ITEMS;
     if (unit == 0) times = 0;
     if (times > (double)(limit / (unit ? unit : 1))) return lube_error(I, "the repeated result would be too large");
     size_t k = (size_t)times;  /* safe: checked against the limit above */
     if (IS_TEXT(seq)) {
-        ObjString *s = text_of(seq);
-        ObjString *r = alloc_string(s->length * k);
-        for (size_t i = 0; i < k; i++) memcpy(r->chars + i * s->length, s->chars, s->length);
-        return IS_STROBJ(seq) ? OBJ_VAL(new_strobj(r)) : OBJ_VAL(r);
+        size_t sl;
+        const char *s = text_chars(&seq, &sl);
+        ObjString *r = alloc_string(sl * k);
+        for (size_t i = 0; i < k; i++) memcpy(r->chars + i * sl, s, sl);
+        return IS_STROBJ(seq) ? OBJ_VAL(new_strobj(r)) : str_take(r);
     }
     ObjList *src = AS_LIST(seq);
     ObjList *out = new_list();
@@ -499,11 +515,11 @@ static Value repeat(Interp *I, Value seq, double times) {
     return OBJ_VAL(out);
 }
 
-static int compare_strings(ObjString *a, ObjString *b) {
-    size_t n = a->length < b->length ? a->length : b->length;
-    int c = memcmp(a->chars, b->chars, n);
+static int compare_strings(const char *a, size_t alen, const char *b, size_t blen) {
+    size_t n = alen < blen ? alen : blen;
+    int c = memcmp(a, b, n);
     if (c != 0) return c;
-    return a->length < b->length ? -1 : a->length > b->length;
+    return alen < blen ? -1 : alen > blen;
 }
 
 static Value in_op(Interp *I, Value item, Value container) {
@@ -539,10 +555,21 @@ static inline int num_op(int op, double x, double y, Value *out) {
 
 /* a == b or a != b for two strs, without the general comparison: 1 and *out, or 0 for anything else */
 static inline int str_eq_op(int op, Value a, Value b, Value *out) {
-    if ((op != T_EQ && op != T_NEQ) || !IS_STRING(a) || !IS_STRING(b)) return 0;
-    ObjString *x = AS_STRING(a), *y = AS_STRING(b);
-    int eq = x == y || (x->length == y->length && memcmp(x->chars, y->chars, x->length) == 0);
+    if (op != T_EQ && op != T_NEQ) return 0;
+    int eq;
+    if (IS_SSTR(a) && IS_SSTR(b)) eq = sstr_same(a, b);  /* two short strs: their two words */
+    else if (IS_STRING(a) && IS_STRING(b)) eq = text_equal(a, b);
+    else return 0;
     *out = BOOL_VAL(eq == (op == T_EQ));
+    return 1;
+}
+
+/* a in b for two strs, without the general way: 1 and *out, or 0 for anything else */
+static inline int str_in_op(int op, Value a, Value b, Value *out) {
+    if (op != T_IN || !IS_STRING(a) || !IS_STRING(b)) return 0;
+    size_t alen, blen;
+    const char *ac = text_chars(&a, &alen), *bc = text_chars(&b, &blen);
+    *out = BOOL_VAL(str_find(bc, blen, ac, alen, 0) >= 0);
     return 1;
 }
 
@@ -632,7 +659,9 @@ static Value binary_op(Interp *I, TokenType op, Value a, Value b) {
         break;
     case T_LT: case T_LE: case T_GT: case T_GE:
         if (IS_TEXT(a) && IS_TEXT(b)) {
-            int c = compare_strings(text_of(a), text_of(b));
+            size_t al, bl;
+            const char *ac = text_chars(&a, &al), *bc = text_chars(&b, &bl);
+            int c = compare_strings(ac, al, bc, bl);
             return BOOL_VAL(op == T_LT ? c < 0 : op == T_LE ? c <= 0 : op == T_GT ? c > 0 : c >= 0);
         }
         break;
@@ -665,6 +694,20 @@ Value lube_arith(Interp *I, TokenType op, Value a, Value b) { return binary_op(I
 int lube_contains(Interp *I, Value c, Value x) {
     if (IS_LIST(c)) {
         ObjList *l = AS_LIST(c);
+        if (IS_NUM(x)) {  /* a Number: compared where the items are (an int32(5) is equal to 5: the general way) */
+            for (size_t i = 0; i < l->count; i++) {
+                Value item = l->items[i];
+                if (IS_NUM(item) ? item.as.number == x.as.number : values_equal(item, x)) return 1;
+            }
+            return 0;
+        }
+        if (IS_SSTR(x)) {  /* a short str: its two words against each item's */
+            for (size_t i = 0; i < l->count; i++) {
+                Value item = l->items[i];
+                if (IS_SSTR(item) ? sstr_same(item, x) : values_equal(item, x)) return 1;
+            }
+            return 0;
+        }
         for (size_t i = 0; i < l->count; i++)
             if (values_equal(l->items[i], x)) return 1;
         return 0;
@@ -674,8 +717,9 @@ int lube_contains(Interp *I, Value c, Value x) {
             lube_error(I, "can only search text for text, not for %s", a_type(x));
             return -1;
         }
-        ObjString *s = text_of(c), *sub = text_of(x);
-        return str_find(s->chars, s->length, sub->chars, sub->length, 0) >= 0;
+        size_t slen, sublen;
+        const char *s = text_chars(&c, &slen), *sub = text_chars(&x, &sublen);
+        return str_find(s, slen, sub, sublen, 0) >= 0;
     }
     if (IS_MAP(c)) return map_key_ok(AS_MAP(c), x) && map_get(AS_MAP(c), x, NULL);
     if (IS_RANGE(c)) {
@@ -687,7 +731,11 @@ int lube_contains(Interp *I, Value c, Value x) {
     if (IS_BYTES(c)) {  /* a byte, or a run of bytes (Bytes, or a str's) */
         ObjBytes *b = AS_BYTES(c);
         if (IS_BYTES(x)) return str_find((const char *)b->data, b->len, (const char *)AS_BYTES(x)->data, AS_BYTES(x)->len, 0) >= 0;
-        if (IS_TEXT(x)) return str_find((const char *)b->data, b->len, text_of(x)->chars, text_of(x)->length, 0) >= 0;
+        if (IS_TEXT(x)) {
+            size_t sublen;
+            const char *sub = text_chars(&x, &sublen);
+            return str_find((const char *)b->data, b->len, sub, sublen, 0) >= 0;
+        }
         double d = IS_NUMERIC(x) ? numeric_value(x) : -1;
         return d >= 0 && d <= 255 && d == floor(d) && b->len && memchr(b->data, (int)d, b->len) != NULL;
     }
@@ -747,9 +795,10 @@ static Value index_get(Interp *I, Value obj, Value idx) {
         return e;
     }
     if (IS_TEXT(obj)) {
-        ObjString *s = text_of(obj);
-        if (!list_index(I, idx, s->length, "string", &i)) return ERR_VAL;
-        return retain(OBJ_VAL(I->chars[(unsigned char)s->chars[i]]));
+        size_t len;
+        const char *chars = text_chars(&obj, &len);
+        if (!list_index(I, idx, len, "string", &i)) return ERR_VAL;
+        return sstr_byte((unsigned char)chars[i]);
     }
     if (IS_RANGE(obj)) {  /* in floating point: a range can be longer than any list */
         ObjRange *r = AS_RANGE(obj);
@@ -892,7 +941,7 @@ static Value *navigate(Interp *I, Value *slot, Place *p, ObjMap **made, int *ele
             *elem = AS_LIST(*slot)->elem;
             *holder = slot;
             slot = &AS_LIST(*slot)->items[k];
-        } else if (IS_INSTANCE(*slot) && IS_STRING(key) && field_slot(AS_MAP(*slot), AS_STRING(key)) >= 0) {
+        } else if (IS_INSTANCE(*slot) && IS_HSTR(key) && field_slot(AS_MAP(*slot), AS_STRING(key)) >= 0) {
             make_unique(slot);  /* a field of an instance: no hashing (see field_slot) */
             ObjMap *m = AS_MAP(*slot);
             int f = field_slot(m, AS_STRING(key));
@@ -915,7 +964,8 @@ static Value *navigate(Interp *I, Value *slot, Place *p, ObjMap **made, int *ele
                 for (int j = 0; j < c->nfields && f < 0 && IS_STRING(key); j++)
                     if (keys_same(OBJ_VAL(c->field_names[j]), key)) f = j;
                 if (f < 0) {
-                    if (IS_STRING(key)) lube_error(I, "%s has no field '%s'", with_article(c->name->chars), AS_STRING(key)->chars);
+                    size_t kl;
+                    if (IS_STRING(key)) lube_error(I, "%s has no field '%s'", with_article(c->name->chars), text_chars(&key, &kl));
                     else lube_error(I, "%s has fields named by text, not %s", with_article(c->name->chars), a_type(key));
                     return NULL;
                 }
@@ -1405,7 +1455,9 @@ static int fast_assign(Interp *I, PlaceDesc *pd, TokenType op, Value *rhs) {
         if (IS_MAP(*slot) && !AS_MAP(*slot)->klass) {  /* an Object or a Map: o.x = v, counts[w] += 1 */
             ObjMap *m = AS_MAP(*slot);
             Value key = keys[i], *child;
-            if (!IS_STRING(key) && !(IS_NUM(key) && key.as.number == key.as.number)) return 0;
+            if (!IS_STRING(key) && !(IS_NUM(key) && key.as.number == key.as.number) &&
+                !(m->dict && m->ktype == TT_ANY && IS_LIST(key) && !IS_TUPLE(key)))  /* (a Map's key [x, y]) */
+                return 0;
             if (last && op == T_ASSIGN && m->vtype == TT_ANY && m->ktype == TT_ANY) {
                 slot = map_slot(m, key);  /* (a new key holds nothing until the store below, which cannot fail) */
                 numeric = 0;
@@ -1553,10 +1605,14 @@ LUBE_NOINLINE static Value do_assign(Interp *I, TokenType op, Place *place, Valu
     TokenType bin = compound_base(op);
     /* `+=` on a string or list nobody else shares: append in place */
     if (bin == T_PLUS && IS_OBJ(*slot) && slot->as.obj->rc == 1) {
-        if (IS_STRING(*slot)) {
-            ObjString *add = value_to_string(rhs);
-            *slot = OBJ_VAL(string_append(AS_STRING(*slot), add->chars, add->length));
-            release(OBJ_VAL(add));
+        if (IS_STRING(*slot)) {  /* (an ObjString: a short str has no owner count, and is joined below) */
+            ObjString *made = IS_TEXT(rhs) ? NULL : value_to_string(rhs);
+            size_t addlen;
+            const char *add;
+            if (made) add = made->chars, addlen = made->length;
+            else add = text_chars(&rhs, &addlen);
+            *slot = OBJ_VAL(string_append(AS_STRING(*slot), add, addlen));
+            if (made) release(OBJ_VAL(made));
             release(rhs);
             place_free(&p);
             return retain(*slot);
@@ -2863,7 +2919,7 @@ LUBE_NOINLINE static int op_method_prep(Interp *I, Code *code, MethodDesc *md) {
                 return 0;
             }
         }
-        Value *fn = root && root->type == VAL_OBJ && !IS_MAP(*root) && !IS_PACKAGE(*root) && !LUBE_OWN_METHODS(OBJ_TYPE(*root)) &&
+        Value *fn = root && (root->type == VAL_STR || (root->type == VAL_OBJ && !IS_MAP(*root) && !IS_PACKAGE(*root) && !LUBE_OWN_METHODS(OBJ_TYPE(*root)))) &&
                     md->fallback.kind == VAR_GLOBAL
                         ? global_ref(I, &md->fallback, &failed) : NULL;
         if (failed) return -1;
@@ -3090,14 +3146,42 @@ assign_general: {
 }
 }
 
-/* OP_INTERP: the n values on top of the stack, as one str (formatting runs no code of the program: one buffer, kept). */
+/* OP_INTERP: the n values on top of the stack, as one str (formatting runs no code of the program). Its usual
+ * pieces (text written out, whole numbers, strs) are put together here, in memory of this function's: a short
+ * result then needs none of its own. Anything else, or more than fits, goes on the general way from the piece
+ * that stopped it, in one buffer that is kept. */
 LUBE_NOINLINE static void op_interp(Interp *I, int n) {
-    StrBuf *sb = &I->interp;
-    sb->len = 0;
-    for (int i = I->sp - n; i < I->sp; i++) append_value(sb, I->stack[i], 0);
+    char small[128];
+    size_t len = 0;
+    const Value *part = &I->stack[I->sp - n], *end = &I->stack[I->sp];
+    for (; part < end && len <= sizeof small - LUBE_WHOLE_ROOM; part++) {  /* (room for the longest of these) */
+        if (part->type == VAL_STR) {
+            memcpy(small + len, SSTR_CHARS(part), LUBE_SSTR_MAX + 1);  /* (all of them: its length says how many count) */
+            len += SSTR_LEN(*part);
+        } else if (part->type == VAL_NUM) {
+            size_t digits = format_whole(small + len, part->as.number);
+            if (!digits) break;
+            len += digits;
+        } else if (IS_HSTR(*part) && AS_STRING(*part)->length <= sizeof small - len) {
+            memcpy(small + len, AS_STRING(*part)->chars, AS_STRING(*part)->length);
+            len += AS_STRING(*part)->length;
+        } else {
+            break;
+        }
+    }
+    Value made;
+    if (part == end) {
+        made = str_value(small, len);
+    } else {
+        StrBuf *sb = &I->interp;
+        sb->len = 0;
+        sb_putn(sb, small, len);
+        for (; part < end; part++) append_value(sb, *part, 0);
+        made = str_value(sb->data, sb->len);
+        if (sb->cap > 65536) sb_free(sb);  /* (not a large one) */
+    }
     pop_to(I, I->sp - n);
-    PUSH(OBJ_VAL(new_string(sb->data ? sb->data : "", sb->len)));
-    if (sb->cap > 65536) sb_free(sb);  /* (not a large one) */
+    PUSH(made);
 }
 
 /* An error is raised (I->error_val), in the newest frame, at its pc: finds a catch in that frame or the ones it
@@ -3271,7 +3355,7 @@ LUBE_NOINLINE static int vm_step(Interp *I) {
             Value b = I->stack[I->sp - 1], a = I->stack[I->sp - 2];
             int op = ARG_OF(in);
             if (!IS_NUM(a) || !IS_NUM(b) || !num_op(op, a.as.number, b.as.number, &r)) {
-                if (!str_eq_op(op, a, b, &r)) r = binary_op(I, (TokenType)op, a, b);
+                if (!str_eq_op(op, a, b, &r) && !str_in_op(op, a, b, &r)) r = binary_op(I, (TokenType)op, a, b);
                 release(a);
                 release(b);
             }
@@ -3286,7 +3370,7 @@ LUBE_NOINLINE static int vm_step(Interp *I) {
             Value a = ka == OPND_LOCAL ? I->stack[f->base + (int)ip[0]] : ka == OPND_CONST ? K(ip[0]) : TOP;
             ip += 2;
             if (!IS_NUM(a) || !IS_NUM(b) || !num_op(op, a.as.number, b.as.number, &r)) {
-                if (!str_eq_op(op, a, b, &r)) r = binary_op(I, (TokenType)op, a, b);
+                if (!str_eq_op(op, a, b, &r) && !str_in_op(op, a, b, &r)) r = binary_op(I, (TokenType)op, a, b);
                 if (ka == OPND_STACK) release(a);
             }
             if (ka == OPND_STACK) I->sp--;
@@ -3303,7 +3387,7 @@ LUBE_NOINLINE static int vm_step(Interp *I) {
                                          : I->stack[I->sp - stacked];
             ip += 3;
             if (!IS_NUM(a) || !IS_NUM(b) || !num_op(op, a.as.number, b.as.number, &r)) {
-                if (!str_eq_op(op, a, b, &r)) r = binary_op(I, (TokenType)op, a, b);
+                if (!str_eq_op(op, a, b, &r) && !str_in_op(op, a, b, &r)) r = binary_op(I, (TokenType)op, a, b);
                 if (ka == OPND_STACK) release(a);
                 if (kb == OPND_STACK) release(b);
             }
@@ -3643,15 +3727,14 @@ LUBE_NOINLINE static int vm_step(Interp *I) {
                 if (k >= (double)l->count) done = 1;
                 else second = retain(l->items[(size_t)k]);
             } else if (IS_TEXT(it)) {  /* by UTF-8 character */
-                ObjString *s = text_of(it);
-                size_t i = (size_t)pos;
-                if (i >= s->length) {
+                size_t slen, i = (size_t)pos;
+                const char *chars = text_chars(&I->stack[I->sp - 3], &slen);
+                if (i >= slen) {
                     done = 1;
                 } else {
-                    size_t len = utf8_seq_len((unsigned char)s->chars[i]);
-                    if (i + len > s->length) len = s->length - i;
-                    second = len == 1 ? retain(OBJ_VAL(I->chars[(unsigned char)s->chars[i]]))
-                                      : OBJ_VAL(new_string(s->chars + i, len));
+                    size_t len = utf8_seq_len((unsigned char)chars[i]);
+                    if (i + len > slen) len = slen - i;
+                    second = len == 1 ? sstr_byte((unsigned char)chars[i]) : sstr_value(chars + i, len);
                     pos = (double)(i + len);
                 }
             } else if (IS_BYTES(it)) {
@@ -4683,7 +4766,7 @@ LUBE_COLD void lube_report_uncaught(Interp *I) {
         trace_reset(I);
         return;
     }
-    ObjString *msg = IS_TEXT(e) ? (ObjString *)retain(OBJ_VAL(text_of(e))).as.obj : value_repr(e);
+    ObjString *msg = IS_TEXT(e) ? str_object(e) : value_repr(e);
     Source *src = I->error_src;
     if (src) lube_print(1, "%s:%d: error: %s\n", src->path, I->error_line, msg->chars);
     else lube_print(1, "error: %s\n", msg->chars);  /* (raised with no Lube code running: a host program's call) */
@@ -4862,6 +4945,7 @@ Interp *lube_new(char *stack_base) {
     I->ret_val = NIL_VAL;
     I->error_val = NIL_VAL;
     I->epoch = 1;  /* (zeroed caches are stale) */
+    lube_api_bind(I);  /* (this thread's interpreter: where lube->str() looks for a plugin's arguments) */
     I->stack_base = stack_base;
     size_t margin = LUBE_STACK_SIZE / 8 > 512u * 1024u ? LUBE_STACK_SIZE / 8 : 512u * 1024u;
     I->stack_budget = LUBE_STACK_SIZE - margin;
@@ -4940,6 +5024,7 @@ size_t lube_free(Interp *I) {
     free(I->chunks);
     free(I->pending);
     lube_free_program(I);
+    lube_api_unbind(I);
     for (int i = 0; i < I->nloan_pool; i++) free(I->loan_pool[i]);
     free(I->loan_pool);
     lube_pages_free(I, sizeof(Interp));

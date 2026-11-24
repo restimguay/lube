@@ -1,6 +1,7 @@
 #!/bin/sh
-# Runs every tests/*.lube program and compares its output (stdout and
-# stderr together) with the matching tests/*.out file; then the command-line
+# Runs every tests/*.lube program (and tests/text/*.lube: strs of every
+# length, each form of them meeting the other) and compares its output (stdout
+# and stderr together) with the matching .out file; then the command-line
 # tests (tests/cli.sh) with tests/cli.out, and their part that differs from
 # system to system with tests/cli.<system>.out (Darwin, Linux or Windows).
 # The output of a failing test is kept in build/failed/.
@@ -23,7 +24,7 @@ compare() {
         printf '%s\n' "$3" >"build/failed/$(basename "$2")"
     fi
 }
-for test in tests/*.lube; do
+for test in tests/*.lube tests/text/*.lube; do
     expected="${test%.lube}.out"
     [ -f "$expected" ] || continue
     compare "$test" "$expected" "$("$LUBE" "$test" 2>&1)"

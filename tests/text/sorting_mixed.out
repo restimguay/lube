@@ -1,0 +1,17 @@
+["", "ABCDEFGHIJK", "Z", "a", "abcdefg", "abcdefgh", "abcdefgh\x00", "abcdefghi", "abcdefghij", "abcdefghij\x00", "abcdefghij\x01", "abcdefghija", "abcdefghijk", "abcdefghijkl", "abcdefghik", "b", "e", "zz", "é"]
+["", "ABCDEFGHIJK", "Z", "a", "abcdefg", "abcdefgh", "abcdefgh\x00", "abcdefghi", "abcdefghij", "abcdefghij\x00", "abcdefghij\x01", "abcdefghija", "abcdefghijk", "abcdefghijkl", "abcdefghik", "b", "e", "zz", "é"]
+["é", "zz", "e", "b", "abcdefghik", "abcdefghijkl", "abcdefghijk", "abcdefghija", "abcdefghij\x01", "abcdefghij\x00", "abcdefghij", "abcdefghi", "abcdefgh\x00", "abcdefgh", "abcdefg", "a", "Z", "ABCDEFGHIJK", ""]
+["", "ABCDEFGHIJK", "Z", "a", "abcdefg", "abcdefgh", "abcdefgh\x00", "abcdefghi", "abcdefghij", "abcdefghij\x00", "abcdefghij\x01", "abcdefghija", "abcdefghijk", "abcdefghijkl", "abcdefghik", "b", "e", "zz", "é"]
+["", "abcdefgh\x00", "abcdefghij\x00", "abcdefghij\x01", "ABCDEFGHIJK", "Z", "a", "abcdefghija", "b", "e", "abcdefg", "abcdefgh", "abcdefghi", "abcdefghij", "abcdefghik", "abcdefghijk", "abcdefghijkl", "zz", "é"]
+["", "b", "a", "Z", "e", "zz", "é", "abcdefg", "abcdefgh", "abcdefghi", "abcdefgh\x00", "abcdefghij", "abcdefghik", "abcdefghijk", "abcdefghija", "abcdefghij\x00", "abcdefghij\x01", "ABCDEFGHIJK", "abcdefghijkl"]
+error: sort() cannot compare a List with a List
+ é ["é", "zz", "e", "b", "abcdefghik", "abcdefghijkl", "abcdefghijk", "abcdefghija", "abcdefghij\x01", "abcdefghij\x00", "abcdefghij", "abcdefghi", "abcdefgh\x00", "abcdefgh", "abcdefg", "a", "Z", "ABCDEFGHIJK", ""]
+["apple", "banana-split-long", "cherry-pie-long-name", "date", "fig", "kiwi"] str[]
+["and", "brown", "dog", "extraordinarily", "fox", "jumps", "lazy", "long", "over", "quick", "the", "the", "the", "word"] ["and", "brown", "dog", "extraordinarily", "fox", "jumps", "lazy", "long", "over", "quick", "the", "the", "the", "word"]
+[{name: "ada", age: 3}, {name: "al", age: 2}, {name: "bob", age: 1}, {name: "christopher-long", age: 3}]
+[{name: "bob", age: 1}, {name: "al", age: 2}, {name: "ada", age: 3}, {name: "christopher-long", age: 3}]
+[{name: "ada", age: 3}, {name: "al", age: 2}, {name: "bob", age: 1}, {name: "christopher-long", age: 3}]
+["0-padding-long", "102-padding-long", "105", "109", "112-padding-long", "115", "118", "12", "121-padding-long", "124"] ["968", "975", "978", "981-padding-long", "984", "987", "99", "990-padding-long", "993", "996"]
+true
+error: sort() cannot compare a Number with a str
+error: sort() cannot compare a str with a Number

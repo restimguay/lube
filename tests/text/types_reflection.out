@@ -1,0 +1,35 @@
+str str str str str str str str str str
+true true false false false true true true
+"abc" "abcdefghijkl" String("abc") abc "str" str str
+error: 'v' is a str, so it cannot hold a Number: a var keeps the type it starts with
+error: 'v' is a str, so it cannot hold a String: a var keeps the type it starts with (use x.value for its str)
+y
+error: 'S' is a String, so it cannot hold a str: a var keeps the type it starts with (convert it with String(x))
+error: 'S' is a String, so it cannot hold a str: a var keeps the type it starts with (convert it with String(x))
+error: this str[] can only hold str values, not a Number
+error: this str[] can only hold str values, not a String
+["ada", "bob", "christopher", "ab"] str[] ["ada", "bob", "christopher", "ab", "eve"] str[]
+error: this String[] can only hold String values, not a str
+[String("ok")] String[]
+hi! a long text indeed! str
+error: parameter 'x' of want_String() is a String, so it cannot take a str
+error: parameter 'x' of want_str() is a str, so it cannot take a String
+error: parameter 'x' of want_str() is a str, so it cannot take a Number
+ok
+error: ret_bad() must return a Number, not a str
+Pet {name: "rex", tag: "a long default tag"} rex rex I am rex [{name: "name", type: "str"}, {name: "tag", type: "str"}] ["hello"]
+Pet {name: "max", tag: "t"}
+error: field 'name' of Pet is a str, so it cannot hold a Number
+error: field 'name' of Pet is a str, so it cannot hold a Number
+error: field 'name' of Pet is a str, so it cannot hold a Number
+error: a Pet has no field 'nope'
+error: a Pet has no field 'nope'
+error: the object has no key "nope" (check with has() first, or use get(object, key, default))
+max max true true I am max I am max
+Pet {name: "zed", tag: "zz"}
+error: field 'name' of Pet is a str, so it cannot hold a Number
+error: a Pet has no field 'nme'
+<class Pet> <class Pet> {name: "want_str", params: [{name: "x", type: "str", mode: "let", has_default: false}], returns: "str", builtin: false} {name: "hello", params: [], returns: "any", builtin: false}
+error: there is no class named 'Nope'
+["s", "l", "made", "v", "S"]
+["List", "str[]", "Map[str, str]", ["abc", "abcdefghijkl", "abc"]]

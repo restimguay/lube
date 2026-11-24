@@ -1,0 +1,35 @@
+// sorting strs of both forms: same prefixes, 8-byte keys, mixed lengths, by key, by comparator
+let xs = ["abcdefgh", "abcdefghi", "abcdefghij", "abcdefghijk", "abcdefghijkl", "abcdefgh\x00", "abcdefg", "b", "", "a", "abcdefghik", "abcdefghija", "Z", "zz", "é", "e", "abcdefghij\x00", "abcdefghij\x01", "ABCDEFGHIJK"]
+print(sort(xs))
+print(sort(xs, fn(a, b) => a < b))
+print(sort(xs, fn(a, b) => b < a))
+print(sort(xs, fn(s) => s))
+print(sort(xs, fn(s) => reverse(s)))
+print(sort(xs, fn(s) => len(s)))
+try { print(sort(xs, fn(s) => [len(s), s])) } catch e { print("error:", e) }
+print(min(xs), max(xs), reverse(sort(xs)))
+let strs = str["kiwi", "apple", "banana-split-long", "fig", "date", "cherry-pie-long-name"]
+print(sort(strs), type(sort(strs)))
+var words = split("the quick brown fox jumps over the lazy dog and the extraordinarily long word", " ")
+print(sort(words), sort(words, fn(w) => w.upper()))
+var people = [{name: "ada", age: 3}, {name: "bob", age: 1}, {name: "christopher-long", age: 3}, {name: "al", age: 2}]
+print(sort(people, fn(p) => p.name))
+print(sort(people, fn(p) => p.age))
+print(sort(people, fn(a, b) => a.name < b.name))
+var big = []
+for i in 0..300 {
+  var pad = ""
+  if i % 3 == 0 { pad = "-padding-long" }
+  big.push(str((i * 7919) % 1000) + pad)
+}
+let sb = sort(big)
+print(sb.slice(0, 10), sb.slice(290))
+var ok = true
+for i in 1..len(sb) { if sb[i - 1] > sb[i] { ok = false } }
+print(ok)
+try { print(sort(["a", 1])) } catch e { print("error:", e) }
+fn badkey(s) {
+  if s == "a" { return 1 }
+  return "x"
+}
+try { print(sort(["a", "b"], badkey)) } catch e { print("error:", e) }

@@ -1,0 +1,29 @@
+// `on` blocks watching strs that change between short and long, and fields keyed by text
+var s = "a"
+on s (old, new) { print("s:", repr(old), "->", repr(new), len(new)) }
+s += "b"
+s = "ab"
+s = s + "cdefghij"
+s += "k"
+s = "abcdefghijk"
+s = slice(s, 0, 10)
+s = "abcdefghij"
+s = upper(s)
+var o = {name: "ada", tag: "x"}
+on o.name (old, new) { print("name:", old, "->", new) }
+on o { print("o changed:", o) }
+o.name = "ada"
+o.name = "ad" + "a"
+o["name"] = "bob"
+o["na" + "me"] = "a longer name here"
+o.tag = "y"
+var words = ["x"]
+on words (old, new) { print("words:", old, "->", new) }
+words.push("y")
+words[0] = "x"
+words[0] = "z"
+words = split("p,q", ",")
+words = ["p", "q"]
+fn change(&t) { t += "!" }
+change(&s)
+print(s)

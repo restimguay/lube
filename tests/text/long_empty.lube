@@ -1,0 +1,20 @@
+// very long and empty strs through every text function
+let e = ""
+print(repr(e), len(e), split(e, ","), split(e), join([], ","), join([e], ","), join([e, e], ","), replace(e, "a", "b"), e * 5, upper(e), lower(e), trim(e), chars(e), reverse(e), slice(e, 0, 5), e in e, index_of(e, e), starts_with(e, e), ends_with(e, e), sort([e, e]), {"": 1}, e == "", e < "a", String(e).length, List(e))
+let big = "abcdefghij" * 100000
+print(len(big), len(upper(big)), upper(big).slice(0, 12), len(split(big, "j")), split(big, "j")[99999], len(replace(big, "a", "")), len(replace(big, "j", "JJ")), index_of(big, "jab"), index_of(big, "jj"), "jj" in big, len(chars(big)), len(reverse(big)), reverse(big).slice(0, 11))
+let pieces = split(big, "e")
+print(len(pieces), pieces[0], pieces[1], pieces[100000], len(join(pieces, "e")), join(pieces, "e") == big)
+var built = ""
+for i in 0..20000 { built += "x" }
+print(len(built), built == "x" * 20000, len(built + built), slice(built, 19990) == "x" * 10)
+let hugeword = "w" * 1000000
+print(len(split(hugeword + " " + hugeword)), len(trim("  " + hugeword + "  ")), len(String(hugeword).words), len(lower(hugeword)))
+let utf = "é" * 100000
+print(len(utf), String(utf).length, len(chars(utf)), chars(utf)[99999], len(split(utf, "")), len(upper(utf)))
+var m = {}
+m[big] = 1
+m["abcdefghij" * 100000] = 2
+print(len(m), m[big])
+try { print(len("x" * 1e12)) } catch e { print("error:", e) }
+try { print(len(replace("a" * 1000, "a", "b" * 10000000))) } catch e { print("error:", e) }

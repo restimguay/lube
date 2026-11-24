@@ -1,0 +1,27 @@
+// reflection by names made as the program runs, short and long: fields read and set, methods found and called
+class Pet {
+  var name = "rex"
+  var age = 1
+  fn hello(x) => "hi {x} from {this.name}"
+}
+var p = Pet()
+set_field(&p, "age", 5)
+set_field(&p, "na" + "me", "bo")
+print(p, p.age, p.name, get_field(p, "ag" + "e"), fields(p))
+print(call_method(p, "hel" + "lo", "you"), has_method(p, "hello"), has_method(p, "hell"), signature(Pet, "hel" + "lo"))
+var o = {}
+set_field(&o, "k", 1)
+set_field(&o, "a much longer key", 2)
+set_field(&o, "k", 3)
+set_field(&o, String("s"), 4)
+print(o, o.k, o["k"], keys(o), get_field(o, "k"), has_method(o, "k"), "k" in o, o.s)
+for k in keys(o) { print(k, type(k), o[k]) }
+o.k = 9
+o["k"] += 1
+print(o, len(o))
+try { set_field(&p, "nope", 1) } catch e { print("error:", e) }
+try { set_field(&p, "age", "x") } catch e { print("error:", e) }
+try { get_field(o, "zz") } catch e { print("error:", e) }
+try { call_method(p, "zz") } catch e { print("error:", e) }
+try { signature(Pet, "zz") } catch e { print("error:", e) }
+try { get_field(o, 5) } catch e { print("error:", e) }

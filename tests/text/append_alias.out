@@ -1,0 +1,11 @@
+abcdefghij abc 10
+abcdefghijk abcdefghij 11 10
+abcdefghijklmnop abcdefghij
+abcdefghijklmnopq abcdefghijklmnop
+["ab", "abcdefghijc", "abcdefghijkd"] ["a", "abcdefghij", "abcdefghijk"]
+{name: "name-is-now-long", long: "a long value here!"} {name: "n", long: "a long value here"}
+x51.5true[1, "a"]{k: 1} 23
+ééééééé 14 7
+["0", "01", "012", "0123", "01234", "012345", "0123456", "01234567", "012345678", "0123456789", "01234567890", "012345678901", "0123456789012", "01234567890123", "012345678901234"]
+abc String
+abcdefghijklm

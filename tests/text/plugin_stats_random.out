@@ -1,0 +1,20 @@
+abcdefghijkl ["x", "y"]
+red ["b", "a"]
+0 ["0", "1", "2", "3", "4"] 2300
+1 [true, "true"]
+error: mode(): no mode for empty data
+error: mode() counts Numbers, text and Bools, but item 0 is a List
+0.7720246314157545 72
+0.0783513436927491
+0.7720246314157545
+0.7720246314157545
+0.09639374978773074
+["rock", "rock", "scissors", "paper", "paper", "paper", "rock", "rock", "a long option string", "rock"] str
+["rock", "a long option string"] ["a long option string", "scissors", "rock", "paper"] ["scissors", "scissors", "scissors"]
+[1.75, 2.5, 3.25] [1.25, 2.5, 3.75]
+error: quantiles(): unknown method "bogus" (it is "exclusive" or "inclusive")
+-0.5
+error: correlation(): unknown method "nope" (it is "linear" or "ranked")
+0.337949476 0.5
+error: kde(): unknown kernel "nokernel"
+error: kde(): unknown kernel "a very long unknown kernel name"

@@ -1,0 +1,44 @@
+error: the object has no key "zz" (check with has() first, or use get(object, key, default))
+error: the object has no key "a long missing key" (check with has() first, or use get(object, key, default))
+error: the object has no field 'missing' (check with has() first, or use get(object, key, default))
+error: num(): 'abc' is not a number (give a fallback to use instead: num(text, 0))
+error: num(): '12abc' is not a number (give a fallback to use instead: num(text, 0))
+error: num(): 'a long non-number text' is not a number (give a fallback to use instead: num(text, 0))
+error: Number(): '1e' is not a number (give a fallback to use instead: Number(text, 0))
+error: 99999999999 does not fit in int32 (-2147483648 to 2147483647)
+error: 300 does not fit in int8 (-128 to 127)
+error: 'abc' is not a whole number
+error: -1 does not fit in uint8 (0 to 255)
+error: ord() needs a non-empty string
+error: string index 5 is out of range (length 3)
+error: string index -4 is out of range (length 3)
+error: string index must be a whole number, got 1.5
+error: string index must be a Number, not a str
+error: unsupported operand types for '-': str and Number
+error: unsupported operand types for '<': str and Number
+error: can only repeat by a whole, non-negative number
+error: can only repeat by a whole, non-negative number
+error: can only search text for text, not for a Number
+error: cannot look inside a Number (expected a List, str, Object, Range or Bytes)
+error: cannot look inside a Number (expected a List, str, Object, Range or Bytes)
+error: pad_left(): the fill must be a single character
+error: pad_left(): the fill must be a single character
+error: upper() expects a str as argument 1, got Number
+error: split() expects a str as argument 2, got Number
+error: replace() expects a str as argument 3, got Number
+1,a
+error: join() expects a str as argument 2, got Number
+error: m(): there is no currency 'XYZ' (add_currency() adds one)
+error: m(): there is no currency 'a currency too long' (add_currency() adds one)
+error: m(): "abc" is not an amount (write it as 19.99)
+error: unpack() expects a format such as "u8", "i16", "u32be", "f32" or "f64le", got "u17"
+error: unpack() expects a format such as "u8", "i16", "u32be", "f32" or "f64le", got "a very long bad format"
+error: read_file(): cannot read 'no_such_file.txt'
+error: read_file(): cannot read 'a/very/long/path/that/does/not/exist.txt'
+error: there is no class named 'abc'
+error: chr(): -1 is not a valid character code
+error: str has no method 'nosuchmethod'
+error: str has no method 'nosuchmethod'
+error: push() expects a List as argument 1, got str
+tests/text/errors_text.lube:49: error: short
+   49 | throw "short"

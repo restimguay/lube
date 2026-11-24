@@ -1,0 +1,50 @@
+// += and + on strs: short growing past 10 bytes, aliases that must not change, in lists and fields
+var s = "abc"
+var t = s
+s += "defgh"
+s += "ij"
+print(s, t, len(s))
+var u = s
+s += "k"
+print(s, u, len(s), len(u))
+s += "lmnop"
+print(s, u)
+var v = s
+s += "q"
+print(s, v)
+var xs = ["a", "abcdefghij", "abcdefghijk"]
+let saved = xs
+xs[0] += "b"
+xs[1] += "c"
+xs[2] += "d"
+print(xs, saved)
+var o = {name: "n", long: "a long value here"}
+let osaved = o
+o.name += "ame"
+o["long"] += "!"
+o.name += "-is-now-long"
+print(o, osaved)
+var n = "x"
+n += 5
+n += 1.5
+n += true
+n += [1, "a"]
+n += {k: 1}
+print(n, len(n))
+var w = "é"
+for i in 0..6 { w += "é" }
+print(w, len(w), String(w).length)
+var acc = ""
+var history = []
+for i in 0..15 {
+  acc += str(i % 10)
+  history.push(acc)
+}
+print(history)
+var cnt = String("ab")
+cnt += "c"
+print(cnt, type(cnt))
+var p = "a"
+fn grow(&x) { x += "bcdefghijklm" }
+grow(&p)
+print(p)

@@ -1,0 +1,23 @@
+[[0, 0, 0],
+ [0, 0, 0]] int64 str true 5
+[1.5, 2.5] float32 [1, 2] [true, true] [1, 1]
+error: zeros(): there is no dtype "int8" (float64, float32, int64, int32, uint8, bool)
+error: zeros(): there is no dtype "a dtype nobody has" (float64, float32, int64, int32, uint8, bool)
+3.872983346207417 3.872983346207417 [0, 0.25, 0.5, 0.75, 1]
+4.999999999999999
+error: norm(): a matrix has no such norm ("fro", "nuc", 1, -1, 2, -2, inf or -inf)
+[[1, 2, 3], [1, 1, 2]]
+"1+2j" (1+2j)
+"2j" 2j
+"(1-2.5e3J)" (1-2500j)
+"inf+nanj" (inf+nanj)
+"3" (3+0j)
+" 4 " (4+0j)
+"-1-1j" (-1-1j)
+"1e3+1e-3j" (1000+0.001j)
+error: Complex(): "x" is not a complex number such as "1+2j"
+error: Complex(): "" is not a complex number such as "1+2j"
+error: Complex(): "1+2j and more" is not a complex number such as "1+2j"
+"(1+2j)" (1+2j)
+(3+4j) (3+4j) (3+4j) (3+4j) Complex str true 6
+2j 2j 5

@@ -35,7 +35,12 @@
  *   - Values made by lube->new_*() are the plugin's until it returns them,
  *     passes them on (list_push, object_set: those take them over), or lets
  *     go of them with release(). To keep a borrowed value, retain() it.
- *   - Text and bytes pointers are good until the plugin returns.
+ *   - Text and bytes pointers are good until the plugin returns. (One case
+ *     is narrower. A str of a few bytes that the plugin made itself, or kept
+ *     from an earlier call, has no memory of its own: its text is a copy that
+ *     is good until the plugin has taken the text of 64 more such strs. The
+ *     text of an argument, of a list's item, of an object's value and of
+ *     what a call returned is where the value is, as that of longer text.)
  *   - lube_plugin_init runs once per process. A function can run in any
  *     isolate (thread): keep shared state under a lock (lube->lock_new()).
  *     A plugin's objects stay in the isolate that made them.

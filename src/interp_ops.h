@@ -142,7 +142,7 @@ VM_OP(OP_CHECK_KEY) {
 /* a op b: two Numbers; else (binary_other) two strs compared, or the general way. */
 VM_PART(binary_other) {
     Value b = PEEK(1), a = PEEK(2), v;
-    if (!str_eq_op(ARG_OF(in), a, b, &v)) {
+    if (!str_eq_op(ARG_OF(in), a, b, &v) && !str_in_op(ARG_OF(in), a, b, &v)) {
         SYNC();
         v = binary_op(I, (TokenType)ARG_OF(in), a, b);
         if (IS_ERR(v)) {  /* a, then b, let go of before the error, as the general loop does (a File flushes) */
@@ -176,7 +176,7 @@ VM_PART(binary2_other) {
     int arg = ARG_OF(in), bop = arg & 0xff, ka = (arg >> 8) & 3, kb = arg >> 10;
     Value b = kb == OPND_LOCAL ? LOCAL((int)ip[2]) : K(ip[2]);
     Value a = ka == OPND_LOCAL ? LOCAL((int)ip[1]) : ka == OPND_CONST ? K(ip[1]) : TOP, v;
-    if (!str_eq_op(bop, a, b, &v)) {  /* the general way: text joined, x in xs... */
+    if (!str_eq_op(bop, a, b, &v) && !str_in_op(bop, a, b, &v)) {  /* the general way: text joined, x in xs... */
         SYNC();
         v = binary_op(I, (TokenType)bop, a, b);
         if (IS_ERR(v)) GO_RAISE();
@@ -208,7 +208,7 @@ VM_PART(cmp_jump_other) {
     int stacked = (ka == OPND_STACK) + (kb == OPND_STACK);
     Value b = kb == OPND_LOCAL ? LOCAL((int)ip[3]) : kb == OPND_CONST ? K(ip[3]) : TOP;
     Value a = ka == OPND_LOCAL ? LOCAL((int)ip[2]) : ka == OPND_CONST ? K(ip[2]) : PEEK(stacked), v;
-    if (!str_eq_op(bop, a, b, &v)) {
+    if (!str_eq_op(bop, a, b, &v) && !str_in_op(bop, a, b, &v)) {
         if (IS_FOREIGN(a) || IS_FOREIGN(b)) GO_SLOW();  /* (a plugin's operator may give what is not a Bool: an error) */
         SYNC();  /* the general way: it is a Bool, or an error */
         v = binary_op(I, (TokenType)bop, a, b);
@@ -564,8 +564,9 @@ VM_OP(OP_METHOD_PREP) {
         }
         /* xs.push(, s.ends_with(: x a local that is no Object or instance, and `name` a built-in (as op_method_prep
          * finds it): the built-in, with x lent when it changes its first argument, else x's value */
-        if (pd->nkeys == 0 && rv->kind == VAR_LOCAL && root->type == VAL_OBJ && !IS_MAP(*root) && !IS_PACKAGE(*root) &&
-            !LUBE_OWN_METHODS(OBJ_TYPE(*root)) && md->fallback.kind == VAR_GLOBAL && I->npending < I->cap_pending) {
+        if (pd->nkeys == 0 && rv->kind == VAR_LOCAL &&
+            (root->type == VAL_STR || (root->type == VAL_OBJ && !IS_MAP(*root) && !IS_PACKAGE(*root) && !LUBE_OWN_METHODS(OBJ_TYPE(*root)))) &&
+            md->fallback.kind == VAR_GLOBAL && I->npending < I->cap_pending) {
             Value *fn = global_cached(I, &md->fallback);
             if (fn && IS_NATIVE(*fn)) {
                 PendingCall *p = &I->pending[I->npending++];

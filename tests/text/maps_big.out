@@ -1,0 +1,8 @@
+50000 0 49999 12345 false ["k0", "k1", "k2"] ["k49997", "k49998", "k49999"]
+25000 ["k1", "k3", "k5"] false true -1
+25010 ["k49991", "k49993", "k49995", "k49997", "k49999", "k0", "k2", "k4", "k6", "k8", "k10", "k12", "k14", "k16", "k18"] back 1
+{the: 6000, cat: 2000, sat: 2000, on: 2000, mat: 2000, with: 2000, hat: 2000, "": 1} 8
+97 31 ["0", "1", "2", "3", "4"]
+97
+{aa: "aa", ab: "ab", ba: "ba", bb: "bb", aaaaaaaaaa: "aaaaaaaaaa", aaaaaaaaab: "aaaaaaaaab", baaaaaaaaa: "baaaaaaaaa", aaaaaaaaaaa: "aaaaaaaaaaa", k1: "k1", k2: "k2", k10: "k10", k20: "k20", "1k": "1k", "2k": "2k"} 14
+14
