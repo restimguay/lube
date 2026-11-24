@@ -372,8 +372,9 @@ int lube_any_objects(const Value *items, size_t n) {
 /* Appends n items (borrowed: each gets one owner more) to l, which has room for them: one copy of the block,
  * then the owner counts of those that have one (a list of Numbers has none). */
 void list_take(ObjList *l, const Value *items, size_t n) {
+    if (!n) return;  /* (an empty list may have no block yet: there is nothing to point into) */
     Value *to = l->items + l->count;
-    if (n) memcpy(to, items, n * sizeof(Value));
+    memcpy(to, items, n * sizeof(Value));
     if (n <= 16 || lube_any_objects(to, n))  /* (a short list: looked at once) */
         for (size_t i = 0; i < n; i++)
             if (to[i].type == VAL_OBJ) to[i].as.obj->rc++;

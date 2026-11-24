@@ -460,7 +460,7 @@ NATIVE(n_slice) {
     ObjList *src = AS_LIST(v), *out = new_list();
     out->elem = src->elem;
     list_reserve(out, end - start);
-    list_take(out, src->items + start, end - start);
+    if (end > start) list_take(out, src->items + start, end - start);  /* (an empty list has no block) */
     return OBJ_VAL(out);
 }
 

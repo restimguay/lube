@@ -3154,6 +3154,7 @@ LUBE_NOINLINE static void op_interp(Interp *I, int n) {
     char small[128];
     size_t len = 0;
     const Value *part = &I->stack[I->sp - n], *end = &I->stack[I->sp];
+    small[0] = '\0';  /* (gcc: with no piece put in it, none of it is read, but it is passed on) */
     for (; part < end && len <= sizeof small - LUBE_WHOLE_ROOM; part++) {  /* (room for the longest of these) */
         if (part->type == VAL_STR) {
             memcpy(small + len, SSTR_CHARS(part), LUBE_SSTR_MAX + 1);  /* (all of them: its length says how many count) */
