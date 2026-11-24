@@ -30,6 +30,12 @@
 #ifndef LUBE_H
 #define LUBE_H
 
+/* The parser and the resolver leave on an error with longjmp(). On 64-bit Windows longjmp() unwinds the stack
+ * frame by frame (RtlUnwindEx) when setjmp() noted its frame, and that crashed after some of the resolver's
+ * errors. Asked this way (before any #include), the system's header has setjmp() note no frame: longjmp() then
+ * puts the registers back and no more, as on every other system. */
+#define __USE_MINGW_SETJMP_NON_SEH
+
 #include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
