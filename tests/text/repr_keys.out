@@ -1,0 +1,22 @@
+"\t" 1
+"\n" 1
+"\r" 1
+"\"" 1
+"\\" 1
+"\x7f" 1
+"\x01" 1
+"" 2
+" " 2
+", " 2
+"'" 1
+"a\tb" 3
+"line1\nline2 long" 16
+"\x1b[0m" 4
+"€" 3
+"﻿" 3
+"\x00\x00" 2
+["\t", "\n", "\r", "\"", "\\", "\x7f", "\x01", "", " ", ", ", "'", "a\tb", "line1\nline2 long", "\x1b[0m", "€", "﻿", "\x00\x00"]
+{"a b": 3, if: 2, else: 4, _x: 2, "9": 1, x9: 2, "x-y": 3, "": 0, é: 2, Ω: 2, "with space but longer": 21, true: 4, nil: 3, fn: 2, class: 5, "a.b": 3, A: 1, __: 2, "1e3": 3, "x\ny": 3}
+["a b", "if", "else", "_x", "9", "x9", "x-y", "", "é", "Ω", "with space but longer", "true", "nil", "fn", "class", "a.b", "A", "__", "1e3", "x\ny"]
+{a: 1} {a: 1} {"a b": 1} {if: 2} {1: 1, 2: 2, k: 3, k1: 4, true: 5}
+{"quote\"d": 1, "back\\slash": 2, a: 3, ["a", "b c"]: 4} {"quote\"d": 1, "back\\slash": 2, a: 3, ["a", "b c"]: 4} {"quote\"d": 1, "back\\slash": 2, a: 3, ["a", "b c"]: 4} {"quote\"d": 1, "back\\slash": 2, a: 3, ["a", "b c"]: 4}

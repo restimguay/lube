@@ -1,0 +1,50 @@
+0 0 true true true  "" str false true false |
+0 false true true true true true 0 true true
+1 1 true true true a "a" str false true false a|a
+1 false true true true true true 0 true true
+2 2 true true true ab "ab" str false true false ab|ab
+2 false true true true true true 0 true true
+3 3 true true true abc "abc" str false true false abc|abc
+3 false true true true true true 0 true true
+4 4 true true true abcd "abcd" str false true false abcd|abcd
+4 false true true true true true 0 true true
+5 5 true true true abcde "abcde" str false true false abcde|abcde
+5 false true true true true true 0 true true
+6 6 true true true abcdef "abcdef" str false true false abcdef|abcdef
+6 false true true true true true 0 true true
+7 7 true true true abcdefg "abcdefg" str false true false abcdefg|abcdefg
+7 false true true true true true 0 true true
+8 8 true true true abcdefgh "abcdefgh" str false true false abcdefgh|abcdefgh
+8 false true true true true true 0 true true
+9 9 true true true abcdefghi "abcdefghi" str false true false abcdefghi|abcdefghi
+9 false true true true true true 0 true true
+10 10 true true true abcdefghij "abcdefghij" str false true false abcdefghij|abcdefghij
+10 false true true true true true 0 true true
+11 11 true true true abcdefghijk "abcdefghijk" str false true false abcdefghijk|abcdefghijk
+11 false true true true true true 0 true true
+12 12 true true true abcdefghijkl "abcdefghijkl" str false true false abcdefghijkl|abcdefghijkl
+12 false true true true true true 0 true true
+13 13 true true true abcdefghijklm "abcdefghijklm" str false true false abcdefghijklm|abcdefghijklm
+13 false true true true true true 0 true true
+14 14 true true true abcdefghijklmn "abcdefghijklmn" str false true false abcdefghijklmn|abcdefghijklmn
+14 false true true true true true 0 true true
+15 15 true true true abcdefghijklmno "abcdefghijklmno" str false true false abcdefghijklmno|abcdefghijklmno
+15 false true true true true true 0 true true
+16 16 true true true abcdefghijklmnop "abcdefghijklmnop" str false true false abcdefghijklmnop|abcdefghijklmnop
+16 false true true true true true 0 true true
+17 17 true true true abcdefghijklmnopq "abcdefghijklmnopq" str false true false abcdefghijklmnopq|abcdefghijklmnopq
+17 false true true true true true 0 true true
+18 18 true true true abcdefghijklmnopqr "abcdefghijklmnopqr" str false true false abcdefghijklmnopqr|abcdefghijklmnopqr
+18 false true true true true true 0 true true
+19 19 true true true abcdefghijklmnopqrs "abcdefghijklmnopqrs" str false true false abcdefghijklmnopqrs|abcdefghijklmnopqrs
+19 false true true true true true 0 true true
+20 20 true true true abcdefghijklmnopqrst "abcdefghijklmnopqrst" str false true false abcdefghijklmnopqrst|abcdefghijklmnopqrst
+20 false true true true true true 0 true true
+["", "a", "ab", "abc", "abcd", "abcde", "abcdef", "abcdefg", "abcdefgh", "abcdefghi", "abcdefghij", "abcdefghijk", "abcdefghijkl", "abcdefghijklm", "abcdefghijklmn", "abcdefghijklmno", "abcdefghijklmnop", "abcdefghijklmnopq", "abcdefghijklmnopqr", "abcdefghijklmnopqrs", "abcdefghijklmnopqrst"]
+,a,ab,abc,abcd,abcde,abcdef,abcdefg,abcdefgh,abcdefghi,abcdefghij,abcdefghijk,abcdefghijkl,abcdefghijklm,abcdefghijklmn,abcdefghijklmno,abcdefghijklmnop,abcdefghijklmnopq,abcdefghijklmnopqr,abcdefghijklmnopqrs,abcdefghijklmnopqrst
+aababcabcdabcdeabcdefabcdefgabcdefghabcdefghiabcdefghijabcdefghijkabcdefghijklabcdefghijklmabcdefghijklmnabcdefghijklmnoabcdefghijklmnopabcdefghijklmnopqabcdefghijklmnopqrabcdefghijklmnopqrsabcdefghijklmnopqrst
+aababcabcdabcdeabcdefabcdefgabcdefghabcdefghiabcdefghijabcdefghijkabcdefghijklabcdefghijklmabcdefghijklmnabcdefghijklmnoabcdefghijklmnopabcdefghijklmnopqabcdefghijklmnopqrabcdefghijklmnopqrsabcdefghijklmnopqrst
+<sep>a<sep>ab<sep>abc<sep>abcd<sep>abcde<sep>abcdef<sep>abcdefg<sep>abcdefgh<sep>abcdefghi<sep>abcdefghij<sep>abcdefghijk<sep>abcdefghijkl<sep>abcdefghijklm<sep>abcdefghijklmn<sep>abcdefghijklmno<sep>abcdefghijklmnop<sep>abcdefghijklmnopq<sep>abcdefghijklmnopqr<sep>abcdefghijklmnopqrs<sep>abcdefghijklmnopqrst
+210 230
+aaaaaaaaaaaaaaaaaaaa 20
+ababababab 10 abababababab 12  abcdefghij  xxxxxxxxxx xxxxxxxxxxx

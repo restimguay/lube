@@ -1231,6 +1231,29 @@ error: cannot change an element of a Counter
 error: cannot index into a Counter
 error: cannot index into a Counter
 [exit 0]
+--- plugin: text, short and long, through pointers it keeps
+a|bb|abcdefghij|abcdefghijk||é|日本語x
+x|x|x|x|?|?|?|tail
+5 
+ababababab|longer|ababababablonger|12345|longer!|LONGER|q
+true true 300 true n0 str true true
+301 300 true 297 ["a", "b", "n0"] {k: "n0"} "n0"
+one,?,three,S  
+p,a typed list's long item ["p", "a typed list's long item"] true
+p,q {p: 2, q: 1} 2 1
+name=ada;role=an engineer of note;n=?;tag=x; {name: "ada", role: "an engineer of note", n: 3, tag: "x"} true xada 4
+name=bo;role=an engineer of note;n=?;tag=x; name=bo;role=an engineer of note;n=?;tag=x; {name: "bo", role: "an engineer of note", n: 3, tag: "x"}
+k0=v0;k1=v1;k2=v2;k3=v3;k4=v4;k5=v5;k6=v6;k7=v7;k8=v8;k9=v9;k10=v10;k11=v11;a key longer than ten bytes=a value longer than ten bytes;
+v3 v11 true 13 k0 str  
+name=rex;kind=a very good dog; Pet {name: "rex", kind: "a very good dog"} rex hi hello from rex, a very good dog ?
+error: a Pet has no method 'nope'
+r1 r1 r1 r1 r1 a result longer than ten bytes: x a result longer than ten bytes: x true
+42 42 42 ? ? "q" "q"
+error: no luck
+kept kept kept kept kept kept kept other|texts|between
+a kept text that is longer a kept text that is longer a kept text that is longer a kept text that is longer a kept text that is longer
+é é ["m", 1, true] ["abcdefghij", 10, true] ["abcdefghijk", 11, true] ["", 0, true]
+[exit 0]
 --- plugin: made for a later Lube
 lube: plugin 'old' needs a newer Lube (it was made for plugin API 4; this Lube has 3)
 <eval>:1: error: cannot load plugin old (see above)
@@ -1304,6 +1327,11 @@ twice(21), the result dropped: status 0
 status 1: error: lube_call: there is no global 'nothing_here'
 status 1: error: lube_call: a Number is not a function
 total(0, ..., 9): status 0, 45
+-- text, short and long
+t9 ["a", "bb", "a longer name here"] {id: "x1", note: "a note that is longer"} true x1!
+t0 | a sentence that is longer: 1 | t2 | a sentence that is longer: 3 | ok | a bb a longer name here | x1
+mine 4
+a|bb|a longer argument here|a|?|changed!
 -- functions of the program's
 5 1 2 3
 101 5

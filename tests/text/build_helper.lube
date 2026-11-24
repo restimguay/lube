@@ -1,0 +1,2 @@
+let HELPER_CONST = "help"
+fn helper_greet(name) => "hi " + name

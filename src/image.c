@@ -130,8 +130,20 @@ static void w_code(Writer *w, const Code *c) {
     for (int i = 0; i < c->nconsts; i++) {
         Value v = c->consts[i];
         w_u32(o, (uint32_t)v.type | (uint32_t)v.ikind << 8);
-        if (v.type == VAL_OBJ) w_str(w, AS_STRING(v));  /* (constants are strings, Numbers, Bools, sized ints) */
-        else w_u64(o, v.type == VAL_BOOL ? (uint64_t)v.as.boolean : v.as.u);
+        if (v.type == VAL_OBJ) {
+            w_str(w, AS_STRING(v));  /* (constants are strings, Numbers, Bools, sized ints) */
+        } else if (v.type == VAL_STR) {  /* a short str: its bytes, in two words (its length is in ikind) */
+            uint64_t lo = 0, hi = 0;  /* (byte i in bits 8i: the same image whatever the byte order) */
+            const unsigned char *b = (const unsigned char *)SSTR_CHARS(&v);
+            for (size_t k = 0; k < SSTR_LEN(v); k++) {
+                if (k < 8) lo |= (uint64_t)b[k] << (8 * k);
+                else hi |= (uint64_t)b[k] << (8 * (k - 8));
+            }
+            w_u64(o, lo);
+            w_u64(o, hi);
+        } else {
+            w_u64(o, v.type == VAL_BOOL ? (uint64_t)v.as.boolean : v.as.u);
+        }
     }
     w_u32(o, (uint32_t)c->nprotos);
     for (int i = 0; i < c->nprotos; i++) w_obj(w, c->protos[i], IMG_FUNC);
@@ -442,6 +454,14 @@ static void r_code(Reader *r, Code *c) {
         if (v.type == VAL_OBJ) {
             ObjString *s = r_str(r);
             v = s ? OBJ_VAL(s) : NIL_VAL;
+        } else if (v.type == VAL_STR) {
+            char b[16];
+            uint64_t lo = r_u64(r), hi = r_u64(r);
+            for (int k = 0; k < 8; k++) {
+                b[k] = (char)(lo >> (8 * k));
+                b[8 + k] = (char)(hi >> (8 * k));
+            }
+            v = sstr_value(b, v.ikind <= LUBE_SSTR_MAX ? v.ikind : 0);
         } else {
             uint64_t u = r_u64(r);
             if (v.type == VAL_BOOL) v.as.boolean = (int)u;

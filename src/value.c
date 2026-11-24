@@ -10,6 +10,7 @@
  */
 #include "lube.h"
 
+#include <float.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,12 +46,44 @@ ObjString *new_string(const char *chars, size_t length) {
     return s;
 }
 
+/* The hash of a text: a short one's as sstr_hash gives it (so a str hashes the same held either way). */
+uint32_t text_hash(const char *chars, size_t length) {
+    return length <= LUBE_SSTR_MAX ? sstr_hash(sstr_value(chars, length)) : hash_bytes(chars, length);
+}
+
 uint32_t string_hash(ObjString *s) {
     if (!s->hashed) {
-        s->hash = hash_bytes(s->chars, s->length);
+        s->hash = text_hash(s->chars, s->length);
         s->hashed = 1;
     }
     return s->hash;
+}
+
+Value str_value(const char *chars, size_t length) {
+    return length <= LUBE_SSTR_MAX ? sstr_value(chars, length) : OBJ_VAL(new_string(chars, length));
+}
+
+Value str_take(ObjString *s) {
+    if (s->length > LUBE_SSTR_MAX) return OBJ_VAL(s);
+    Value v = sstr_value(s->chars, s->length);
+    release(OBJ_VAL(s));
+    return v;
+}
+
+ObjString *str_object(Value v) {
+    if (IS_SSTR(v)) return new_string(SSTR_CHARS(&v), SSTR_LEN(v));
+    ObjString *s = IS_HSTR(v) ? AS_STRING(v) : AS_STROBJ(v)->text;
+    s->obj.rc++;
+    return s;
+}
+
+Value str_heap(Value v) { return IS_SSTR(v) ? OBJ_VAL(new_string(SSTR_CHARS(&v), SSTR_LEN(v))) : v; }
+
+int text_equal(Value a, Value b) {
+    if (IS_SSTR(a) && IS_SSTR(b)) return sstr_same(a, b);
+    size_t la, lb;
+    const char *x = text_chars(&a, &la), *y = text_chars(&b, &lb);
+    return la == lb && (x == y || memcmp(x, y, la) == 0);
 }
 
 /* Appends to a string that has exactly one owner (the caller checks).
@@ -83,7 +116,7 @@ ObjString *string_append(ObjString *s, const char *chars, size_t n) {
 /* Returns the shared copy of a string. The table owns it; the caller gets a
  * borrowed pointer that stays valid until the interpreter shuts down. */
 ObjString *lube_intern(Interp *I, const char *chars, size_t length) {
-    uint32_t h = hash_bytes(chars, length);
+    uint32_t h = text_hash(chars, length);
     ObjMap *m = I->strings;
     if (m->index_cap) {
         size_t mask = m->index_cap - 1, i = h & mask;
@@ -103,15 +136,186 @@ ObjString *lube_intern(Interp *I, const char *chars, size_t length) {
     return s;
 }
 
+#if LUBE_SWAR_SCAN
+/* The first i (going 8 at a time, while i + 7 <= w) where some place of i..i+7 has the needle's first byte and,
+ * `last` bytes on, its last byte; or where it stopped. (On its own, so the loop is ten instructions a word.) */
+static LUBE_NOINLINE size_t pair_scan(const unsigned char *s, size_t i, size_t w, size_t last, uint64_t heads,
+                                      uint64_t tails) {
+    for (; i + 15 <= w; i += 16) {  /* (two words a turn) */
+        uint64_t x = (lube_load64((const char *)s + i) ^ heads) | (lube_load64((const char *)s + i + last) ^ tails);
+        uint64_t y = (lube_load64((const char *)s + i + 8) ^ heads) | (lube_load64((const char *)s + i + 8 + last) ^ tails);
+        if ((((x - LUBE_W_ONES) & ~x) | ((y - LUBE_W_ONES) & ~y)) & LUBE_W_HIGH) break;
+    }
+    for (; i + 7 <= w; i += 8) {
+        uint64_t x = (lube_load64((const char *)s + i) ^ heads) | (lube_load64((const char *)s + i + last) ^ tails);
+        if ((x - LUBE_W_ONES) & ~x & LUBE_W_HIGH) break;  /* (a byte of x is zero: a place has both) */
+    }
+    return i;
+}
+#endif
+
+/* Where needle first is in hay at or after `from`, or -1.
+ *
+ * One byte: the first 32 bytes a word at a time (most searches end there: the pieces of a split, a short str),
+ * the rest by memchr. Longer needles: memchr hops from one first byte to the next while those hops are long (a
+ * first byte that is rare in this text: nothing is quicker); once they are short, the needle's first and last
+ * bytes are both looked for in eight places at once (two words of the text, as far apart as those two bytes),
+ * and only a place where both match is compared in full. Without LUBE_SWAR_SCAN that second part is the search
+ * CPython's str.find makes (Sunday's skip with a 64-bit set of the needle's bytes), which finds the same places. */
+static LUBE_NOINLINE long find_long(const char *hay, size_t hlen, const char *needle, size_t nlen, size_t from);
+
 long str_find(const char *hay, size_t hlen, const char *needle, size_t nlen, size_t from) {
     if (nlen == 0) return from <= hlen ? (long)from : -1;
     if (nlen > hlen || from > hlen - nlen) return -1;
-    const char *p = hay + from, *end = hay + (hlen - nlen) + 1;  /* (the first byte by memchr: quick) */
-    while (p < end && (p = memchr(p, needle[0], (size_t)(end - p))) != NULL) {
-        if (memcmp(p, needle, nlen) == 0) return (long)(p - hay);
-        p++;
+    if (hlen - from > 16 || nlen == 1) return find_long(hay, hlen, needle, nlen, from);
+    /* a short text ("99" in "1995"): place by place, with nothing to set up */
+    const unsigned char *s = (const unsigned char *)hay + from, *p = (const unsigned char *)needle;
+    size_t last = nlen - 1, w = hlen - from - nlen;
+    for (size_t i = 0; i <= w; i++) {
+        if (s[i] != p[0] || s[i + last] != p[last]) continue;
+        size_t j = 1;
+        while (j < last && s[i + j] == p[j]) j++;
+        if (j >= last) return (long)(from + i);
     }
     return -1;
+}
+
+static LUBE_NOINLINE long find_long(const char *hay, size_t hlen, const char *needle, size_t nlen, size_t from) {
+    const unsigned char *s = (const unsigned char *)hay + from, *p = (const unsigned char *)needle;
+    size_t n = hlen - from;
+    if (nlen == 1) {
+        size_t head = n < 32 ? n : 32, i = lube_scan_byte((const char *)s, head, p[0]);
+        if (i < head) return (long)(from + i);
+        if (head == n) return -1;
+        const char *q = memchr(s + head, p[0], n - head);
+        return q ? (long)(q - hay) : -1;
+    }
+    size_t last = nlen - 1, w = n - nlen, i = 0;  /* w: the last place a match can start */
+    unsigned char head = p[0], tail = p[last];
+#define MATCH_AT(at) (s[(at) + last] == tail && memcmp(s + (at) + 1, p + 1, last - 1) == 0)
+    if (w >= 64) {  /* (a long text: is the first byte rare in it?) */
+        for (int short_hops = 0; short_hops < 4 && i <= w;) {
+            const unsigned char *q = memchr(s + i, head, w - i + 1);
+            if (!q) return -1;
+            size_t at = (size_t)(q - s);
+            if (MATCH_AT(at)) return (long)(from + at);
+            short_hops += at - i < 32;
+            i = at + 1;
+        }
+    }
+#if LUBE_SWAR_SCAN
+    while (i + 7 <= w) {  /* places i..i+7: each needs s[..+last], so the second word ends at w + last = n - 1 */
+        i = pair_scan(s, i, w, last, LUBE_W_ONES * head, LUBE_W_ONES * tail);
+        if (i + 7 > w) break;
+        uint64_t x = (lube_load64((const char *)s + i) ^ (LUBE_W_ONES * head)) |
+                     (lube_load64((const char *)s + i + last) ^ (LUBE_W_ONES * tail));
+        for (uint64_t m = lube_zero_bytes(x); m; m &= m - 1) {
+            size_t at = i + LUBE_FIRST_BYTE(m);
+            if (s[at + 1] == p[1] && memcmp(s + at + 1, p + 1, last - 1) == 0) return (long)(from + at);
+        }
+        i += 8;
+    }
+    for (; i <= w; i++)
+        if (s[i] == head && MATCH_AT(i)) return (long)(from + i);
+#else
+    size_t skip = last;
+    uint64_t set = (uint64_t)1 << (tail & 63);
+    for (size_t k = 0; k < last; k++) {
+        set |= (uint64_t)1 << (p[k] & 63);
+        if (p[k] == tail) skip = last - k - 1;  /* (how far the window may move when its last byte matched) */
+    }
+    const unsigned char *ends = s + last;  /* ends[i]: the last byte of the window at i */
+    for (; i <= w; i++) {
+        if (ends[i] == tail) {
+            if (s[i] == head && MATCH_AT(i)) return (long)(from + i);
+            if (i < w && !((set >> (ends[i + 1] & 63)) & 1)) i += nlen;
+            else i += skip;
+        } else if (i < w && !((set >> (ends[i + 1] & 63)) & 1)) {
+            i += nlen;
+        }
+    }
+#endif
+#undef MATCH_AT
+    return -1;
+}
+
+/* How many bytes of s[0..n) are c: eight at a time (a byte that matches leaves 1 in its place, and one
+ * multiplication adds the eight). */
+size_t str_count_byte(const char *s, size_t n, unsigned char c) {
+    size_t count = 0, i = 0;
+    uint64_t pattern = LUBE_W_ONES * c;
+    for (; i + 8 <= n; i += 8)
+        count += (size_t)((((lube_zero_bytes(lube_load64(s + i) ^ pattern)) >> 7) * LUBE_W_ONES) >> 56);
+    for (; i < n; i++) count += (unsigned char)s[i] == c;
+    return count;
+}
+
+/* How many times needle is in hay, counting from the left without overlaps (as split and replace take them). */
+size_t str_count(const char *hay, size_t hlen, const char *needle, size_t nlen) {
+    if (nlen == 1) return str_count_byte(hay, hlen, (unsigned char)needle[0]);
+    size_t count = 0, start = 0;
+    long pos;
+    while ((pos = str_find(hay, hlen, needle, nlen, start)) >= 0) {
+        count++;
+        start = (size_t)pos + nlen;
+    }
+    return count;
+}
+
+/* dst[0..n) = src[0..n) with its ASCII letters in upper (or lower) case, eight bytes at a time: a byte is a
+ * letter to change when its low 7 bits are in a..z (A..Z) and its high bit is clear (so UTF-8's bytes stay);
+ * the two cases differ in bit 0x20. */
+void str_change_case(char *dst, const char *src, size_t n, int upper) {
+    unsigned char first = upper ? 'a' : 'A';
+    size_t i = 0;
+#ifndef LUBE_LOOPS_VECTORIZED  /* (see lube.h: where the compiler makes the plain loop below 16 bytes at a time) */
+    uint64_t from_first = LUBE_W_ONES * (0x80u - first), past_last = LUBE_W_ONES * (0x7fu - (first + 25u));
+    for (; i + 8 <= n; i += 8) {
+        uint64_t w = lube_load64(src + i), low = w & LUBE_W_LOW7;
+        w ^= ((low + from_first) & ~(low + past_last) & ~w & LUBE_W_HIGH) >> 2;
+        memcpy(dst + i, &w, 8);
+    }
+#endif
+    for (; i < n; i++) {  /* (no branch: a letter of the case to change has its bit 0x20 flipped) */
+        unsigned char c = (unsigned char)src[i];
+        dst[i] = (char)(c ^ (((unsigned char)(c - first) < 26) << 5));
+    }
+}
+
+/* The Number written in s[0..n) exactly as [-]digits[.digits], with at most 15 digits in all: such a number is
+ * a whole number below 2^53 divided by a power of ten of at most 10^15, both exact as doubles, so one division
+ * gives the correctly rounded result: the double strtod gives. Returns 0 for anything else (an exponent, more
+ * digits, inf, hex, spaces around): strtod's to read. */
+int str_to_double(const char *s, size_t n, double *out) {
+#if defined(FLT_EVAL_METHOD) && FLT_EVAL_METHOD != 0 && FLT_EVAL_METHOD != 1
+    (void)s; (void)n; (void)out;
+    return 0;  /* (arithmetic wider than double would round twice: strtod's, always) */
+#else
+    static const double pow10[16] = {1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15};
+    size_t i = 0;
+    int neg = n && s[0] == '-';
+    if (neg) i = 1;
+    if (n - i == 0 || n - i > 16) return 0;
+    uint64_t mant = 0;
+    int digits = 0, frac = -1;  /* frac: digits after the point (-1: no point yet) */
+    for (; i < n; i++) {
+        unsigned d = (unsigned char)s[i] - '0';
+        if (d < 10) {
+            mant = mant * 10 + d;
+            digits++;
+            if (frac >= 0) frac++;
+        } else if (s[i] == '.' && frac < 0) {
+            frac = 0;
+        } else {
+            return 0;
+        }
+    }
+    if (digits == 0 || digits > 15 || frac == 0) return 0;  /* ("1." and ".": strtod's) */
+    double d = (double)mant;
+    if (frac > 0) d /= pow10[frac];
+    *out = neg ? -d : d;
+    return 1;
+#endif
 }
 
 size_t utf8_seq_len(unsigned char lead) {
@@ -143,16 +347,44 @@ void list_reserve(ObjList *l, size_t n) {
     l->capacity = cap;
 }
 
+#ifdef LUBE_CHECK_LEAKS
+void lube_temp_kept(void) {
+    fputs("lube: a StrTemp's ObjString was kept (retained, or put in a list or a map)\n", stderr);
+    abort();
+}
+#endif
+
 void list_push(ObjList *l, Value v) {
+    LUBE_NOT_TEMP(v);
     list_reserve(l, l->count + 1);
     l->items[l->count++] = v;
+}
+
+/* Is any of items[0..n) an object (something with an owner count)? A list of Numbers, Bools and short strs has
+ * none, and then copying it is one memcpy and freeing it is freeing its block. (No branch in the loop: a
+ * compiler can test several items at once.) */
+int lube_any_objects(const Value *items, size_t n) {
+    unsigned any = 0;
+    for (size_t i = 0; i < n; i++) any |= (unsigned)(items[i].type == VAL_OBJ);
+    return (int)any;
+}
+
+/* Appends n items (borrowed: each gets one owner more) to l, which has room for them: one copy of the block,
+ * then the owner counts of those that have one (a list of Numbers has none). */
+void list_take(ObjList *l, const Value *items, size_t n) {
+    if (!n) return;  /* (an empty list may have no block yet: there is nothing to point into) */
+    Value *to = l->items + l->count;
+    memcpy(to, items, n * sizeof(Value));
+    if (n <= 16 || lube_any_objects(to, n))  /* (a short list: looked at once) */
+        for (size_t i = 0; i < n; i++)
+            if (to[i].type == VAL_OBJ) to[i].as.obj->rc++;
+    l->count += n;
 }
 
 ObjList *list_copy(ObjList *src) {
     ObjList *l = new_list();
     list_reserve(l, src->count);
-    for (size_t i = 0; i < src->count; i++) l->items[i] = retain(src->items[i]);
-    l->count = src->count;
+    list_take(l, src->items, src->count);
     l->elem = src->elem;  /* a copy of a String[] is still a String[] */
     return l;
 }
@@ -199,7 +431,8 @@ static uint32_t hash_double(double d) {
  * semantics), so a stored hash stays valid. */
 static uint32_t hash_at(Value v, int depth) {
     double d;
-    if (IS_TEXT(v)) return string_hash(text_of(v));  /* "a" == String("a"), so they hash alike */
+    if (IS_SSTR(v)) return sstr_hash(v);
+    if (IS_TEXT(v)) return string_hash(IS_HSTR(v) ? AS_STRING(v) : AS_STROBJ(v)->text);  /* "a" == String("a") */
     if (IS_BOOL(v)) return v.as.boolean ? 0x2545f491u : 0x6c8e9cf5u;
     if (IS_NUM(v)) return hash_double(v.as.number);
     if (IS_INT(v)) return int_exact_double(v, &d) ? hash_double(d) : mix64(v.as.u ^ 0x5bd1e995u);
@@ -207,7 +440,11 @@ static uint32_t hash_at(Value v, int depth) {
     if (IS_LIST(v)) {
         ObjList *l = AS_LIST(v);
         h ^= (uint32_t)l->count;
-        for (size_t i = 0; i < l->count && depth < HASH_DEPTH; i++) h = h * 31u + hash_at(l->items[i], depth + 1);
+        for (size_t i = 0; i < l->count && depth < HASH_DEPTH; i++) {  /* (Numbers and short strs: no call) */
+            Value item = l->items[i];
+            h = h * 31u + (IS_NUM(item) ? hash_double(item.as.number) : IS_SSTR(item) ? sstr_hash(item)
+                                                                                    : hash_at(item, depth + 1));
+        }
     } else if (IS_MAP(v)) {
         ObjMap *m = AS_MAP(v);
         h ^= (uint32_t)m->count ^ (uint32_t)((uintptr_t)m->klass >> 4);
@@ -226,13 +463,33 @@ static uint32_t hash_at(Value v, int depth) {
     return h;
 }
 
-static uint32_t hash_value(Value v) { return hash_at(v, 0); }
+/* (A short str: two multiplications. A name, or any ObjString looked up before: the hash it keeps. No call.) */
+static inline uint32_t hash_value(Value v) {
+    if (IS_SSTR(v)) return sstr_hash(v);
+    if (IS_HSTR(v) && AS_STRING(v)->hashed) return AS_STRING(v)->hash;
+    return hash_at(v, 0);
+}
 
 /* Called only when the hashes match. */
 static int keys_equal(Value a, Value b) {
-    if (IS_TEXT(a) && IS_TEXT(b)) {
-        ObjString *x = text_of(a), *y = text_of(b);
-        return x == y || (x->length == y->length && memcmp(x->chars, y->chars, x->length) == 0);
+    if (IS_OBJ(a) && IS_OBJ(b) && a.as.obj == b.as.obj) return 1;  /* (a name, interned: itself) */
+    if (IS_SSTR(a) && IS_SSTR(b)) return sstr_same(a, b);
+    if (IS_TEXT(a) && IS_TEXT(b)) return text_equal(a, b);
+    if (IS_LIST(a) && IS_LIST(b)) {  /* a key such as [x, y]: its Numbers and short strs compared where they are */
+        ObjList *x = AS_LIST(a), *y = AS_LIST(b);
+        if (x->count != y->count) return 0;
+        size_t i = 0;
+        for (; i < x->count; i++) {
+            Value p = x->items[i], q = y->items[i];
+            if (IS_NUM(p) && IS_NUM(q)) {
+                if (p.as.number != q.as.number) return 0;
+            } else if (IS_SSTR(p) && IS_SSTR(q)) {
+                if (!sstr_same(p, q)) return 0;
+            } else {
+                break;  /* (anything else: the general comparison, of the whole key) */
+            }
+        }
+        if (i == x->count) return 1;
     }
     return values_equal(a, b);  /* numbers by value, others by contents */
 }
@@ -361,6 +618,8 @@ Value *map_slot(ObjMap *m, Value key) {
 }
 
 void map_set(ObjMap *m, Value key, Value value) {
+    LUBE_NOT_TEMP(key);
+    LUBE_NOT_TEMP(value);
     uint32_t h = hash_value(key);
     long slot = map_probe(m, key, h);
     if (slot >= 0) {
@@ -545,6 +804,7 @@ int is_subclass(ObjClass *c, ObjClass *ancestor) {
 TypeDesc desc_of(Value v) {
     TypeDesc d = {TD_NUM, 0, 0, 0, NULL};
     if (IS_BOOL(v)) d.kind = TD_BOOL;
+    else if (IS_SSTR(v)) d.kind = TD_STR;
     else if (IS_INT(v)) { d.kind = TD_INT; d.a = v.ikind; }
     else if (IS_OBJ(v)) {
         switch (OBJ_TYPE(v)) {
@@ -685,8 +945,7 @@ int values_equal(Value a, Value b) {
             continue;
         }
         if (IS_TEXT(x) && IS_TEXT(y)) {  /* a str and a String are equal when their text is */
-            ObjString *p = text_of(x), *q = text_of(y);
-            equal = p->length == q->length && memcmp(p->chars, q->chars, p->length) == 0;
+            equal = text_equal(x, y);
             continue;
         }
         if (x.type != y.type) { equal = 0; break; }
@@ -749,6 +1008,7 @@ const char *type_name(Value v) {
     if (IS_BOOL(v)) return "Bool";
     if (IS_NUM(v)) return "Number";
     if (IS_INT(v)) return int_type_name(v.ikind);
+    if (IS_SSTR(v)) return "str";
     if (!IS_OBJ(v)) return "nothing"; /* LCOV_EXCL_LINE: "no value" never reaches a type check */
     switch (OBJ_TYPE(v)) {
     case OBJ_STRING: return "str";
@@ -774,26 +1034,44 @@ const char *type_name(Value v) {
  * Printing
  * ==================================================================== */
 
+/* A whole number under 1e16 either way, as its digits (exact in an int64; -0 is 0) at buf, which has room for
+ * LUBE_WHOLE_ROOM bytes: how many digits (and sign) there are, with NULs after them to the end of the room; or
+ * 0, with nothing written, for any other Number. Two digits at a time, from the last one: half the divisions,
+ * and no digit to turn round. */
+size_t format_whole(char *buf, double n) {
+    static const char pairs[] = "00010203040506070809101112131415161718192021222324252627282930313233343536373839"
+                                "40414243444546474849505152535455565758596061626364656667686970717273747576777879"
+                                "8081828384858687888990919293949596979899";
+    if (!(n > -1e16 && n < 1e16)) return 0;  /* (nan too) */
+    int64_t k = (int64_t)n;
+    if ((double)k != n) return 0;
+    uint64_t u = k < 0 ? 0 - (uint64_t)k : (uint64_t)k;
+    char digits[2 * LUBE_WHOLE_ROOM] = {0}, *end = digits + LUBE_WHOLE_ROOM, *p = end;  /* (zeros: copied after the digits) */
+    while (u >= 100) {
+        uint64_t q = u / 100;
+        memcpy(p -= 2, pairs + 2 * (u - q * 100), 2);
+        u = q;
+    }
+    if (u >= 10) memcpy(p -= 2, pairs + 2 * u, 2);
+    else *--p = (char)('0' + u);
+    if (k < 0) *--p = '-';
+    memcpy(buf, p, LUBE_WHOLE_ROOM);  /* (all of the room, whatever the length: two moves, no loop) */
+    return (size_t)(end - p);
+}
+
 /* Integers print without a decimal point; other numbers use the shortest
  * representation that reads back as the same double. */
 void format_number(char *buf, size_t size, double n) {
+    char whole[LUBE_WHOLE_ROOM];
+    size_t len;
     if (isnan(n)) {
         snprintf(buf, size, "nan");
     } else if (isinf(n)) {
         snprintf(buf, size, n > 0 ? "inf" : "-inf");
-    } else if (n == floor(n) && fabs(n) < 1e16) {  /* a whole number: its digits (exact in an int64; -0 is 0) */
-        char digits[24];
-        int len = 0;
-        long long k = (long long)n;
-        unsigned long long u = k < 0 ? 0ull - (unsigned long long)k : (unsigned long long)k;
-        do {
-            digits[len++] = (char)('0' + u % 10);
-            u /= 10;
-        } while (u);
-        if (k < 0) digits[len++] = '-';
-        size_t i = 0;
-        while (len > 0 && i + 1 < size) buf[i++] = digits[--len];
-        buf[i] = '\0';
+    } else if ((len = format_whole(whole, n)) != 0) {  /* a whole number: its digits */
+        if (len >= size) len = size - 1;  /* (cut short, as snprintf would) */
+        memcpy(buf, whole, len);
+        buf[len] = '\0';
     } else {
         int64_t z = 0;
         int k = fabs(n) >= 1e-4 ? short_decimal(n, &z) : -1;
@@ -854,15 +1132,25 @@ static int is_bare_key(ObjString *s) {
 
 static void append_inner(StrBuf *sb, Value v, int quote, int depth) {
     char num[64];
+    size_t n;
+    StrTemp held;
     switch (v.type) {
     case VAL_BOOL: sb_puts(sb, v.as.boolean ? "true" : "false"); return;
     case VAL_NUM:
-        format_number(num, sizeof num, v.as.number);
-        sb_puts(sb, num);
+        n = format_whole(num, v.as.number);
+        if (!n) {
+            format_number(num, sizeof num, v.as.number);
+            n = strlen(num);
+        }
+        sb_putn(sb, num, n);
         return;
     case VAL_INT:
         int_format(num, sizeof num, v);
         sb_puts(sb, num);
+        return;
+    case VAL_STR:
+        if (quote) append_quoted(sb, text_in(v, &held));
+        else sb_putn(sb, SSTR_CHARS(&v), SSTR_LEN(v));
         return;
     case VAL_OBJ: break;
     default: sb_puts(sb, "nothing"); return; /* LCOV_EXCL_LINE: "no value" is never printed */
@@ -916,8 +1204,10 @@ static void append_inner(StrBuf *sb, Value v, int quote, int depth) {
             if (!e->live) continue;
             if (!first) sb_puts(sb, ", ");
             first = 0;
-            if (IS_STRING(e->key) && is_bare_key(AS_STRING(e->key)))
-                sb_putn(sb, AS_STRING(e->key)->chars, AS_STRING(e->key)->length);
+            StrTemp kt;
+            ObjString *ks = IS_STRING(e->key) ? text_in(e->key, &kt) : NULL;
+            if (ks && is_bare_key(ks))
+                sb_putn(sb, ks->chars, ks->length);
             else
                 append_inner(sb, e->key, 1, depth + 1);
             sb_puts(sb, ": ");
@@ -974,11 +1264,15 @@ void append_value(StrBuf *sb, Value v, int quote) { append_inner(sb, v, quote, 0
 
 /* The string form of v, as str() returns it (a new reference). */
 ObjString *value_to_string(Value v) {
-    if (IS_TEXT(v)) return (ObjString *)retain(OBJ_VAL(text_of(v))).as.obj;
+    if (IS_TEXT(v)) return str_object(v);
     char small[128];
     if (v.type == VAL_NUM) {  /* (Numbers, the most common: no buffer at all) */
-        format_number(small, sizeof small, v.as.number);
-        return new_string(small, strlen(small));
+        size_t n = format_whole(small, v.as.number);
+        if (!n) {
+            format_number(small, sizeof small, v.as.number);
+            n = strlen(small);
+        }
+        return new_string(small, n);
     }
     StrBuf sb;
     sb_init_on(&sb, small, sizeof small);
@@ -986,6 +1280,27 @@ ObjString *value_to_string(Value v) {
     ObjString *s = new_string(sb.data, sb.len);
     sb_free(&sb);
     return s;
+}
+
+/* str(v) as a value: a short result is held in it, with no ObjString made at all. */
+Value value_str(Value v) {
+    if (IS_STRING(v)) return retain(v);
+    if (IS_STROBJ(v)) return retain(OBJ_VAL(AS_STROBJ(v)->text));
+    char small[128];
+    if (v.type == VAL_NUM) {
+        size_t n = format_whole(small, v.as.number);
+        if (!n) {
+            format_number(small, sizeof small, v.as.number);
+            n = strlen(small);
+        }
+        return str_value(small, n);
+    }
+    StrBuf sb;
+    sb_init_on(&sb, small, sizeof small);
+    append_value(&sb, v, 0);
+    Value r = str_value(sb.data, sb.len);
+    sb_free(&sb);
+    return r;
 }
 
 /* The quoted form of v, as the REPL shows it (a new reference). */

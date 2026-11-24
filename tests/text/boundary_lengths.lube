@@ -1,0 +1,23 @@
+// strs of every length around the 10-byte boundary, built several ways, compared across forms
+var parts = []
+let alpha = "abcdefghijklmnopqrstuvwxyz"
+for n in 0..=20 {
+  var s = ""
+  for i in 0..n { s += chr(97 + i % 26) }
+  let t = alpha.slice(0, n)
+  let u = join(chars(t), "")
+  let v = reverse(reverse(t))
+  print(n, len(s), s == t, t == u, u == v, s, repr(s), type(s), s < t, s <= t, s > t, t + "|" + s)
+  print(n, s != t, [s] == [t], {k: s} == {k: t}, s in [t], t in s, s in t, index_of(alpha, s), starts_with(alpha, s), ends_with(s, t))
+  parts.push(s)
+}
+print(parts)
+print(join(parts, ","))
+print(join(parts, ""))
+print(join(parts))
+print(join(parts, "<sep>"))
+print(len(join(parts, "")), len(join(parts, ",")))
+var acc = ""
+for p in parts { acc = acc + p.slice(0, 1) }
+print(acc, len(acc))
+print("ab" * 5, len("ab" * 5), "ab" * 6, len("ab" * 6), "" * 3, "abcdefghij" * 1, "abcdefghijk" * 0, "x" * 10, "x" * 11)

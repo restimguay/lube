@@ -1,0 +1,43 @@
+// `in` in conditions (compare-and-jump) and in expressions, with every container
+let s = "hello world"
+let short = "hey"
+let xs = [1, 2, "a", "abcdefghijkl", 3.5, int32(7), [1], {k: 1}]
+let tests = ["o w", "", "hello world", "hello world!", "x", "h", "d", "lo", "world", "hey", "e"]
+for t in tests {
+  if t in s { write("Y") } else { write("n") }
+  if t in short { write("Y") } else { write("n") }
+  write(t in s, t in short, " ")
+  while t in short { break }
+}
+print()
+for x in [1, 2.0, "a", "abcdefghijkl", "abcdefghijk", 3.5, 7, int32(1), [1], {k: 1}, {k: 2}, "b", 0, -0] {
+  if x in xs { write("Y ") } else { write("n ") }
+}
+print()
+let n = sqrt(-1)
+print(n in [n], n in [1, n], 0 in [-0], -0 in [0], int8(2) in [2], 2 in [int8(2)], "a" in ["a"], "a" in [String("a")], String("a") in ["a"])
+let m = {a: 1, "long key here": 2}
+var mp = Map
+mp[[1]] = 1
+print("a" in m, "b" in m, "long key here" in m, "long key her" in m, [1] in mp, 1 in mp, "a" in mp)
+print(3 in 0..5, 5 in 0..5, 2.5 in 0..5, "a" in Bytes("abc"), "bc" in Bytes("abc"), 98 in Bytes("abc"), Bytes("b") in Bytes("abc"))
+fn has_sub(a, b) {
+  if a in b { return "yes" }
+  return "no"
+}
+print(has_sub("a", "cat"), has_sub("cat", "a"), has_sub(1, [1]), has_sub("k", {k: 1}))
+try { print(has_sub(1, 2)) } catch e { print("error:", e) }
+try { print(has_sub(1, "a")) } catch e { print("error:", e) }
+try { if 1 in 2 { print("?") } } catch e { print("error:", e) }
+try { if "a" in 2 { print("?") } } catch e { print("error:", e) }
+try { while [1] in "abc" { print("?") } } catch e { print("error:", e) }
+var count = 0
+for i in 0..1000 { if str(i % 50) in "0123456789" { count += 1 } }
+print(count)
+let hay = "abcdefghijklmnopqrstuvwxyz0123456789" * 4
+for needle in ["z0", "9a", "89", "yz01", "xyz0123456789abc", "aa", "abcdefghijklmnopqrstuvwxyz0123456789abcd", "9" * 2, "", "zz"] {
+  write(needle in hay, index_of(hay, needle), " ")
+}
+print()
+if not ("q" in s) { print("not in") }
+print(not "h" in s)

@@ -1,0 +1,16 @@
+// plugins called inside isolates: each isolate's thread reads short strs through lube->str()
+import statistics.*
+import random
+fn modes(xs) => [mode(xs), multimode(xs)]
+fn seeded(s) {
+  random.seed(s)
+  return random.random()
+}
+fn label(i) => mode(["x" + str(i % 3), "x" + str(i % 3), "y"])
+print(spawn(modes, ["a", "b", "a", "c"]).join(), spawn(modes, ["long-label-1", "s", "long-label-1"]).join())
+print(spawn(seeded, "abc").join(), seeded("abc"))
+let ws = [spawn(modes, split("p q p r p", " ")), spawn(modes, split("aa bb bb", " "))]
+for w in ws { print(w.join()) }
+var many = []
+for i in 0..30 { many.push(i) }
+print(parallel_map(many, label))

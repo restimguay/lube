@@ -348,12 +348,13 @@ esac
 PCC=${CC:-cc}
 command -v "$PCC" >/dev/null 2>&1 || PCC=gcc
 mkdir -p "$TMP/plugins" "$TMP/inst/bin" "$TMP/inst/lib/lube/plugins" "$TMP/built" "$TMP/small"
-for p in greet old broken vec; do "$PCC" -std=c99 $PFLAGS -o "$TMP/plugins/$p$PEXT" "tests/plugins/$p.c"; done
+for p in greet old broken vec texts; do "$PCC" -std=c99 $PFLAGS -o "$TMP/plugins/$p$PEXT" "tests/plugins/$p.c"; done
 "$PCC" -std=c99 $PFLAGS -o "$TMP/plugins/noinit$PEXT" tests/plugins/other.c
 printf 'not a library' >"$TMP/plugins/junk$PEXT"
 cp "$ABS" "$TMP/inst/bin/" && cp "$TMP/plugins/greet$PEXT" "$TMP/inst/lib/lube/plugins/"
 run "plugin: one of one's own" env LUBE_PLUGINS="$TMP/plugins" "$LUBE" tests/cli/plugins.lube
 run "plugin: operators, properties and Numbers of its own; one that uses another" env LUBE_PLUGINS="$TMP/plugins" "$LUBE" tests/cli/plugin_ops.lube
+run "plugin: text, short and long, through pointers it keeps" env LUBE_PLUGINS="$TMP/plugins" "$LUBE" tests/cli/plugin_texts.lube
 run "plugin: made for a later Lube" env LUBE_PLUGINS="$TMP/plugins" "$LUBE" -e 'import old'
 run "plugin: one that cannot start" env LUBE_PLUGINS="$TMP/plugins" "$LUBE" -e 'import broken'
 run "plugin: a library that is not one" env LUBE_PLUGINS="$TMP/plugins" "$LUBE" -e 'import noinit'

@@ -1,0 +1,17 @@
+// String (the object) with strs of both forms
+let a = String("ab")
+print(a + "c", type(a + "c"), "c" + a, type("c" + a), a + "cdefghijkl", type(a + "cdefghijkl"), a == "ab", "ab" == a, a.value == "ab", type(a.value))
+print(String(String("x")), String(5), String("é").length, String("abcdefghijk").upper, String("ABC").lower, String("a b  c").words, String("ab").chars)
+print(split(String("a,b"), ","), replace(String("aXb"), "X", "-"), upper(String("q")), join([String("a"), "b", String("c")], "+"), len(String("hello")), String("hi")[0], slice(String("hello"), 1, 3), reverse(String("abc")))
+print(sort([String("b"), "a", String("c")]), String("a") < "b", "a" < String("b"), String("abc") in "xabcx", "b" in String("abc"), String("b") in ["b"], index_of(String("abc"), "c"))
+var S = String("start")
+S += "-more"
+S += String("!")
+print(S, type(S))
+var o = {}
+o[String("k").value] = 1
+print(o, has(o, String("k")), get(o, String("k"), 0))
+try { o[String("k")] = 2 } catch e { print("error:", e) }
+print(o)
+print(String("abc").value + "d", type(String("abc").value + "d"), str(String("abcdefghijklmnop")), type(str(String("x"))), repr(String("q")), "{String("x")}")
+print(trim(String("  x  ")), starts_with(String("abc"), "a"), ends_with("abc", String("c")), chars(String("é!")), Number(String("12")), m(String("1.50")))

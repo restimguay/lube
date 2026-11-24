@@ -1,0 +1,11 @@
+// reflection by many distinct short names built at run time (each is looked up once)
+class Pet {
+  var name = "rex"
+  fn hello() => "hi"
+}
+let p = Pet()
+var found = 0
+for i in 0..300000 {
+  if has_method(p, "m" + str(i)) { found += 1 }
+}
+print(found, has_method(p, "hello"), has_method(p, "hel" + "lo"))

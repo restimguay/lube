@@ -1,0 +1,26 @@
+// many short keys: growth, lookups, deletions, re-insertion, order
+var m = {}
+for i in 0..50000 { m["k" + str(i)] = i }
+print(len(m), m["k0"], m["k49999"], m["k12345"], has(m, "k50000"), keys(m).slice(0, 3), keys(m).slice(49997))
+for i in 0..50000 {
+  if i % 2 == 0 { delete(&m, "k" + str(i)) }
+}
+print(len(m), keys(m).slice(0, 3), has(m, "k2"), has(m, "k3"), get(m, "k4", -1))
+for i in 0..10 { m["k" + str(i * 2)] = "back" }
+print(len(m), keys(m).slice(24995), m["k0"], m["k1"])
+var counts = Map
+for w in split(("the cat sat on the mat with the hat " * 2000), " ") { counts[w] = get(counts, w, 0) + 1 }
+print(counts, len(counts))
+var dict2 = Map
+for i in 0..3000 { dict2[str(i % 97)] = get(dict2, str(i % 97), "") + "x" }
+print(len(dict2), len(dict2["0"]), keys(dict2).slice(0, 5))
+var ok = 0
+for i in 0..97 { if len(dict2[str(i)]) > 0 { ok += 1 } }
+print(ok)
+let names = ["aa", "ab", "ba", "bb", "aaaaaaaaaa", "aaaaaaaaab", "baaaaaaaaa", "aaaaaaaaaaa", "k1", "k2", "k10", "k20", "1k", "2k"]
+var nm = {}
+for n in names { nm[n] = n }
+print(nm, len(nm))
+var hits = 0
+for n in names { if nm[n] == n { hits += 1 } }
+print(hits)

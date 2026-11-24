@@ -1,0 +1,18 @@
+// multi-byte characters at and across the 10-byte boundary
+let words = ["héllo", "日本語x", "日本語", "aaaaaaaaaé", "aaaaaaaaé", "aaaaaaaaaaé", "😀😀a", "😀😀ab", "😀😀abc", "ñ", "Ωmega", "ÀÉÎÕÜ", "straße", "ǅǆ", "\u{2764}\u{2764}\u{2764}x", "abcdefghi\u{e9}"]
+for w in words {
+  print(w, len(w), String(w).length, upper(w), lower(w), reverse(w), chars(w), w[0], w[len(w) - 1], repr(w))
+  print(slice(w, 0, 3), slice(w, 1), slice(w, 2, 9), slice(w, -3), split(w, ""), String(w).upper, String(w).lower, String(w).words, String(w).chars)
+  var n = 0
+  for ch in w { write(ch, "|"); n += 1 }
+  print(" ", n, ord(w), List(w), len(List(w)))
+  for i in 0..len(w) { write(ord(w[i]), " ") }
+  print()
+}
+print(chr(233), chr(0x65e5), chr(0x1F600), len(chr(0x1F600)), chr(127), chr(128), len(chr(128)), chr(0x7ff), chr(0x800), chr(0xffff), chr(0x10000))
+print(sort(words))
+print(sort(words, fn(a, b) => len(a) - len(b)))
+print(sort(words, fn(w) => String(w).length))
+print(join(words, "·"))
+print("é" in "héllo", "\u{e9}" == "é", "e\u{301}" == "é", "日本" in "日本語x", split("a·b·c", "·"), replace("aéaéa", "é", "e"), replace("aéaéa", "a", "😀"))
+print(upper("ßtraße ǆ ÿ"), lower("ÀBCÉ"), trim(" \tñ\n "), pad_left("é", 5, "*"), pad_right("日", 4, "-"))

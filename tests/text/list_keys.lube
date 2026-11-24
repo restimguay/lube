@@ -1,0 +1,61 @@
+// lists as Map keys: numbers, short and long strs, equal values in different forms; the quick store
+var m = Map
+m[[1, "a"]] = 1
+m[[1, "a"]] = 2
+m[[1.0, "a"]] = 3
+m[[1, "ab".slice(0, 1)]] = 4
+m[[int32(1), "a"]] = 5
+m[[1, String("a")]] = 6
+m[[0, "x"]] = 7
+m[[-0, "x"]] = 8
+m[["abcdefghijklmnop", 2]] = 9
+m[["abcdefghijklmno" + "p", 2]] = 10
+m[[[1], "a"]] = 11
+m[[[1], "a"]] = 12
+m[[]] = 13
+m[[true, "t"]] = 14
+m[[1, "a", 3]] = 15
+print(m, len(m))
+print(m[[1, "a"]], m[[0, "x"]], has(m, [1, "a"]), [1, "a"] in m, [2, "a"] in m, m[[-0, "x"]], m[[int64(1), "a"]])
+for k, v in m { print(k, v, type(k)) }
+var t = Map
+for i in 0..20 { t[[i % 4, str(i % 3)]] = i }
+print(t)
+var counts = Map
+for w in split("a b a c b a abcdefghijkl abcdefghijkl", " ") { counts[[w, len(w)]] = get(counts, [w, len(w)], 0) + 1 }
+print(counts)
+var key = [1, 2]
+var q = Map
+q[key] = "first"
+key.push(3)
+q[key] = "second"
+key[0] = 9
+print(q, key, q[[1, 2]], q[[1, 2, 3]])
+let n = sqrt(-1)
+var nanm = Map
+nanm[[n]] = 1
+nanm[[n]] = 2
+print(len(nanm), [n] in nanm)
+var self = Map
+self[[1]] = 0
+try { self[[self]] = 1 } catch e { print("error:", e) }
+print(len(self))
+var typed = Map[List, Number]
+typed[[1]] = 1
+typed[["a"]] = 2
+print(typed)
+var o = {}
+try { o[[1]] = 1 } catch e { print("error:", e) }
+var nested = {inner: Map}
+nested.inner[["deep", 1]] = "d"
+nested.inner[["deep", 1]] = "e"
+print(nested)
+var lm = [Map, Map]
+lm[0][["x"]] = 1
+lm[1][["y", "z"]] = 2
+print(lm)
+var cm = Map
+cm[["k"]] = 1
+cm[["k"]] += 5
+cm[["k"]] *= 2
+print(cm)

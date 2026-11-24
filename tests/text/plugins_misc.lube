@@ -1,0 +1,13 @@
+// learn's text labels, gfx's names and texts
+import learn
+import gfx
+let le = learn.LabelEncoder()
+le.fit(["cat", "dog", "cat", "a very long label name", "bird"])
+print(le.transform(["dog", "cat", "a very long label name"]), le.inverse_transform([0, 1, 2, 3]))
+try { print(le.transform(["fish"])) } catch e { print("error:", e) }
+print(gfx.color("orange"), gfx.color("#ff8000"), gfx.color("#f80"), gfx.color("transparent"), gfx.text_size("hi"), gfx.text_size("a longer text here", 2))
+try { print(gfx.color("nocolour")) } catch e { print("error:", e) }
+try { print(gfx.color("#12345")) } catch e { print("error:", e) }
+let img = gfx.image(8, 8)
+img.text("ab", 0, 0)
+print(img.pixel(1, 1), img.pixel(0, 0), len(img.to_png()) > 0)

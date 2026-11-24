@@ -424,7 +424,7 @@ NATIVE(n_add_currency) {
         return lube_error(I, "add_currency() takes a code, a symbol (str) and its number of decimals");
     const char *code = text_of(argv[0])->chars, *symbol = text_of(argv[1])->chars;
     double dec = numeric_value(argv[2]);
-    size_t cl = text_of(argv[0])->length, sl = text_of(argv[1])->length;
+    size_t cl = text_len(argv[0]), sl = text_len(argv[1]);
     int good = cl > 0 && cl < sizeof added[0].code && sl < sizeof added[0].symbol;
     for (size_t i = 0; i < cl && good; i++) good = (code[i] >= 'A' && code[i] <= 'Z') || (code[i] >= 'a' && code[i] <= 'z') || (code[i] >= '0' && code[i] <= '9');
     if (!good) return lube_error(I, "add_currency(): a code is 1 to 7 letters or digits, and a symbol at most 15 bytes");
@@ -775,13 +775,15 @@ NATIVE(n_format) {
     const ObjMoney *m = AS_MONEY(argv[0]);
     const char *symbol = symbol_of(currency_at(m->cur)), *thousands = ",", *point = ".";
     int code = 0;
+    Value held[3];  /* (the options' texts, kept here while their bytes are read: a short str's are in the value) */
+    size_t n;
     if (argc > 1) {
         if (!IS_MAP(argv[1])) return lube_error(I, "format() takes options: {symbol, code, thousands, decimal}");
         ObjMap *o = AS_MAP(argv[1]);
         Value v;
         if (map_get(o, OBJ_VAL(lube_intern(I, "symbol", 6)), &v)) {
             if (IS_BOOL(v)) symbol = v.as.boolean ? symbol : "";
-            else if (IS_TEXT(v)) symbol = text_of(v)->chars;
+            else if (IS_TEXT(v)) symbol = (held[0] = v, text_chars(&held[0], &n));
             else return lube_error(I, "format(): symbol is true, false or a str");
         }
         if (map_get(o, OBJ_VAL(lube_intern(I, "code", 4)), &v)) {
@@ -790,11 +792,11 @@ NATIVE(n_format) {
         }
         if (map_get(o, OBJ_VAL(lube_intern(I, "thousands", 9)), &v)) {
             if (!IS_TEXT(v)) return lube_error(I, "format(): thousands is a str");
-            thousands = text_of(v)->chars;
+            thousands = (held[1] = v, text_chars(&held[1], &n));
         }
         if (map_get(o, OBJ_VAL(lube_intern(I, "decimal", 7)), &v)) {
             if (!IS_TEXT(v)) return lube_error(I, "format(): decimal is a str");
-            point = text_of(v)->chars;
+            point = (held[2] = v, text_chars(&held[2], &n));
         }
     }
     StrBuf sb;

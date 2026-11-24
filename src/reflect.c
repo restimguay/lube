@@ -36,9 +36,10 @@ static ObjClass *class_arg(Interp *I, const char *fn, Value v) {
     return NULL;
 }
 
-/* The text of a name argument, or NULL after raising an error. */
-static ObjString *name_arg(Interp *I, const char *fn, Value v) {
-    if (IS_TEXT(v)) return text_of(v);
+/* The text of a name argument, or NULL after raising an error. A short str's is t (the caller's): for looking
+ * the name up, not for keeping. */
+static ObjString *name_arg(Interp *I, const char *fn, Value v, StrTemp *t) {
+    if (IS_TEXT(v)) return text_in(v, t);
     lube_error(I, "%s() needs a name (a str) as its second argument, not %s", fn, a_type(v));
     return NULL;
 }
@@ -132,7 +133,8 @@ NATIVE(n_signature) {
     Value f = argv[0];
     if (argc == 2) {  /* signature(Dog, "speak"): a method */
         ObjClass *c = class_arg(I, FNAME, f);
-        ObjString *name = c ? name_arg(I, FNAME, argv[1]) : NULL;
+        StrTemp held;
+        ObjString *name = c ? name_arg(I, FNAME, argv[1], &held) : NULL;
         if (!name) return ERR_VAL;
         Value m = lube_find_method(c, name);
         if (IS_NIL(m)) return lube_error(I, "%s has no method '%s'", c->name->chars, name->chars);
@@ -157,7 +159,8 @@ NATIVE(n_signature) {
 NATIVE(n_get_field) {
     (void)argc;
     if (!IS_MAP(argv[0])) return lube_error(I, "get_field() needs an object or an instance, not %s", a_type(argv[0]));
-    ObjString *name = name_arg(I, FNAME, argv[1]);
+    StrTemp held;
+    ObjString *name = name_arg(I, FNAME, argv[1], &held);
     if (!name) return ERR_VAL;
     Value v;
     if (map_get(AS_MAP(argv[0]), OBJ_VAL(name), &v)) return retain(v);
@@ -168,7 +171,8 @@ NATIVE(n_set_field) {  /* takes its first argument with & */
     (void)argc;
     if (!IS_MAP(argv[0]) || AS_MAP(argv[0])->dict)
         return lube_error(I, "set_field() needs an object or an instance, not %s", a_type(argv[0]));
-    ObjString *name = name_arg(I, FNAME, argv[1]);
+    StrTemp held;
+    ObjString *name = name_arg(I, FNAME, argv[1], &held);
     if (!name) return ERR_VAL;
     Value v = argv[2];
     ObjClass *c = AS_MAP(argv[0])->klass;
@@ -183,12 +187,13 @@ NATIVE(n_set_field) {  /* takes its first argument with & */
                               with_article(desc_name(c->field_types[f])), a_type(argv[2]));
     }
     make_unique(&argv[0]);
-    map_set(AS_MAP(argv[0]), retain(OBJ_VAL(name)), retain(v));
+    map_set(AS_MAP(argv[0]), IS_SSTR(argv[1]) ? argv[1] : retain(OBJ_VAL(name)), retain(v));  /* (a short name: itself) */
     return NIL_VAL;
 }
 
 NATIVE(n_call_method) {
-    ObjString *name = name_arg(I, FNAME, argv[1]);
+    StrTemp held;
+    ObjString *name = name_arg(I, FNAME, argv[1], &held);
     if (!name) return ERR_VAL;
     Value self = argv[0];
     if (IS_INSTANCE(self)) {  /* a method of its class; it cannot change the instance */
@@ -220,7 +225,8 @@ NATIVE(n_call_method) {
 
 NATIVE(n_has_method) {
     (void)argc;
-    ObjString *name = name_arg(I, FNAME, argv[1]);
+    StrTemp held;
+    ObjString *name = name_arg(I, FNAME, argv[1], &held);
     if (!name) return ERR_VAL;
     Value f;
     if (CLASS_OF(argv[0]) && !IS_NIL(lube_find_method(CLASS_OF(argv[0]), name))) return BOOL_VAL(1);

@@ -1,0 +1,22 @@
+"" 0 str true
+"a" 1 str true
+"ab" 2 str true
+"abcdefghi" 9 str true
+"abcdefghij" 10 str true
+"abcdefghijk" 11 str true
+"é" 2 str true
+"日本語x" 10 str true
+"日本語xy" 11 str true
+"\x00" 1 str true
+"a\x00b" 3 str true
+"with \"quotes\"" 13 str true
+"tab\there" 8 str true
+"❤" 3 str true
+hi bob hi a much longer name help 4
+12 30 56 2 100 6765
+3 12345678901 str
+{a: 3, b: 2, c: 1} ["a", "b", "c"] 3 2
+2997
+xxxxxxxxxx xxxxxxxxxxy true true XXXXXXXXXX ["", "", "", "", "", "", "", "", "", "", "y"] ababababababababababy x-x-x-x-x-x-x-x-x-x
+error: the object has no key "missing" (check with has() first, or use get(object, key, default))
+$19.99 €5.00 6869 {w: 3, h: 4}

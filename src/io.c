@@ -87,7 +87,8 @@ NATIVE(n_Bytes) {
     Value v = argv[0];
     if (IS_BYTES(v)) return retain(v);  /* (a copy: shared until one changes) */
     if (IS_TEXT(v)) {
-        ObjString *s = text_of(v);
+        StrTemp s_t;
+        ObjString *s = text_in(v, &s_t);
         ObjBytes *b = new_bytes(s->length);
         bytes_add(b, s->chars, s->length);
         return OBJ_VAL(b);
@@ -273,7 +274,7 @@ Value lube_bytes_push(Interp *I, int argc, Value *argv) {
     for (int i = 1; i < argc; i++) {
         unsigned char c;
         if (IS_BYTES(argv[i])) bytes_add(b, AS_BYTES(argv[i])->data, AS_BYTES(argv[i])->len);
-        else if (IS_TEXT(argv[i])) bytes_add(b, text_of(argv[i])->chars, text_of(argv[i])->length);
+        else if (IS_TEXT(argv[i])) bytes_add(b, text_of(argv[i])->chars, text_len(argv[i]));
         else if (byte_of(argv[i], &c)) bytes_add(b, &c, 1);
     }
     return NIL_VAL;

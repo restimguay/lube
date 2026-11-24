@@ -1,0 +1,13 @@
+Pet {name: "bo", age: 5} 5 bo 5 [{name: "name", type: "str"}, {name: "age", type: "Number"}]
+hi you from bo true false {name: "hello", params: [{name: "x", type: "any", mode: "let", has_default: false}], returns: "any", builtin: false}
+{k: 3, "a much longer key": 2, s: 4} 3 3 ["k", "a much longer key", "s"] 3 false true 4
+k str 3
+a much longer key str 2
+s str 4
+{k: 10, "a much longer key": 2, s: 4} 3
+error: a Pet has no field 'nope'
+error: field 'age' of Pet is a Number, so it cannot hold a str
+error: an Object has no field 'zz'
+error: a Pet has no method 'zz'
+error: Pet has no method 'zz'
+error: get_field() needs a name (a str) as its second argument, not a Number

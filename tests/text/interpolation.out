@@ -1,0 +1,22 @@
+abc abcdefghij abcdefghijx abcdefghijxy a long text here abca long text here   xy
+0: 2 str true
+1:a 3 str true
+2:ab 4 str true
+3:abc 5 str true
+4: 2 str true
+5:a 3 str true
+6:ab 4 str true
+7:abc 5 str true
+8: 2 str true
+9:a 3 str true
+10:ab 5 str true
+11:abc 6 str true
+12: 3 str true
+13:a 4 str true
+3.253.25 0 1e+21 [1, "abc"] {k: "abc"} true 5 abc $1.50 Bytes(68 69) 0.30000000000000004
+outinabcdefghijout 18
+éabcé 7 5
+1  2  3  4  5  6  7  8  9  10  11  12  
+012345678901
+abc == abc: true true false true
+{a} not interpolated {abc}

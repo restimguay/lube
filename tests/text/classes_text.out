@@ -1,0 +1,12 @@
+true false true true
+1 2 2
+true false true
+3 2
+name: t -> u
+name: u -> v
+name: v -> vwxyzvwxyzv
+name: vwxyzvwxyzv -> w
+Tag {name: "w", note: "a default note, long"}
+Node {label: "root", kids: [Node {label: "changed", kids: []}, Node {label: "b-is-a-longer-label", kids: []}]} Node {label: "root", kids: [Node {label: "a", kids: []}, Node {label: "b-is-a-longer-label", kids: []}]}
+tests/text/classes_text.lube:43: error: Node() takes 1 argument but got 0
+   43 | print(fields(root), methods(Node), class_of(root).name, type(class_of(root).name))

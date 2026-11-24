@@ -1,0 +1,27 @@
+// money: currencies, symbols, formats and amounts given as text
+print(m("19.99"), m("1,234.50"), m("-0.01"), m("5", "EUR"), m(5, "eur"), m(5, "€"), m(5, "R$"), m(5, "CHF"), m(1234.5, "JPY"))
+currency("PHP")
+print(m(1500), currency())
+currency("₱")
+print(m(1), currency(), m(1).currency, m(1).symbol, type(m(1).currency), m(1).currency == "PHP")
+currency("USD")
+let x = m(1234.5)
+print(x.format({code: true}), x.format({thousands: ".", decimal: ","}), x.format({symbol: false}), x.format({symbol: "US$"}), x.format({thousands: "", decimal: "."}))
+print(x.format({thousands: " ' ", decimal: " dot "}), x.format({symbol: "a long symbol"}), x.format({thousands: "abcdefghijk"}))
+var opts = {thousands: "_"}
+opts.decimal = ":"
+print(x.format(opts))
+add_currency("BTC", "₿", 8)
+print(m(0.12345678, "BTC"), m(1, "₿"), m("0.5", "BTC").format({code: true}))
+add_currency("ABCDEFG", "abcdefghijklmno", 2)
+print(m(3, "ABCDEFG"), m(3, "abcdefghijklmno"))
+try { add_currency("ABCDEFGH", "x", 2) } catch e { print("error:", e) }
+try { add_currency("A-B", "x", 2) } catch e { print("error:", e) }
+try { add_currency("Q", "abcdefghijklmnop", 2) } catch e { print("error:", e) }
+try { print(m(1, "QQQ")) } catch e { print("error:", e) }
+try { print(x.format({thousands: 5})) } catch e { print("error:", e) }
+print(m(10, "USD").to("PHP", 58.25), m(100).split(3), m(100).allocate([1, 2]), sort([m(3), m(1), m(2)]), str(m(2)), type(str(m(2))), "{m(2)}" == str(m(2)))
+var money_map = {}
+money_map[str(m(1))] = 1
+money_map["$1.00"] = 2
+print(money_map)

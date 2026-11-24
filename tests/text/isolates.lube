@@ -1,0 +1,41 @@
+// isolates: short and long strs as spawn arguments, join results, channel values, map keys sent over
+fn echo(x) => x
+fn shout(s: str): str => upper(s) + "!"
+fn build(n) {
+  var o = {}
+  for i in 0..n { o["k" + str(i)] = "v" + str(i) }
+  o["a long key, longer than ten"] = "a long value, longer than ten"
+  return o
+}
+fn worker(jobs: Channel, out: Channel) {
+  for j in jobs { out.send([j, len(j), upper(j)]) }
+}
+fn fails(s) { throw "failed with " + s }
+print(spawn(echo, "abc").join(), spawn(echo, "abcdefghijkl").join(), spawn(echo, "").join(), spawn(echo, "日本語x").join())
+print(spawn(shout, "hi").join(), spawn(echo, ["a", "bb", "abcdefghijklmno"]).join(), spawn(echo, {a: "x", "long key name": "y"}).join())
+let r = spawn(build, 12).join()
+print(r, keys(r), r["k3"], r["a long key, longer than ten"])
+let mk = Map
+var mp = mk
+mp[["a", 1]] = "list key"
+mp["s"] = "short"
+print(spawn(echo, mp).join())
+let jobs = channel()
+let out = channel()
+let ws = [spawn(worker, jobs, out), spawn(worker, jobs, out)]
+let items = ["a", "bb", "ccc", "dddddddddd", "eeeeeeeeeee", "é", "日本語x", "", "\x00"]
+for it in items { jobs.send(it) }
+jobs.close()
+for w in ws { w.join() }
+var got = out.take(len(items))
+print(sort(got, fn(x) => x[0]))
+fn up(s) => upper(s)
+fn twice(s) => s + s
+print(parallel_map(["x", "yy", "a long string here"], up), parallel_map(split("a,b,c", ","), twice))
+try { spawn(fails, "abc").join() } catch e { print("error:", e) }
+try { spawn(fails, "a long reason for it").join() } catch e { print("error:", e) }
+let ch = channel()
+ch.send("short")
+ch.send(String("a String"))
+ch.send(Bytes("b"))
+print(ch.receive(), ch.receive(), type(ch.try_receive("none")), ch.try_receive("none"))

@@ -47,13 +47,17 @@ static Value need_result(Interp *I, Value r, const char *fn) {
 static int wants_index(Value f) { return IS_FUNCTION(f) && AS_FUNCTION(f)->decl->nparams >= 2; }
 
 /* Appends the UTF-8 characters of s to out. */
-static void push_chars(Interp *I, ObjList *out, ObjString *s) {
+static void push_chars(ObjList *out, Text s) {
     size_t i = 0;
-    while (i < s->length) {
-        size_t len = utf8_seq_len((unsigned char)s->chars[i]);
-        if (i + len > s->length) len = s->length - i;
-        list_push(out, len == 1 ? retain(OBJ_VAL(I->chars[(unsigned char)s->chars[i]]))
-                                : OBJ_VAL(new_string(s->chars + i, len)));
+    if (out->count <= LUBE_MAX_ITEMS && s.length <= LUBE_MAX_ITEMS - out->count) {
+        list_reserve(out, out->count + s.length);  /* (at most as many characters as bytes) */
+        for (; i < s.length && (unsigned char)s.chars[i] < 0x80; i++)  /* ASCII: one byte each */
+            out->items[out->count++] = sstr_byte((unsigned char)s.chars[i]);
+    }
+    while (i < s.length) {
+        size_t len = utf8_seq_len((unsigned char)s.chars[i]);
+        if (i + len > s.length) len = s.length - i;
+        list_push(out, len == 1 ? sstr_byte((unsigned char)s.chars[i]) : sstr_value(s.chars + i, len));
         i += len;
     }
 }
@@ -77,7 +81,7 @@ static ObjList *to_list(Interp *I, Value v, const char *fn) {
     }
     if (IS_TEXT(v)) {
         ObjList *out = new_list();
-        push_chars(I, out, text_of(v));
+        push_chars(out, text_at(&v));
         return out;
     }
     if (IS_MAP(v)) {
@@ -107,11 +111,11 @@ static int compare(Interp *I, Value a, Value b, const char *fn, int *failed) {
         return 0;
     }
     if (IS_TEXT(a) && IS_TEXT(b)) {
-        ObjString *x = text_of(a), *y = text_of(b);
-        size_t n = x->length < y->length ? x->length : y->length;
-        int c = memcmp(x->chars, y->chars, n);
+        Text x = text_at(&a), y = text_at(&b);
+        size_t n = x.length < y.length ? x.length : y.length;
+        int c = memcmp(x.chars, y.chars, n);
         if (c) return c < 0 ? -1 : 1;
-        return x->length < y->length ? -1 : x->length > y->length;
+        return x.length < y.length ? -1 : x.length > y.length;
     }
     lube_error(I, "%s() cannot compare %s with %s", fn, a_type(a), a_type(b));
     *failed = 1;
@@ -119,12 +123,52 @@ static int compare(Interp *I, Value a, Value b, const char *fn, int *failed) {
 }
 
 static Value from_buf(StrBuf *sb) {
-    ObjString *s = new_string(sb->data ? sb->data : "", sb->len);
+    Value s = str_value(sb->data ? sb->data : "", sb->len);
     sb_free(sb);
-    return OBJ_VAL(s);
+    return s;
 }
 
 static int is_space(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
+
+/* A str holding chars[0..n). */
+static inline Value text_value(const char *chars, size_t n) {
+    return n <= LUBE_SSTR_MAX ? sstr_value(chars, n) : OBJ_VAL(new_string(chars, n));
+}
+
+/* Copies n bytes to `at`; returns where the next ones go. (Short runs, the parts of a join or a replace,
+ * without a call.) */
+static inline char *text_put(char *at, const char *from, size_t n) {
+    if (n > 16) memcpy(at, from, n);
+    else lube_copy16(at, from, n);
+    return at + n;
+}
+
+/* The pieces of s[0..n) between the bytes c, added to out (empty so far): counted first, so the list is made
+ * at its size, then found eight bytes at a time (every c of a word at once). */
+static void split_at_byte(ObjList *out, const char *s, size_t n, unsigned char c) {
+    list_reserve(out, str_count_byte(s, n, c) + 1);
+    Value *items = out->items;
+    size_t k = 0, start = 0, i = 0;
+#if LUBE_SWAR_SCAN
+    uint64_t pattern = LUBE_W_ONES * c;
+    for (; i + 8 <= n; i += 8) {
+        uint64_t m = lube_zero_bytes(lube_load64(s + i) ^ pattern);
+        while (m) {
+            size_t at = i + LUBE_FIRST_BYTE(m);
+            items[k++] = text_value(s + start, at - start);
+            start = at + 1;
+            m &= m - 1;
+        }
+    }
+#endif
+    for (; i < n; i++) {
+        if ((unsigned char)s[i] != c) continue;
+        items[k++] = text_value(s + start, i - start);
+        start = i + 1;
+    }
+    items[k++] = text_value(s + start, n - start);
+    out->count = k;
+}
 
 /* ======================================================================
  * Input and output
@@ -227,11 +271,11 @@ NATIVE(n_time) { (void)I; (void)argc; (void)argv; return NUM_VAL((double)time(NU
 NATIVE(n_type) {
     (void)argc;
     const char *t = type_name(argv[0]);
-    return retain(OBJ_VAL(lube_intern(I, t, strlen(t))));
+    return str_value(t, strlen(t));
 }
 
-NATIVE(n_str) { (void)I; (void)argc; return OBJ_VAL(value_to_string(argv[0])); }
-NATIVE(n_repr) { (void)I; (void)argc; return OBJ_VAL(value_repr(argv[0])); }
+NATIVE(n_str) { (void)I; (void)argc; return value_str(argv[0]); }
+NATIVE(n_repr) { (void)I; (void)argc; return str_take(value_repr(argv[0])); }
 
 /* num(x) and int(x): text that is not a number is an error, unless a
  * fallback is given: num("abc", 0) is 0. */
@@ -242,7 +286,10 @@ static Value to_number(Interp *I, int argc, Value *argv, const char *fn) {
     if (IS_INT(v)) return NUM_VAL(numeric_value(v));
     if (IS_BOOL(v)) return NUM_VAL(v.as.boolean ? 1 : 0);
     if (IS_TEXT(v)) {
-        const char *s = text_of(v)->chars;
+        size_t slen;
+        const char *s = text_chars(&v, &slen), *all = s;
+        double quick;
+        if (str_to_double(s, slen, &quick)) return NUM_VAL(quick);  /* 12, -3.25: no strtod */
         while (is_space(*s)) s++;
         char *end = (char *)s;
         double d = *s ? strtod(s, &end) : 0;
@@ -251,7 +298,7 @@ static Value to_number(Interp *I, int argc, Value *argv, const char *fn) {
         if (ok && !*end) return NUM_VAL(d);
         if (argc > 1) return retain(argv[1]);
         return lube_error(I, "%s(): '%s' is not a number (give a fallback to use instead: %s(text, 0))", fn,
-                          text_of(v)->chars, fn);
+                          all, fn);
     }
     return lube_error(I, "%s() cannot convert %s to a Number", fn, a_type(v));
 }
@@ -274,7 +321,7 @@ NATIVE(n_bool) { (void)I; (void)argc; return BOOL_VAL(is_truthy(argv[0])); }
 NATIVE(n_len) {
     (void)argc;
     Value v = argv[0];
-    if (IS_TEXT(v)) return NUM_VAL((double)text_of(v)->length);
+    if (IS_TEXT(v)) return NUM_VAL((double)text_len(v));
     if (IS_LIST(v)) return NUM_VAL((double)AS_LIST(v)->count);
     if (IS_MAP(v)) return NUM_VAL((double)AS_MAP(v)->count);
     if (IS_RANGE(v)) return NUM_VAL(range_length(AS_RANGE(v)));
@@ -402,25 +449,28 @@ NATIVE(n_slice) {
     NEED(IS_LIST(v) || IS_TEXT(v), 0, "a List or String");
     if (argc > 1 && !IS_NIL(argv[1])) NEED_NUM(1);
     if (argc > 2 && !IS_NIL(argv[2])) NEED_NUM(2);
-    size_t len = IS_LIST(v) ? AS_LIST(v)->count : text_of(v)->length;
+    size_t len = IS_LIST(v) ? AS_LIST(v)->count : text_len(v);
     size_t start = argc > 1 && !IS_NIL(argv[1]) ? clamp_index(floor(numeric_value(argv[1])), len) : 0;
     size_t end = argc > 2 && !IS_NIL(argv[2]) ? clamp_index(floor(numeric_value(argv[2])), len) : len;
     if (end < start) end = start;
-    if (IS_TEXT(v)) return OBJ_VAL(new_string(text_of(v)->chars + start, end - start));
+    if (IS_TEXT(v)) {
+        size_t tl;
+        return text_value(text_chars(&argv[0], &tl) + start, end - start);
+    }
     ObjList *src = AS_LIST(v), *out = new_list();
     out->elem = src->elem;
     list_reserve(out, end - start);
-    for (size_t i = start; i < end; i++) out->items[out->count++] = retain(src->items[i]);
+    if (end > start) list_take(out, src->items + start, end - start);  /* (an empty list has no block) */
     return OBJ_VAL(out);
 }
 
 NATIVE(n_reverse) {
     (void)argc;
     if (IS_TEXT(argv[0])) {
-        ObjString *s = text_of(argv[0]);
-        ObjString *r = alloc_string(s->length);
-        for (size_t i = 0; i < s->length; i++) r->chars[i] = s->chars[s->length - 1 - i];
-        return OBJ_VAL(r);
+        Text s = text_at(&argv[0]);
+        ObjString *r = alloc_string(s.length);
+        for (size_t i = 0; i < s.length; i++) r->chars[i] = s.chars[s.length - 1 - i];
+        return str_take(r);
     }
     LIST_ARG(src, 0);
     ObjList *out = new_list();
@@ -546,33 +596,35 @@ static int sort_numbers(Interp *I, ObjList *src, ObjList *out) {
  * first 8 bytes as a number, so that most comparisons are one of numbers. */
 typedef struct {
     uint64_t key;  /* (the first 8 bytes, big-endian, zeros after a short one) */
-    ObjString *s;
-    Value v;
+    size_t at;     /* (which item of the list being sorted: its bytes are read there, in its ObjString or in itself) */
 } TextKey;
 
-static int text_before(const TextKey *b, const TextKey *a) {  /* b < a */
+static int text_before(const Value *items, const TextKey *b, const TextKey *a) {  /* b < a */
     if (b->key != a->key) return b->key < a->key;
-    size_t n = b->s->length < a->s->length ? b->s->length : a->s->length;
-    int c = memcmp(b->s->chars, a->s->chars, n);
-    return c ? c < 0 : b->s->length < a->s->length;
+    size_t bl, al;
+    const char *bc = text_chars(&items[b->at], &bl), *ac = text_chars(&items[a->at], &al);
+    size_t n = bl < al ? bl : al;
+    int c = memcmp(bc, ac, n);
+    return c ? c < 0 : bl < al;
 }
 
 static void sort_texts(ObjList *src, ObjList *out) {
     size_t n = src->count;
+    const Value *items = src->items;
     TextKey *a = xmalloc(sizeof(TextKey) * (n ? n : 1)), *tmp = xmalloc(sizeof(TextKey) * (n ? n : 1));
     for (size_t i = 0; i < n; i++) {
-        ObjString *t = text_of(src->items[i]);
+        size_t len;
+        const char *chars = text_chars(&items[i], &len);
         uint64_t k = 0;
-        for (size_t b = 0; b < 8; b++) k = k << 8 | (b < t->length ? (unsigned char)t->chars[b] : 0);
+        for (size_t b = 0; b < 8; b++) k = k << 8 | (b < len ? (unsigned char)chars[b] : 0);
         a[i].key = k;
-        a[i].s = t;
-        a[i].v = src->items[i];
+        a[i].at = i;
     }
     for (size_t width = 1; width < n; width *= 2) {
         for (size_t lo = 0; lo < n; lo += 2 * width) {
             size_t mid = lo + width < n ? lo + width : n, hi = lo + 2 * width < n ? lo + 2 * width : n;
             size_t i = lo, j = mid, k = lo;
-            while (i < mid && j < hi) tmp[k++] = text_before(&a[j], &a[i]) ? a[j++] : a[i++];
+            while (i < mid && j < hi) tmp[k++] = text_before(items, &a[j], &a[i]) ? a[j++] : a[i++];
             while (i < mid) tmp[k++] = a[i++];
             while (j < hi) tmp[k++] = a[j++];
         }
@@ -581,7 +633,7 @@ static void sort_texts(ObjList *src, ObjList *out) {
         tmp = t;
     }
     list_reserve(out, n);
-    for (size_t i = 0; i < n; i++) out->items[out->count++] = retain(a[i].v);
+    for (size_t i = 0; i < n; i++) out->items[out->count++] = retain(items[a[i].at]);
     free(a);
     free(tmp);
 }
@@ -596,10 +648,11 @@ typedef struct {
 static int keyed_before(Interp *I, const Keyed *b, const Keyed *a, int how, int *failed) {
     if (how == 1) return b->key.as.number < a->key.as.number;  /* (Numbers, no nan among them) */
     if (how == 2) {                                            /* (texts) */
-        ObjString *x = text_of(b->key), *y = text_of(a->key);
-        size_t n = x->length < y->length ? x->length : y->length;
-        int c = memcmp(x->chars, y->chars, n);
-        return c ? c < 0 : x->length < y->length;
+        size_t xl, yl;
+        const char *x = text_chars(&b->key, &xl), *y = text_chars(&a->key, &yl);
+        size_t n = xl < yl ? xl : yl;
+        int c = memcmp(x, y, n);
+        return c ? c < 0 : xl < yl;
     }
     return compare(I, b->key, a->key, "sort", failed) < 0;
 }
@@ -636,7 +689,8 @@ static void radix_keyed(uint64_t *k, size_t *at, size_t n) {
 static void merge_keyed(Interp *I, Keyed *x, Keyed *buf, size_t n, int how, int *failed) {
     Keyed *a = x, *b = buf;
     for (size_t width = 1; width < n && !*failed; width *= 2) {
-        for (size_t lo = 0; lo < n && !*failed; lo += 2 * width) {
+        for (size_t lo = 0; lo < n; lo += 2 * width) {  /* (after a comparison failed: the rest moved over as it is, so
+                                                         * that x still holds every key, once, for the caller to release) */
             size_t mid = lo + width < n ? lo + width : n, hi = lo + 2 * width < n ? lo + 2 * width : n;
             size_t i = lo, j = mid, k = lo;
             while (i < mid && j < hi && !*failed) b[k++] = keyed_before(I, &a[j], &a[i], how, failed) ? a[j++] : a[i++];
@@ -677,8 +731,9 @@ static Value sort_by_key(Interp *I, ObjList *src, Value key) {
                 memcpy(&b, &x, sizeof b);
                 b = b >> 63 ? ~b : b | 0x8000000000000000ull;
             } else {
-                ObjString *t = text_of(a[i].key);
-                for (size_t c = 0; c < 8; c++) b = b << 8 | (c < t->length ? (unsigned char)t->chars[c] : 0);
+                size_t tl;
+                const char *t = text_chars(&a[i].key, &tl);
+                for (size_t c = 0; c < 8; c++) b = b << 8 | (c < tl ? (unsigned char)t[c] : 0);
             }
             k[i] = b;
             at[i] = i;
@@ -786,8 +841,8 @@ NATIVE(n_index_of) {
     (void)argc;
     if (IS_TEXT(argv[0])) {
         NEED_STR(1);
-        ObjString *s = text_of(argv[0]), *sub = text_of(argv[1]);
-        return NUM_VAL((double)str_find(s->chars, s->length, sub->chars, sub->length, 0));
+        Text s = text_at(&argv[0]), sub = text_at(&argv[1]);
+        return NUM_VAL((double)str_find(s.chars, s.length, sub.chars, sub.length, 0));
     }
     NEED_LIST(0);
     ObjList *l = AS_LIST(argv[0]);
@@ -803,24 +858,38 @@ NATIVE(n_join) {
     }
     if (argc > 1) NEED_STR(1);
     LIST_ARG(l, 0);
-    ObjString *sep = argc > 1 ? text_of(argv[1]) : NULL;
+    Text sepv = {NULL, 0};
+    if (argc > 1) sepv = text_at(&argv[1]);
+    const Text *sep = argc > 1 ? &sepv : NULL;
     size_t total = 0, i = 0;
     for (; i < l->count && IS_TEXT(l->items[i]) && total <= LUBE_MAX_BYTES; i++)  /* only text: its length first */
-        total += text_of(l->items[i])->length + (i && sep ? sep->length : 0);
+        total += text_len(l->items[i]) + (i && sep ? sep->length : 0);
     if (i == l->count && total <= LUBE_MAX_BYTES) {
-        ObjString *out = alloc_string(total);
-        char *at = out->chars;
+        Value shortv = sstr_value("", 0);  /* (a short result is written where it will be: in the value) */
+        ObjString *out = total > LUBE_SSTR_MAX ? alloc_string(total) : NULL;
+        char *at = out ? out->chars : SSTR_CHARS(&shortv), *end = at + total + 1;  /* (room for a NUL, in both) */
+        size_t seplen = sep ? sep->length : 0;
+        char sep0 = seplen ? sep->chars[0] : 0;
         for (i = 0; i < l->count; i++) {
-            ObjString *t = text_of(l->items[i]);
-            if (i && sep) {
-                memcpy(at, sep->chars, sep->length);
-                at += sep->length;
+            const Value *item = &l->items[i];
+            if (i && seplen == 1) *at++ = sep0;
+            else if (i && seplen) at = text_put(at, sep->chars, seplen);
+            if (IS_SSTR(*item) && (size_t)(end - at) > LUBE_SSTR_MAX) {  /* a short str: all its bytes, whatever its length */
+                memcpy(at, SSTR_CHARS(item), LUBE_SSTR_MAX + 1);
+                at += SSTR_LEN(*item);
+            } else {
+                size_t tl;
+                const char *t = text_chars(item, &tl);
+                at = text_put(at, t, tl);
             }
-            memcpy(at, t->chars, t->length);
-            at += t->length;
         }
         release(OBJ_VAL(l));
-        return OBJ_VAL(out);
+        if (out) {
+            out->chars[total] = '\0';  /* (a short str's bytes may have run over it) */
+            return OBJ_VAL(out);
+        }
+        shortv.ikind = (unsigned char)total;  /* (what follows its bytes is zero: a short str's own are) */
+        return shortv;
     }
     StrBuf sb;
     sb_init(&sb);
@@ -1141,31 +1210,31 @@ NATIVE(n_zip) {
  * Strings
  * ==================================================================== */
 
-static ObjString *change_case(ObjString *src, int upper) {
-    ObjString *r = alloc_string(src->length);
-    for (size_t i = 0; i < src->length; i++) {
-        char c = src->chars[i];
-        if (upper && c >= 'a' && c <= 'z') c = (char)(c - 32);
-        if (!upper && c >= 'A' && c <= 'Z') c = (char)(c + 32);
-        r->chars[i] = c;
+static Value change_case(Text src, int upper) {
+    if (src.length <= LUBE_SSTR_MAX) {  /* short: a copy in a value, changed where it is */
+        Value r = sstr_value(src.chars, src.length);
+        str_change_case(SSTR_CHARS(&r), SSTR_CHARS(&r), src.length, upper);
+        return r;
     }
-    return r;
+    ObjString *r = alloc_string(src.length);
+    str_change_case(r->chars, src.chars, src.length, upper);
+    return OBJ_VAL(r);
 }
 
-NATIVE(n_upper) { (void)argc; NEED_STR(0); return OBJ_VAL(change_case(text_of(argv[0]), 1)); }
-NATIVE(n_lower) { (void)argc; NEED_STR(0); return OBJ_VAL(change_case(text_of(argv[0]), 0)); }
+NATIVE(n_upper) { (void)argc; NEED_STR(0); return change_case(text_at(&argv[0]), 1); }
+NATIVE(n_lower) { (void)argc; NEED_STR(0); return change_case(text_at(&argv[0]), 0); }
 
 /* Splits text into words at runs of whitespace, as a str[] list. */
-static ObjList *words_of(ObjString *s) {
+static ObjList *words_of(Text s) {
     ObjList *out = new_list();
     out->elem = TT_STRING;
     size_t i = 0;
-    while (i < s->length) {
-        while (i < s->length && is_space(s->chars[i])) i++;
-        if (i >= s->length) break;
+    while (i < s.length) {
+        while (i < s.length && is_space(s.chars[i])) i++;
+        if (i >= s.length) break;
         size_t j = i;
-        while (j < s->length && !is_space(s->chars[j])) j++;
-        list_push(out, OBJ_VAL(new_string(s->chars + i, j - i)));
+        while (j < s.length && !is_space(s.chars[j])) j++;
+        list_push(out, text_value(s.chars + i, j - i));
         i = j;
     }
     return out;
@@ -1176,13 +1245,14 @@ Value lube_string_property(Interp *I, Value s, ObjString *name) {
     ObjString *t = AS_STROBJ(s)->text;
     const char *p = name->chars;
     if (!strcmp(p, "value")) return retain(OBJ_VAL(t));
-    if (!strcmp(p, "upper")) return OBJ_VAL(change_case(t, 1));
-    if (!strcmp(p, "lower")) return OBJ_VAL(change_case(t, 0));
-    if (!strcmp(p, "words")) return OBJ_VAL(words_of(t));
+    Text text = {t->chars, t->length};
+    if (!strcmp(p, "upper")) return change_case(text, 1);
+    if (!strcmp(p, "lower")) return change_case(text, 0);
+    if (!strcmp(p, "words")) return OBJ_VAL(words_of(text));
     if (!strcmp(p, "chars")) {
         ObjList *out = new_list();
         out->elem = TT_STRING;
-        push_chars(I, out, t);
+        push_chars(out, text);
         return OBJ_VAL(out);
     }
     if (!strcmp(p, "length")) {  /* in characters (UTF-8 aware); len() counts bytes */
@@ -1196,39 +1266,36 @@ Value lube_string_property(Interp *I, Value s, ObjString *name) {
 NATIVE(n_trim) {
     (void)argc;
     NEED_STR(0);
-    ObjString *s = text_of(argv[0]);
-    size_t a = 0, b = s->length;
-    while (a < b && is_space(s->chars[a])) a++;
-    while (b > a && is_space(s->chars[b - 1])) b--;
-    return OBJ_VAL(new_string(s->chars + a, b - a));
+    Text s = text_at(&argv[0]);
+    size_t a = 0, b = s.length;
+    while (a < b && is_space(s.chars[a])) a++;
+    while (b > a && is_space(s.chars[b - 1])) b--;
+    return text_value(s.chars + a, b - a);
 }
 
 NATIVE(n_split) {
     NEED_STR(0);
     if (argc > 1) NEED_STR(1);
-    ObjString *s = text_of(argv[0]);
+    Text s = text_at(&argv[0]);
     ObjList *out = new_list();
     if (argc < 2) {  /* split on runs of whitespace */
         release(OBJ_VAL(out));
         return OBJ_VAL(words_of(s));
     } else {
-        ObjString *sep = text_of(argv[1]);
-        if (sep->length == 0) {
-            push_chars(I, out, s);
+        Text sep = text_at(&argv[1]);
+        if (sep.length == 0) {
+            push_chars(out, s);
+        } else if (sep.length == 1) {
+            split_at_byte(out, s.chars, s.length, (unsigned char)sep.chars[0]);
         } else {
-            size_t start = 0, pieces = 1;
+            size_t start = 0;
             long pos;
-            while ((pos = str_find(s->chars, s->length, sep->chars, sep->length, start)) >= 0) {  /* (how many first) */
-                pieces++;
-                start = (size_t)pos + sep->length;
+            list_reserve(out, str_count(s.chars, s.length, sep.chars, sep.length) + 1);  /* (how many first) */
+            while ((pos = str_find(s.chars, s.length, sep.chars, sep.length, start)) >= 0) {
+                out->items[out->count++] = text_value(s.chars + start, (size_t)pos - start);
+                start = (size_t)pos + sep.length;
             }
-            list_reserve(out, pieces);
-            start = 0;
-            while ((pos = str_find(s->chars, s->length, sep->chars, sep->length, start)) >= 0) {
-                list_push(out, OBJ_VAL(new_string(s->chars + start, (size_t)pos - start)));
-                start = (size_t)pos + sep->length;
-            }
-            list_push(out, OBJ_VAL(new_string(s->chars + start, s->length - start)));
+            out->items[out->count++] = text_value(s.chars + start, s.length - start);
         }
     }
     return OBJ_VAL(out);
@@ -1239,53 +1306,70 @@ NATIVE(n_replace) {
     NEED_STR(0);
     NEED_STR(1);
     NEED_STR(2);
-    ObjString *s = text_of(argv[0]), *old = text_of(argv[1]), *rep = text_of(argv[2]);
-    if (old->length == 0) return retain(argv[0]);
-    StrBuf sb;
-    sb_init(&sb);
+    Text s = text_at(&argv[0]), old = text_at(&argv[1]), rep = text_at(&argv[2]);
+    if (old.length == 0) return retain(argv[0]);
+    /* How many there are first, so the result is made once, at its size (and with none, it is the text itself). */
+    long first = str_find(s.chars, s.length, old.chars, old.length, 0);
+    if (first < 0) return IS_STROBJ(argv[0]) ? retain(OBJ_VAL(AS_STROBJ(argv[0])->text)) : retain(argv[0]);
+    size_t count = 1 + str_count(s.chars + first + old.length, s.length - (size_t)first - old.length, old.chars,
+                                 old.length);
+    if (rep.length > old.length && count > (LUBE_MAX_BYTES - s.length) / (rep.length - old.length))
+        lube_out_of_memory();
+    ObjString *out = alloc_string(s.length - count * old.length + count * rep.length);
+    char *at = out->chars;
     size_t start = 0;
-    long pos;
-    while ((pos = str_find(s->chars, s->length, old->chars, old->length, start)) >= 0) {
-        sb_putn(&sb, s->chars + start, (size_t)pos - start);
-        sb_putn(&sb, rep->chars, rep->length);
-        start = (size_t)pos + old->length;
+    if (old.length == 1) {  /* one byte: found a word at a time */
+        unsigned char c = (unsigned char)old.chars[0];
+        for (size_t k = 0; k < count; k++) {
+            size_t len = lube_scan_byte(s.chars + start, s.length - start, c);
+            at = text_put(at, s.chars + start, len);
+            at = text_put(at, rep.chars, rep.length);
+            start += len + 1;
+        }
+    } else {
+        for (size_t k = 0; k < count; k++) {
+            size_t pos = (size_t)str_find(s.chars, s.length, old.chars, old.length, start);
+            at = text_put(at, s.chars + start, pos - start);
+            at = text_put(at, rep.chars, rep.length);
+            start = pos + old.length;
+        }
     }
-    sb_putn(&sb, s->chars + start, s->length - start);
-    return from_buf(&sb);
+    text_put(at, s.chars + start, s.length - start);
+    return str_take(out);
 }
 
 NATIVE(n_starts_with) {
     (void)argc;
     NEED_STR(0);
     NEED_STR(1);
-    ObjString *s = text_of(argv[0]), *p = text_of(argv[1]);
-    return BOOL_VAL(p->length <= s->length && memcmp(s->chars, p->chars, p->length) == 0);
+    Text s = text_at(&argv[0]), p = text_at(&argv[1]);
+    return BOOL_VAL(p.length <= s.length && memcmp(s.chars, p.chars, p.length) == 0);
 }
 
 NATIVE(n_ends_with) {
     (void)argc;
     NEED_STR(0);
     NEED_STR(1);
-    ObjString *s = text_of(argv[0]), *p = text_of(argv[1]);
-    return BOOL_VAL(p->length <= s->length && memcmp(s->chars + s->length - p->length, p->chars, p->length) == 0);
+    Text s = text_at(&argv[0]), p = text_at(&argv[1]);
+    return BOOL_VAL(p.length <= s.length && memcmp(s.chars + s.length - p.length, p.chars, p.length) == 0);
 }
 
 NATIVE(n_chars) {
     (void)argc;
     NEED_STR(0);
     ObjList *out = new_list();
-    push_chars(I, out, text_of(argv[0]));
+    push_chars(out, text_at(&argv[0]));
     return OBJ_VAL(out);
 }
 
 NATIVE(n_ord) {
     (void)argc;
     NEED_STR(0);
-    ObjString *s = text_of(argv[0]);
-    if (s->length == 0) return lube_error(I, "ord() needs a non-empty string");
-    const unsigned char *p = (const unsigned char *)s->chars;
+    Text s = text_at(&argv[0]);
+    if (s.length == 0) return lube_error(I, "ord() needs a non-empty string");
+    const unsigned char *p = (const unsigned char *)s.chars;
     size_t len = utf8_seq_len(p[0]);
-    if (len > s->length) len = 1;
+    if (len > s.length) len = 1;
     unsigned long cp = len == 1 ? p[0] : p[0] & (0xFFu >> (len + 1));
     for (size_t i = 1; i < len; i++) cp = (cp << 6) | (p[i] & 0x3F);
     return NUM_VAL((double)cp);
@@ -1299,7 +1383,10 @@ NATIVE(n_chr) {
     unsigned long cp = (unsigned long)d;
     char buf[4];
     size_t n;
-    if (cp < 0x80) return retain(OBJ_VAL(I->chars[cp]));
+    if (cp < 0x80) {
+        char one = (char)cp;
+        return sstr_value(&one, 1);
+    }
     if (cp < 0x800) {
         buf[0] = (char)(0xC0 | (cp >> 6));
         buf[1] = (char)(0x80 | (cp & 0x3F));
@@ -1316,14 +1403,14 @@ NATIVE(n_chr) {
         buf[3] = (char)(0x80 | (cp & 0x3F));
         n = 4;
     }
-    return OBJ_VAL(new_string(buf, n));
+    return str_value(buf, n);
 }
 
 static Value pad(Interp *I, int argc, Value *argv, const char *fn, int left) {
     if (!IS_WHOLE(argv[1])) return type_error(I, fn, 1, "a whole Number", argv[1]);
     char fill = ' ';
     if (argc > 2) {
-        if (!IS_TEXT(argv[2]) || text_of(argv[2])->length != 1)
+        if (!IS_TEXT(argv[2]) || text_len(argv[2]) != 1)
             return lube_error(I, "%s(): the fill must be a single character", fn);
         fill = text_of(argv[2])->chars[0];
     }
@@ -1357,7 +1444,7 @@ NATIVE(n_fixed) {
     if (digits < 0 || digits > 20) return lube_error(I, "fixed(): digits must be between 0 and 20");
     char buf[512];
     snprintf(buf, sizeof buf, "%.*f", (int)digits, numeric_value(argv[0]));
-    return OBJ_VAL(new_string(buf, strlen(buf)));
+    return str_value(buf, strlen(buf));
 }
 
 /* ======================================================================

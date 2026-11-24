@@ -1,0 +1,43 @@
+// instances with str fields from literals and from run time: equality, hashing, map keys, watchers
+class Tag {
+  var name = "t"
+  var note = "a default note, long"
+}
+var a = Tag()
+var b = Tag()
+b.name = "t" + ""
+b.note = "a default note," + " long"
+print(a == b, a != b, [a] == [b], {x: a} == {x: b})
+var m = Map
+m[a] = 1
+m[b] = 2
+print(len(m), m[a], m[Tag()])
+let k = keys({name: 1})[0]
+var c = Tag()
+c.name = k
+var d = Tag()
+d.name = "name"
+print(c == d, get(m, c, -1) == get(m, d, -2), c.name == d.name)
+m[c] = 3
+print(get(m, d, -1), len(m))
+var e = Tag()
+on e.name (old, new) { print("name:", old, "->", new) }
+e.name = "t"
+e["name"] = "u"
+e["na" + "me"] = "v"
+e.name = "vwxyzvwxyzv"
+set_field(&e, "name", "w")
+print(e)
+class Node {
+  var label = ""
+  var kids = []
+  constructor(l) { this.label = l }
+  fn add(n) { this.kids.push(n) }
+}
+var root = Node("root")
+root.add(Node("a"))
+root.add(Node("b-is-a-longer-label"))
+let copy = root
+root.kids[0].label = "changed"
+print(root, copy)
+print(fields(root), methods(Node), class_of(root).name, type(class_of(root).name))

@@ -1,0 +1,65 @@
+// type(), is, typed vars, typed lists, typed functions and fields with short and long strs
+let s = "abc"
+let l = "abcdefghijkl"
+let made = "ab" + "c"
+print(type(s), type(l), type(made), type(split("a,b", ",")[0]), type(s.slice(0, 1)), type(chr(65)), type(s[0]), type(str(5)), type(repr(5)), type(type(5)))
+print(s is str, l is str, s is Object, l is Object, s is String, String(s) is String, String(s) is Object, made is str)
+print(repr(s), repr(l), repr(String(s)), str(String(s)), repr(type(s)), type(String(s).value), type(String(l).value))
+var v = "x"
+try { v = 5 } catch e { print("error:", e) }
+try { v = String("x") } catch e { print("error:", e) }
+v = "a much longer str than ten"
+v = "y"
+print(v)
+var S = String("x")
+try { S = "plain" } catch e { print("error:", e) }
+try { S = "plain-but-long-text" } catch e { print("error:", e) }
+var names = str["ada"]
+names.push("bob")
+names.push("christopher")
+names.push("a" + "b")
+try { names.push(5) } catch e { print("error:", e) }
+try { names.push(String("x")) } catch e { print("error:", e) }
+print(names, type(names), names + ["eve"], type(names + ["eve"]))
+var objs = String[]
+try { objs.push("plain") } catch e { print("error:", e) }
+objs.push(String("ok"))
+print(objs, type(objs))
+fn want_str(x: str): str => x + "!"
+fn want_String(x: String): String => x
+print(want_str("hi"), want_str("a long text indeed"), type(want_str("hi")))
+try { print(want_String("hi")) } catch e { print("error:", e) }
+try { print(want_str(String("hi"))) } catch e { print("error:", e) }
+try { print(want_str(5)) } catch e { print("error:", e) }
+fn ret_short(): str => "ok"
+fn ret_bad(): Number => "no"
+print(ret_short())
+try { print(ret_bad()) } catch e { print("error:", e) }
+class Pet {
+  var name = "rex"
+  var tag = "a long default tag"
+  fn hello() => "I am {this.name}"
+}
+var p = Pet()
+print(p, p.name, p["name"], p.hello(), fields(p), methods(Pet))
+p.name = "fido"
+p["name"] = "max"
+p["tag"] = "t"
+print(p)
+try { p.name = 5 } catch e { print("error:", e) }
+try { p["name"] = 5 } catch e { print("error:", e) }
+try { p["nam" + "e"] = 7 } catch e { print("error:", e) }
+try { p["nope"] = 1 } catch e { print("error:", e) }
+try { p.nope = 1 } catch e { print("error:", e) }
+try { print(p["nope"]) } catch e { print("error:", e) }
+print(get_field(p, "name"), get_field(p, "na" + "me"), has_method(p, "hello"), has_method(p, "hel" + "lo"), call_method(p, "hello"), call_method(p, "hel" + "lo"))
+set_field(&p, "name", "zed")
+set_field(&p, "ta" + "g", "zz")
+print(p)
+try { set_field(&p, "name", 1) } catch e { print("error:", e) }
+try { set_field(&p, "nme", 1) } catch e { print("error:", e) }
+print(find_class("Pet"), find_class("P" + "et"), signature(want_str), signature(Pet, "hello"))
+try { print(find_class("Nope")) } catch e { print("error:", e) }
+print(globals().slice(0, 5))
+fn desc_check(x) => [type([s]), type(str[s]), type(Map[str, str]), str[s, l, made]]
+print(desc_check(1))

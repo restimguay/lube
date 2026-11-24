@@ -30,6 +30,18 @@ static LubeValue count(LubeVM *vm, int argc, const LubeValue *argv) {
     return lube->number_value(++*calls);
 }
 
+/* texts_of(a, b, ...): every argument's text ("?" for what is not text), read only after every pointer was taken */
+static LubeValue texts_of(LubeVM *vm, int argc, const LubeValue *argv) {
+    const char *text[8];
+    char out[256];
+    size_t n = 0;
+    if (argc > 8) argc = 8;
+    for (int i = 0; i < argc; i++) text[i] = lube->str(argv[i], NULL);
+    out[0] = '\0';
+    for (int i = 0; i < argc; i++) n += (size_t)snprintf(out + n, sizeof out - n, "%s%s", i ? "|" : "", text[i] ? text[i] : "?");
+    return lube->new_str(vm, out, n);
+}
+
 /* call_back(f, x): Lube's f(x), called from C while Lube is calling C */
 static LubeValue call_back(LubeVM *vm, int argc, const LubeValue *argv) {
     (void)argc;
@@ -195,6 +207,46 @@ int main(void) {
     s = lube_call_global(vm, "total", 10, many, &r);  /* (more arguments than fit on its stack) */
     printf("total(0, ..., 9): status %d, %g\n", s, lube->number(r));
     lube->release(r);
+
+    printf("-- text, short and long\n");
+    /* A str of a few bytes is held in its value, not in an object. What a call or a global gives the program is
+     * text it can point at all the same, until it lets go of the value, whatever it runs meanwhile; and so is an
+     * item of a list, or a value of an object, for as long as it stays there. */
+    lube_run(vm,
+             "fn tag(n) => \"t{n}\"\n"
+             "fn sentence(n) => \"a sentence that is longer: {n}\"\n"
+             "var label = \"ok\"\n"
+             "var names = [\"a\", \"bb\", \"a longer name here\"]\n"
+             "var info = {id: \"x1\", note: \"a note that is longer\"}",
+             "text");
+    LubeValue made[4], label, names, info, item;
+    const char *held[4], *name_text[3];
+    for (int i = 0; i < 4; i++) {
+        v = lube->number_value(i);
+        lube_call_global(vm, i % 2 ? "sentence" : "tag", 1, &v, &made[i]);
+        held[i] = lube->str(made[i], NULL);
+    }
+    lube_get(vm, "label", &label);
+    const char *label_text = lube->str(label, NULL);
+    lube_get(vm, "names", &names);
+    lube_get(vm, "info", &info);
+    for (size_t i = 0; i < 3; i++) name_text[i] = lube->str(lube->list_get(names, i), NULL);
+    lube->object_get(vm, info, "id", &item);
+    const char *id = lube->str(item, NULL);
+    lube_run(vm, "label = \"changed\"\nprint(tag(9), names, info, names[0] == \"a\", info.id + \"!\")", "text2");
+    printf("%s | %s | %s | %s | %s | %s %s %s | %s\n", held[0], held[1], held[2], held[3], label_text, name_text[0],
+           name_text[1], name_text[2], id);
+    for (int i = 0; i < 4; i++) lube->release(made[i]);
+    lube->release(label);
+    lube->release(names);
+    lube->release(info);
+    LubeValue mine = lube->new_str(vm, "mine", 4);  /* (one the program makes, and reads back) */
+    size_t mine_len;
+    const char *mine_text = lube->str(mine, &mine_len);
+    printf("%s %d\n", mine_text, (int)mine_len);
+    lube->release(mine);
+    lube_function(vm, "texts_of", texts_of, 0, -1, NULL);
+    lube_run(vm, "print(texts_of(\"a\", \"bb\", \"a longer argument here\", \"a\", 5, \"{label}!\"))", "text3");
 
     printf("-- functions of the program's\n");
     lube_function(vm, "add", add, 2, 2, NULL);

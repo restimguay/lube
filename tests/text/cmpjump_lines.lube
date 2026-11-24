@@ -1,0 +1,22 @@
+// errors raised by `in` and comparisons inside if/while conditions: line numbers and messages
+fn check(x, y) {
+  if (x
+      in y) {
+    return "in"
+  }
+  return "out"
+}
+print(check("a", "abc"), check("z", "abc"), check(1, [1]))
+try { print(check(1, 2)) } catch e { print("error:", e) }
+var i = 0
+while ("a" in ["a", "b"]) and i < 3 { i += 1 }
+print(i)
+fn deep(v) {
+  while v in
+    "xyz" {
+    return 1
+  }
+  return 0
+}
+print(deep("y"), deep("q"))
+print(check("a", 5))

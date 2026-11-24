@@ -1,0 +1,15 @@
+$19.99 $1,234.50 -$0.01 €5.00 €5.00 €5.00 R$5.00 CHF 5.00 ¥1,235
+₱1,500.00 PHP
+₱1.00 PHP PHP ₱ str true
+USD 1,234.50 $1.234,50 1,234.50 US$1,234.50 $1234.50
+$1 ' 234 dot 50 a long symbol 1,234.50 $1abcdefghijk234.50
+$1_234:50
+₿0.12345678 ₿1.00000000 BTC 0.50000000
+abcdefghijklmno 3.00 abcdefghijklmno 3.00
+error: add_currency(): a code is 1 to 7 letters or digits, and a symbol at most 15 bytes
+error: add_currency(): a code is 1 to 7 letters or digits, and a symbol at most 15 bytes
+error: add_currency(): a code is 1 to 7 letters or digits, and a symbol at most 15 bytes
+error: m(): there is no currency 'QQQ' (add_currency() adds one)
+error: format(): thousands is a str
+₱582.50 [$33.34, $33.33, $33.33] [$33.33, $66.67] [$1.00, $2.00, $3.00] $2.00 str true
+{"$1.00": 2}

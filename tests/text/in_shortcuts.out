@@ -1,0 +1,15 @@
+Yntrue false  YYtrue true  Yntrue false  nnfalse false  nnfalse false  YYtrue true  Yntrue false  Yntrue false  Yntrue false  nYfalse true  YYtrue true  
+Y Y Y Y n Y Y Y Y Y n n n n 
+false false true true true true true true true
+true false true false true false false
+true false false true true true true
+yes no yes yes
+error: cannot look inside a Number (expected a List, str, Object, Range or Bytes)
+error: can only search text for text, not for a Number
+error: cannot look inside a Number (expected a List, str, Object, Range or Bytes)
+error: cannot look inside a Number (expected a List, str, Object, Range or Bytes)
+error: can only search text for text, not for a List
+280
+true 25  true 35  true 34  true 24  true 23  false -1  true 0  false -1  true 0  false -1  
+not in
+false

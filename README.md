@@ -144,6 +144,7 @@ print(a, b)        # [1, 2, 3] [1, 2, 3, 4]
 What follows from that:
 
 - **Copies are cheap.** `b = a` doesn't copy anything yet. Both share the data until one of them changes it, and only then does the changer get its own copy (copy-on-write).
+- **Short text needs no memory of its own.** A str of up to 10 bytes is held inside its value, as a Number is. Making one, copying it, comparing two and letting go of one touch no other memory, so the words of a split line, the characters of a str and keys like `"id"` or `"k42"` cost what numbers cost. Longer text is shared and counted like every other value, and a program can't tell the two apart.
 - **Values can never form cycles.** A value can't contain itself (`box.self = box` stores a *copy* of `box`), closures capture copies (see below), and class instances are values too. Without cycles, a simple owner count is enough: when the last owner lets go, the memory is freed immediately.
 - **Memory is freed deterministically.** Values are freed at the end of a block, when a variable is overwritten, or when a function returns. There's no collector running in the background, no pauses, and no leaks.
 - **Iteration can't be broken.** A loop over a list keeps seeing the list as it was when the loop started, even if the body changes the variable.
@@ -1512,7 +1513,7 @@ lube_gfx_post(&pad);
 source ──► lexer ──► tokens ──► parser ──► AST ──► resolver ──► compiler ──► bytecode ──► VM
 ```
 
-Programs are compiled to bytecode every time they run, in memory: there is no build step. The VM runs a call to a Lube function in the same loop as its caller, with a frame of its own, so recursion doesn't use the C stack at all: a program can recurse 100,000 calls deep on a phone's small thread stack, and runaway recursion is a clean error. The loop has two tiers. The fast one keeps the VM's state in the processor's registers and runs the common instructions in their common cases. Everything else goes the long way, one instruction at a time, through the general code, and so does every instruction while the debugger is on. The fast tier is written once, in `src/interp_ops.h`, and compiled one of three ways: each instruction is a function that tail-calls the next (clang, where it has `musttail` and `preserve_none`), jumps through a table of labels (other GNU C compilers, gcc among them), or uses a plain C99 `switch` (any other compiler). All three give the same results; only their speed differs. Next to the tree-walking interpreter it replaced, it runs function calls about 1.8× faster and loops about 5× faster. The commonest operations have shortcuts that do what the general way does: `xs.push(v)` appends with no call when `v` runs none of the program's code, a store into an object or a map finds its key in one look, `==` on two strs compares them where they are, a package's function is called straight from the VM's loop, and a constructor or a callback with plain parameters starts without the checks it doesn't need. `tests/shortcuts.lube` prints the same with and without them.
+Programs are compiled to bytecode every time they run, in memory: there is no build step. The VM runs a call to a Lube function in the same loop as its caller, with a frame of its own, so recursion doesn't use the C stack at all: a program can recurse 100,000 calls deep on a phone's small thread stack, and runaway recursion is a clean error. The loop has two tiers. The fast one keeps the VM's state in the processor's registers and runs the common instructions in their common cases. Everything else goes the long way, one instruction at a time, through the general code, and so does every instruction while the debugger is on. The fast tier is written once, in `src/interp_ops.h`, and compiled one of three ways: each instruction is a function that tail-calls the next (clang, where it has `musttail` and `preserve_none`), jumps through a table of labels (other GNU C compilers, gcc among them), or uses a plain C99 `switch` (any other compiler). All three give the same results; only their speed differs. Next to the tree-walking interpreter it replaced, it runs function calls about 1.8× faster and loops about 5× faster. The commonest operations have shortcuts that do what the general way does: `xs.push(v)` appends with no call when `v` runs none of the program's code, a store into an object or a map finds its key in one look, `==` on two strs compares them where they are, a package's function is called straight from the VM's loop, and a constructor or a callback with plain parameters starts without the checks it doesn't need. `tests/shortcuts.lube` prints the same with and without them. A str of up to 10 bytes is held in its 16-byte value, with no object behind it (longer ones, and the names a program uses, are objects): both are the same str to a program, equal and with the same hash, and a list that holds only Numbers, Bools and short strs is copied, sliced and freed as one block. `"...{x}..."` is put together from its pieces in place, a whole number's digits two at a time.
 
 | file | role |
 |---|---|
@@ -1536,7 +1537,7 @@ Programs are compiled to bytecode every time they run, in memory: there is no bu
 
 Lube is written in C, and its plugins read files from anywhere (models, arrays, safetensors), so what keeps it safe is testing: the same tests, with the same expected output, on every system.
 
-- **The suite.** `make test` runs `tests/*.lube` and compares the output with the `.out` files next to them. `tests/cli.sh` covers the command line, the REPL, exit codes, tracebacks, the `LUBE_MAX_*` limits, and the programs in `tests/cli/stops.txt` that each stop with an error.
+- **The suite.** `make test` runs `tests/*.lube` and `tests/text/*.lube` (strs of every length, held either way) and compares the output with the `.out` files next to them. `tests/cli.sh` covers the command line, the REPL, exit codes, tracebacks, the `LUBE_MAX_*` limits, and the programs in `tests/cli/stops.txt` that each stop with an error.
 - **Checked against Python.** The plugins' expected outputs were checked against the Python libraries they match:
   - NumPy;
   - PyTorch, with every gradient also checked against finite differences;
@@ -1657,10 +1658,30 @@ What the second pass changed, each measured in instructions per operation (which
 
 `tests/shortcuts.lube` holds each of the interpreter's shortcuts to what the general way gives: its expected output was printed by the interpreter before them.
 
+A third pass was about text, and about what a program builds text from:
+
+- A str of up to 10 bytes is held in its value, not in an object. `split`, `chars`, slices, `s[i]`, `str()`, `+`, interpolation and a plugin's results make short strs without asking for memory, and a map keyed by them hashes and compares two machine words.
+- A list that holds no objects (Numbers, Bools, short strs) is copied and sliced with one `memcpy`, and freed as one block.
+- `split`, `find`, `replace`, `count`, `in`, `upper` and `lower` go through text 8 bytes at a time, in plain C that gives the same result on every system.
+- `"...{x}..."` puts its usual pieces (text written out, whole numbers, strs) together with no buffer of its own, and a whole number's digits are written two at a time, by `str()` and `print` too.
+
+In instructions for one turn of a loop, against CPython 3.15's:
+
+| operation | before | now | CPython |
+|---|---|---|---|
+| `"k{i}"` | 797 | 272 | 1,224 |
+| `"item {i}"` (a result of more than 10 bytes) | 801 | 430 | 1,248 |
+| `"{i},{i}"` | 1,150 | 568 | 2,187 |
+| `str(i)` | 600 | 289 | 666 |
+
+Over the 54 cases of the core language that run on one thread, Lube now runs about 0.7 times the instructions it did (geometric mean; 0.68 and 0.74 in two runs, the smallest cases varying from one to the next): `split` 0.07, a list's slice 0.09, `x in xs` 0.10, `replace` 0.45, interpolation 0.48, `in` on two strs 0.58, filling a map with str keys 0.85. Python/Lube by instructions went from 1.86 to between 2.5 and 2.7, and Lube does less work than CPython in 52 of the 54 (42 before); the two left are `map` and `filter` with a function. The table of areas above is by time and was not measured again.
+
+`tests/text/` holds strs of every length around 10 bytes, made every way and meeting each other in every operation, with a plugin and a host program reading them through the C API (`tests/plugins/texts.c`): their expected output was printed by the interpreter before any of this.
+
 Where Python is still faster, the cause is known:
 
 - **`map` and `filter` with a function** (0.6–0.8×): each call of it enters the VM anew, where a Python comprehension runs in place. A loop that pushes is as fast as Python's.
-- **Methods that change `this`, and text** (`split`, `in`): 0.6–0.9×.
+- **Methods that change `this`:** 0.6–0.9×.
 - **Calls that make an object each time:** `math.isclose(a, b, {rel_tol: ...})` builds its options, and each `cmath` result is a new Complex (0.4–0.65×). `math.comb` of large numbers and `math.dist` of long lists (0.3–0.6×) read their arguments one by one.
 - **`nn` on small batches:** GELU on a 64×1024 batch (0.4×: its float32 kernel does without fused multiply-adds, so that every system gives the same bits) and softmax (0.6×, from 0.1×); on big ones Lube is as fast or faster. Loading a big state dict (0.2×): PyTorch's safetensors maps the file, where Lube reads it.
 - **`llm`:** reading a prompt (0.55× llama.cpp's for 128 tokens through SmolLM2, timed one after the other: the table's cases were timed while llama.cpp's threads had other work to wait for), because Lube promises the same logits on every system and for a prompt read at once or a token at a time, which rules out llama.cpp's reordered matrix kernels for batches.

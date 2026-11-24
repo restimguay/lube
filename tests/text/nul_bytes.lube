@@ -1,0 +1,26 @@
+// NUL bytes inside strs of both forms (shown with repr: a test's output is compared as text)
+let a = "a\x00b"
+let z = chr(0)
+let longz = "abcdefghij\x00klmnop"
+print(len(a), len(z), len(longz), repr(a), repr(z), repr(longz), a == "a\x00b", a == "a", z == "\x00", "\x00" in a, index_of(a, "\x00"))
+print(split(a, "\x00"), split("x\x00\x00y", "\x00"), replace(a, "\x00", "-"), repr(upper(a)), repr(reverse(a)), chars(a), split(longz, "\x00"))
+var o = {}
+o[a] = 1
+o["a"] = 2
+o[z] = 3
+o[""] = 4
+o["a\x00"] = 5
+o["a\x00\x00"] = 6
+print(o, keys(o), len(o), has(o, "a\x00b"), has(o, "a"), o["a\x00"], o["a" + z + z])
+print(sort(["a\x00", "a", "a\x00\x00", "\x00", "", "a\x01", "b", "abcdefgh\x00", "abcdefgh", "abcdefgh\x00\x00\x00"]))
+print(sort(["a\x00", "a", "a\x00\x00", "\x00", ""], fn(s) => s))
+print(repr(a + a), repr(a * 3), len(a * 4), a < "a", "a" < a, a < "a\x01", z < "", "" < z)
+print(Number("1\x00", -1), Number("\x001", -1), num(" 7\x00", -2))
+write(repr(a))
+print()
+print(repr("{a}|{z}|{longz}"), len("{a}|{z}|{longz}"))
+var m = Map
+m[[a, z]] = "pair"
+print(m[["a" + z + "b", "\x00"]], has(m, ["a", z]))
+print(String(a).length, String(a).chars, String(a) == a, ord(z), chr(0) == "\x00", z + z == "\x00\x00", len(z + z))
+print(starts_with(a, "a\x00"), ends_with(a, "\x00b"), repr(trim("\x00 a \x00")), Bytes(a), Bytes(a).decode() == a)

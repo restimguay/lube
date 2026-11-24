@@ -1,0 +1,9 @@
+abc abcdefghijkl  日本語x
+HI! ["a", "bb", "abcdefghijklmno"] {a: "x", "long key name": "y"}
+{k0: "v0", k1: "v1", k2: "v2", k3: "v3", k4: "v4", k5: "v5", k6: "v6", k7: "v7", k8: "v8", k9: "v9", k10: "v10", k11: "v11", "a long key, longer than ten": "a long value, longer than ten"} ["k0", "k1", "k2", "k3", "k4", "k5", "k6", "k7", "k8", "k9", "k10", "k11", "a long key, longer than ten"] v3 a long value, longer than ten
+{["a", 1]: "list key", s: "short"}
+[["", 0, ""], ["\x00", 1, "\x00"], ["a", 1, "A"], ["bb", 2, "BB"], ["ccc", 3, "CCC"], ["dddddddddd", 10, "DDDDDDDDDD"], ["eeeeeeeeeee", 11, "EEEEEEEEEEE"], ["é", 2, "é"], ["日本語x", 10, "日本語X"]]
+["X", "YY", "A LONG STRING HERE"] ["aa", "bb", "cc"]
+error: fails() failed in its isolate: failed with abc
+error: fails() failed in its isolate: failed with a long reason for it
+short a String Bytes none

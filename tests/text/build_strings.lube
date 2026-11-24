@@ -1,0 +1,37 @@
+// built three ways (--build, --small, --native): string constants of every size, records keyed by text
+import "build_helper"
+let consts = ["", "a", "ab", "abcdefghi", "abcdefghij", "abcdefghijk", "é", "日本語x", "日本語xy", "\x00", "a\x00b", "with \"quotes\"", "tab\there", "\u{2764}"]
+for c in consts { print(repr(c), len(c), type(c), c == consts[0] + c) }
+print(helper_greet("bob"), helper_greet("a much longer name"), HELPER_CONST, len(HELPER_CONST))
+fn area(p): Number => p.w * p.h
+fn total(xs): Number {
+  var t = 0
+  for i in 0..len(xs) { t += area(xs[i]) }
+  return t
+}
+fn fib(n: Number): Number {
+  if n < 2 { return n }
+  return fib(n - 1) + fib(n - 2)
+}
+var o = {}
+o["w"] = 3
+o["h"] = 4
+let built = Object([["w", 5], ["h", 6]])
+let lit = {w: 7, h: 8}
+var cls = Object
+cls.w = 1
+cls.h = 2
+print(area(o), area(built), area(lit), area(cls), total([o, built, lit, cls]), fib(20))
+fn words(n: Number): str => "{n}"
+print(words(3), words(12345678901), type(words(3)))
+var counts = {}
+for w in split("a b a c b a", " ") { counts[w] = get(counts, w, 0) + 1 }
+print(counts, keys(counts), counts.a, counts["b"])
+var acc = 0
+for i in 0..1000 { acc += i % 7 }
+print(acc)
+let s = "x" * 10
+let t = s + "y"
+print(s, t, s < t, s in t, upper(s), split(t, "x"), replace(t, "x", "ab"), join(chars(s), "-"))
+try { print(o["missing"]) } catch e { print("error:", e) }
+print(m("19.99"), m(5, "EUR"), Bytes("hi").hex(), "{o}")
